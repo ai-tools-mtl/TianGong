@@ -3,7 +3,7 @@
 > AI 驱动的专利交底书撰写智能体
 > 从技术交底到专利申请文件，巧夺天工。
 
-- **文档版本**: v1.4（新增管理员角色与权限体系）
+- **文档版本**: v1.5（新增 LLM Key 管理与 BYOK）
 - **创建日期**: 2026-07-13
 - **状态**: 待评审
 - **作者**: tl.m + ZCode
@@ -13,6 +13,7 @@
   - v1.2 (2026-07-13): 纳入全生命周期愿景（事务所协作/审查答复/归档），新增知识库与 RAG 架构（pgvector + embedding），MVP 实现基础 RAG，Project 预留 stage 字段
   - v1.3 (2026-07-13): 引入双框架（LangGraph 编排 + LlamaIndex RAG），审查与评分纳入 MVP P0，新增确定性评估管线（Rubric + 自一致性 + 跨会话记忆）根治评分跨对话不稳定，新增三套自定义能力（审查标准覆盖式 / 知识库·技能增量式）
   - v1.4 (2026-07-13): 新增管理员角色（MVP 做 C 系统运维版，数据模型预留 A/B 演进），明确角色权限矩阵与数据可见性红线（用户私人数据默认不可见）
+  - v1.5 (2026-07-13): 新增 LLM Key 管理与 BYOK（管理员全局开关 + 用户可覆盖 + 任意 OpenAI 兼容 Provider），新增 SystemSetting 表与 UserLLMConfig 实体，明确 Provider 解析优先级
 
 ---
 
@@ -404,6 +405,41 @@ User (1) ──── (N) Project ──── (1) Template
 
 **注意**：MVP 的 `is_builtin=false`（用户自定义技能）只存配置不实现运行时；架构预留。
 
+#### SystemSetting（系统设置，管理员维护）
+> 存全局策略开关与全局 LLM/embedding 配置。键值对结构，便于扩展。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | UUID PK | |
+| key | str unique | 设置键（如 `llm_global_enabled` / `llm_global_config` / `embedding_global_config` / `llm_per_user_limit`） |
+| value | JSONB | 设置值（结构随 key 而异） |
+| updated_by | UUID FK | 最后修改的管理员 |
+| updated_at | datetime | |
+
+**MVP 关键键**：
+- `llm_global_enabled` (bool)：是否向用户提供全局 LLM key。`false` = 强制 BYOK，用户必须自配 key 才能用
+- `llm_global_config` (JSON)：全局 LLM 配置（base_url / api_key / model / provider），管理员在后台填
+- `embedding_global_config` (JSON)：全局 embedding 配置（同上）
+- `llm_per_user_limit` (JSON)：按用户限流（如每日 token 上限）
+
+#### UserLLMConfig（用户自有 LLM 配置，BYOK）
+> 用户自带的 LLM key 与配置。每个用户一份，可覆盖全局。
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | UUID PK | |
+| user_id | UUID FK unique | 一人一份 |
+| provider | str | Provider 标识（如 `zhipu` / `openai` / `deepseek` / `custom`） |
+| base_url | str | OpenAI 兼容 API 地址（如 `https://open.bigmodel.cn/api/paas/v4`） |
+| api_key_encrypted | str | **加密存储**的 API key（AES，密钥来自系统 secret） |
+| model | str | 默认模型名（如 `glm-5.2`） |
+| embedding_model | str nullable | Embedding 模型名（可独立配置） |
+| is_active | bool | 是否启用（用户可临时禁用） |
+| created_at | datetime | |
+| updated_at | datetime | |
+
+**关键安全**：`api_key_encrypted` 必须加密存储，不明文落库（详见 8.4 LLM Key 安全）。
+
 ### 3.3 关键设计决策
 
 1. **富文本存 JSON 不存 HTML**：选 Tiptap（基于 ProseMirror），JSON 结构化，便于 AI 读写、diff、版本管理
@@ -417,6 +453,8 @@ User (1) ──── (N) Project ──── (1) Template
 9. **知识库与业务库同库（pgvector）**：KnowledgeChunk 与业务数据共存在 PostgreSQL，避免引入独立向量数据库的运维负担；MVP 数据量下 pgvector 性能足够
 10. **分块而非整篇向量化**：交底书按章节分块（每章一个或多个 chunk），检索粒度细、召回精准；`source_type + source_id` 让知识库可扩展到后续的申请文件/答复
 11. **归档触发向量化**：交底书完成（status=completed）后，用户点「归档」或自动触发，将各章节内容分块、调 embedding API 向量化、写入 KnowledgeChunk。归档后 Project.status=archived
+12. **LLM 配置三级解析优先级**（详见 8.4）：用户启用自有配置(`UserLLMConfig.is_active=true`) → 全局配置(`llm_global_enabled=true`) → 无可用配置(报错引导)。用户自配可覆盖全局；全局关闭则强制用户自配
+13. **API key 加密存储**：UserLLMConfig.api_key 与 SystemSetting 里的全局 key 均 AES 加密落库，不明文；运行时解密注入 ModelAdapter，不记日志
 
 ---
 
@@ -991,26 +1029,87 @@ agent 技能是可挂载的"插件"，定义 agent 能做什么额外的事。MV
 
 **"经授权临时查看"机制（P1，MVP 不做）**：用户主动求助时，可生成一次性授权码，管理员凭码在限时内查看该用户指定项目的只读视图，全程记审计日志。MVP 阶段排查问题靠日志元数据 + 用户主动提供信息。
 
-### 8.4 权限实现
+### 8.4 LLM Key 管理与 Provider 解析
+
+> 解决"LLM 成本与控制权归谁"的问题。支持管理员全局 key + 用户自带 key（BYOK）的灵活组合。
+
+#### 8.4.1 三级 Provider 解析优先级
+
+每次发起 LLM/embedding 调用时，按以下优先级解析可用配置：
+
+```
+① 用户自有配置（UserLLMConfig.is_active=true）
+   └─ 命中 → 用用户的 key（用户自付，管理员不承担成本）
+② 全局配置（SystemSetting.llm_global_enabled=true）
+   └─ 命中 → 用全局 key（管理员/平台承担成本）
+③ 都没有 → 报错引导
+   └─ 提示"管理员未提供全局 key，请在设置页配置你自己的 LLM key"
+```
+
+**关键语义**：
+- 用户自配 key **始终优先**于全局 key（即使用户自配时全局也开着）——这样用户想用自己的额度/模型时随时可以
+- 全局开关 `llm_global_enabled=false` 时，**跳过第②步**，强制走第①步或报错——管理员可强制 BYOK
+- admin 角色始终用全局配置（8.2② 管理员不自带 key）
+
+#### 8.4.2 管理员的 LLM 管理能力
+
+| 能力 | 说明 |
+|---|---|
+| 配置全局 key | 填 base_url / api_key / model / embedding_model（SystemSetting.llm_global_config） |
+| 全局开关 | `llm_global_enabled`：true=平台买单（用户可覆盖）/ false=强制用户自付 |
+| 按用户限流 | `llm_per_user_limit`：使用全局 key 的用户，每日 token 上限（防滥用） |
+| 测试连通性 | 配置后可"测试连接"，验证 key 有效 |
+
+#### 8.4.3 用户的 LLM 管理能力
+
+| 能力 | 说明 |
+|---|---|
+| 查看当前生效配置 | 显示"当前使用：全局配置 / 你的配置"，透明 |
+| 配置自有 key | 填 provider / base_url / api_key / model（任意 OpenAI 兼容） |
+| 测试连通性 | 配置后可"测试连接" |
+| 启用/禁用 | `is_active` 开关，临时切回全局 |
+
+**当 `llm_global_enabled=false` 且用户未配 key**：用户进入系统时强制引导到"LLM 配置"页，未配置则无法使用 AI 功能（撰写/审查都不可用，但能浏览已有项目）。
+
+#### 8.4.4 Provider 灵活性
+
+用户/管理员可填任意 OpenAI 兼容 Provider：
+- 智谱 GLM：`base_url=https://open.bigmodel.cn/api/paas/v4`，`model=glm-5.2`
+- OpenAI：`base_url=https://api.openai.com/v1`，`model=gpt-4o`
+- DeepSeek：`base_url=https://api.deepseek.com`，`model=deepseek-chat`
+- 本地：`base_url=http://localhost:11434/v1`（Ollama/vLLM）
+- 自定义：任意兼容端点
+
+统一经 LangChain `init_chat_model` / ModelAdapter 接入，无需为每个 Provider 写适配代码。
+
+#### 8.4.5 LLM Key 安全
+
+- **加密存储**：`UserLLMConfig.api_key_encrypted` 与 `SystemSetting` 里的全局 key 均 **AES 加密**落库，密钥来自系统 secret（`.env` 的 `ENCRYPTION_KEY`）
+- **不明文返回**：API 永远不返回完整 key，只返回掩码（如 `sk-****abcd`）
+- **不记日志**：LLM 调用时 key 解密注入 ModelAdapter，绝不写入日志/异常堆栈
+- **限流防滥用**：用全局 key 的用户受 `llm_per_user_limit` 约束；自配 key 的用户不限流（自付成本）
+- **管理员审计**：管理员查看用户列表时只看到"是否自配 key"（布尔），看不到 key 内容（8.3 红线）
+
+### 8.5 权限实现
 
 - **RBAC 基础**：FastAPI 依赖注入 `get_current_user` 已有（13.1），新增 `require_admin` 依赖——校验 `user.role == "admin"`
 - **管理 API 前缀**：所有管理员接口统一 `/api/v1/admin/*`，路由级强制 `require_admin`
-- **资源级隔离复用 12.1**：管理员访问全局资源（`is_system=true` 的模板/Rubric）时不按 user_id 过滤；访问用户列表时只返回聚合信息
+- **资源级隔离复用 13.1**：管理员访问全局资源（`is_system=true` 的模板/Rubric）时不按 user_id 过滤；访问用户列表时只返回聚合信息
 - **审计中间件**：`/api/v1/admin/*` 的所有写操作自动记审计日志（admin_id, action, target, before, after, timestamp）
 
-### 8.5 管理后台形态（MVP）
+### 8.6 管理后台形态（MVP）
 
 MVP 不做花哨的管理后台 UI，只做**最简功能页**：
 - `/admin` 入口（仅 admin 角色可见）
-- 子页：全局模板管理 / 全局 Rubric 管理 / 技能管理 / 用户列表 / AI 配置 / 日志监控
+- 子页：全局模板管理 / 全局 Rubric 管理 / 技能管理 / 用户列表 / **LLM 配置（含全局开关）/ 日志监控**
 - 复用普通用户的组件（模板编辑器、Rubric 编辑器），只是操作的是 `is_system=true` 的全局资源
 
-### 8.6 演进路径（预留，MVP 不实现）
+### 8.7 演进路径（预留，MVP 不实现）
 
 | 阶段 | 新增角色 | 新增能力 |
 |---|---|---|
-| P2+ 企业版 | `org_admin` | 组织/成员管理、组织知识库、组织统一模板/Rubric、组织内数据可见性策略 |
-| P2+ 平台版 | —（admin 扩展） | 多租户隔离、计费/订阅、套餐管理、公共知识库审核、用户上报内容审核 |
+| P2+ 企业版 | `org_admin` | 组织/成员管理、组织知识库、组织统一模板/Rubric、组织内数据可见性策略、组织级 LLM 配置 |
+| P2+ 平台版 | —（admin 扩展） | 多租户隔离、计费/订阅、套餐管理、公共知识库审核、用户上报内容审核、按套餐分配 LLM 额度 |
 
 数据模型已预留 `User.org_id`（组织字段），演进时无需重构 User 表。
 
@@ -1285,7 +1384,11 @@ Word 的自动编号（1. / 1.1 / 1.1.1）是**渲染时由 Word 计算**的，d
 | 25 | **知识库自定义（增量）** | 用户可上传文档扩充知识库；可管理/删除（7.3） |
 | 26 | **技能自定义（增量）** | 用户可启用/禁用内置技能（rag/review/consistency 等）（7.4） |
 | 27 | **管理员：全局内容维护** | admin 可管理系统默认模板/Rubric/内置技能（8.2①） |
-| 28 | **管理员：AI 配置管控** | admin 可配 LLM/embedding Provider、key、配额、限流（8.2②） |
+| 28 | **管理员：全局 LLM 配置** | admin 可配全局 key（base_url/api_key/model）+ 全局开关 + 按用户限流 + 测试连通性（8.4.2） |
+| 28a | **用户：BYOK 自配** | 用户可填任意 OpenAI 兼容 Provider 的 key 覆盖全局；可测试连通性；可启用/禁用（8.4.3） |
+| 28b | **Provider 三级解析** | 用户自配 > 全局 > 报错引导；全局关闭时强制 BYOK（8.4.1） |
+| 28c | **Key 加密存储** | api_key AES 加密落库；API 不返回明文；不记日志（8.4.5） |
+| 28d | **无可用配置引导** | 全局关闭且用户未配 key 时，强制引导到配置页，未配置不可用 AI（8.4.3） |
 | 29 | **管理员：用户运营** | admin 可看用户列表（聚合）、封禁/解禁、重置密码；**不可见用户私人数据**（8.2③/8.3） |
 | 30 | **管理员：监控运维** | admin 可看日志、LLM 调用统计；审计管理员自身操作（8.2④⑤） |
 | 31 | **首个管理员创建** | 命令行脚本创建首个 admin，不开放注册管理员（8.1） |
@@ -1496,6 +1599,10 @@ Word 的自动编号（1. / 1.1 / 1.1.1）是**渲染时由 Word 计算**的，d
 | 管理员定位 | C 系统运维（MVP）+ 预留 A/B 演进 | MVP 不做组织/计费，避免臆造需求 |
 | 数据可见性红线 | 用户私人数据管理员默认不可见 | 专利是敏感商业数据，强制隔离 |
 | 首个管理员产生 | 命令行脚本创建，非注册 | 避免"谁能成为管理员"的安全漏洞 |
+| LLM key 策略 | 管理员全局开关 + 用户可覆盖（BYOK） | 灵活的成本归属：平台买单或用户自付 |
+| 用户自带 Provider | 任意 OpenAI 兼容（base_url+key+model） | 契合现有抽象，不绑死厂商 |
+| Key 解析优先级 | 用户自配 > 全局 > 报错 | 用户自配始终优先，成本可控 |
+| Key 安全 | AES 加密落库，不明文返回/不记日志 | API key 是敏感凭证 |
 
 ## 附录 B：待后续明确（不影响 MVP 启动）
 
@@ -1525,3 +1632,6 @@ Word 的自动编号（1. / 1.1 / 1.1.1）是**渲染时由 Word 计算**的，d
 | Store 记忆膨胀（审查记录累积） | 🟢 低 | namespace 按 (user, project) 隔离；定期归档旧记录 |
 | 管理员权限滥用（越权看用户数据） | 🟡 中 | 数据可见性红线（8.3）+ 审计日志（8.2⑤）+ 管理接口仅 /admin/* 路由 + require_admin 强制校验 |
 | 管理后台被普通用户访问 | 🟢 低 | 路由级 require_admin 依赖；前端 /admin 入口按 role 条件渲染 |
+| 用户 LLM key 泄露 | 🟡 中 | AES 加密落库；API 掩码返回；不记日志/堆栈；ENCRYPTION_KEY 部署期严格保管 |
+| 用户填入无效 key 导致功能不可用 | 🟡 中 | 配置后强制"测试连通性"；失败给清晰错误（401/网络/模型名错误） |
+| 全局 key 被滥用（用户刷额度） | 🟡 中 | llm_per_user_limit 按用户限流；监控异常用量；必要时关闭全局强制 BYOK |
