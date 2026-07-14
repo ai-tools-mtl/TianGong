@@ -102,20 +102,31 @@ export const api = {
     }),
 
   // ── AI（SSE 流式）──
-  streamChat: async (sectionId: string, message: string, onToken: (t: string) => void) => {
+  streamChat: async (
+    sectionId: string,
+    message: string,
+    onToken: (t: string) => void,
+    signal?: AbortSignal,
+  ) => {
     const res = await fetch(`${BASE}/api/v1/sections/${sectionId}/chat`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message }),
+      signal,
     })
     return _consumeSSE(res, onToken)
   },
 
-  streamGenerate: async (sectionId: string, onToken: (t: string) => void) => {
+  streamGenerate: async (
+    sectionId: string,
+    onToken: (t: string) => void,
+    signal?: AbortSignal,
+  ) => {
     const res = await fetch(`${BASE}/api/v1/sections/${sectionId}/generate`, {
       method: 'POST',
       credentials: 'include',
+      signal,
     })
     return _consumeSSE(res, onToken)
   },
@@ -179,16 +190,22 @@ async function _consumeSSE(res: Response, onToken: (t: string) => void): Promise
     const { done, value } = await reader.read()
     if (done) break
     buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() || ''
-    for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        try {
-          const data = JSON.parse(line.slice(6))
-          if (data.text) onToken(data.text)
-        } catch {
-          // 忽略解析失败的行
-        }
+    // SSE 事件以空行分隔
+    const events = buffer.split('\n\n')
+    buffer = events.pop() || ''
+    for (const evt of events) {
+      const lines = evt.split('\n')
+      let dataLine = ''
+      for (const line of lines) {
+        if (line.startsWith('data: ')) dataLine = line.slice(6)
+      }
+      if (!dataLine) continue
+      try {
+        const data = JSON.parse(dataLine)
+        if (data.text) onToken(data.text)
+        // heartbeat/error/done 事件无 text，忽略（上层靠流结束判断）
+      } catch {
+        // 忽略解析失败的行
       }
     }
   }

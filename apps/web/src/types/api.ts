@@ -82,6 +82,7 @@ export interface Section {
   content: Record<string, unknown> | null
   summary: string | null
   status: 'empty' | 'drafting' | 'confirmed'
+  version: number
   created_at: string
   updated_at: string
 }
