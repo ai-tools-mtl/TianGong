@@ -274,3 +274,82 @@ def test_run_review_uses_one_run_when_consistency_check_disabled(db, monkeypatch
 
     # 1 维度 × 1 run（consistency_check 禁用）= 1 次
     assert calls["n"] == 1
+
+
+def _login(client, registered_user):
+    client.post("/api/v1/auth/login", json={
+        "email": registered_user["email"], "password": registered_user["password"],
+    })
+
+
+def test_api_list_skills_returns_builtin_defaults(client, registered_user):
+    """GET /projects/{id}/skills 返回 5 个 builtin 全启用。"""
+    _login(client, registered_user)
+    res = client.post("/api/v1/projects", json={"title": "P"})
+    project_id = res.json()["id"]
+
+    res = client.get(f"/api/v1/projects/{project_id}/skills")
+    assert res.status_code == 200
+    data = res.json()
+    assert len(data) == 5
+    assert all(s["enabled"] is True for s in data)
+    assert all(s["is_builtin"] is True for s in data)
+
+
+def test_api_update_skill_persists_override(client, registered_user):
+    """PUT /projects/{id}/skills/{key} 持久化覆盖。"""
+    _login(client, registered_user)
+    project_id = client.post("/api/v1/projects", json={"title": "P"}).json()["id"]
+
+    res = client.put(
+        f"/api/v1/projects/{project_id}/skills/rag_search",
+        json={"enabled": False, "config": {"k": 3}},
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["skill_key"] == "rag_search"
+    assert body["enabled"] is False
+    assert body["config"] == {"k": 3}
+
+    # 再查 GET 确认持久化
+    res = client.get(f"/api/v1/projects/{project_id}/skills")
+    rag = next(s for s in res.json() if s["skill_key"] == "rag_search")
+    assert rag["enabled"] is False
+    assert rag["is_overridden"] is True
+
+
+def test_api_update_unknown_skill_returns_422(client, registered_user):
+    """未知 skill_key 返回 422。"""
+    _login(client, registered_user)
+    project_id = client.post("/api/v1/projects", json={"title": "P"}).json()["id"]
+    res = client.put(
+        f"/api/v1/projects/{project_id}/skills/nonexistent",
+        json={"enabled": False},
+    )
+    assert res.status_code == 422
+
+
+def test_api_list_skills_other_users_project_returns_404(client, registered_user, db_session):
+    """非本人项目返回 404。"""
+    from app.core.security import hash_password
+    from app.models import User
+    from app.services import project_service as ps
+
+    other = User(email="other@b.com", password_hash=hash_password("Pass1234!"), name="O")
+    db_session.add(other)
+    db_session.commit()
+    other_project = ps.create_project(db_session, user=other, title="别人的")
+
+    _login(client, registered_user)
+    res = client.get(f"/api/v1/projects/{other_project.id}/skills")
+    assert res.status_code == 404
+
+
+def test_api_skills_unauthenticated_returns_401(client, registered_user):
+    """未登录返回 401。"""
+    _login(client, registered_user)
+    project_id = client.post("/api/v1/projects", json={"title": "P"}).json()["id"]
+    # 清 cookie 模拟未登录
+    client.cookies.clear()
+    res = client.get(f"/api/v1/projects/{project_id}/skills")
+    assert res.status_code == 401
