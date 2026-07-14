@@ -44,7 +44,12 @@ def update_section(
     if status is not None:
         if status not in ("empty", "drafting", "confirmed"):
             raise ValidationError("无效的章节状态")
+        old_status = section.status
         section.status = status
+        if status == "confirmed" and old_status != "confirmed":
+            # 触发 summary 生成（供跨章节上下文用，设计 5.10）
+            from app.services.summary_service import generate_summary
+            generate_summary(db, section)
     db.commit()
     db.refresh(section)
     return section
