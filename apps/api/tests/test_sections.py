@@ -111,3 +111,28 @@ def test_update_section_without_expected_version_skips_lock(db_session, register
         content={"type": "doc"},
     )
     assert updated.version == 2
+
+
+def test_api_update_section_optimistic_lock_409(client, registered_user, db_session):
+    """API 层：expected_version 不匹配返回 409。"""
+    section, _user = _make_section(db_session, registered_user)
+    _login(client, registered_user)
+
+    res = client.patch(f"/api/v1/sections/{section.id}", json={
+        "content": {"type": "doc"},
+        "expected_version": 999,
+    })
+    assert res.status_code == 409
+
+
+def test_api_update_section_returns_version(client, registered_user, db_session):
+    """API 层：成功更新时响应含 version 字段。"""
+    section, _user = _make_section(db_session, registered_user)
+    _login(client, registered_user)
+
+    res = client.patch(f"/api/v1/sections/{section.id}", json={
+        "content": {"type": "doc"},
+        "expected_version": 1,
+    })
+    assert res.status_code == 200
+    assert res.json()["version"] == 2
