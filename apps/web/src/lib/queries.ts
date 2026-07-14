@@ -69,8 +69,17 @@ export function useSections(projectId: string) {
 export function useUpdateSection() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, content, status }: { id: string; content?: object; status?: string }) =>
-      api.updateSection(id, { content, status }),
+    mutationFn: ({
+      id,
+      content,
+      status,
+      expected_version,
+    }: {
+      id: string
+      content?: object
+      status?: string
+      expected_version?: number
+    }) => api.updateSection(id, { content, status, expected_version }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sections'] }),
   })
 }

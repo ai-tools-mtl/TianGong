@@ -2,7 +2,8 @@
 
 import { CheckCircle2, Eye, History, PanelLeft, PanelRight, Search } from 'lucide-react'
 import { useParams } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import { AIChatPanel } from '@/components/ai-chat-panel'
@@ -11,7 +12,7 @@ import { TiptapEditor } from '@/components/editor/tiptap-editor'
 import { VersionDrawer } from '@/components/version-drawer'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
-import { useSections, useUpdateSection } from '@/lib/queries'
+import { queryKeys, useSections, useUpdateSection } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import { useUIStore } from '@/stores/ui'
 import type { Section } from '@/types/api'
@@ -22,9 +23,12 @@ export default function ProjectDetailPage() {
   const { data, isLoading } = useSections(projectId)
   const sections: Section[] = data ?? []
   const updateSection = useUpdateSection()
+  const qc = useQueryClient()
   const [currentId, setCurrentId] = useState<string | null>(null)
   const [current, setCurrent] = useState<Section | null>(null)
   const [versionOpen, setVersionOpen] = useState(false)
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle')
 
   const leftCollapsed = useUIStore((s) => s.leftCollapsed)
   const rightCollapsed = useUIStore((s) => s.rightCollapsed)
@@ -43,6 +47,16 @@ export default function ProjectDetailPage() {
     }
   }, [sections, currentId])
 
+  // 切换章节前 flush 防抖中的保存
+  useEffect(() => {
+    return () => {
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current)
+        saveTimer.current = null
+      }
+    }
+  }, [currentId])
+
   if (isLoading) {
     return (
       <div className="grid place-items-center py-20 text-sm text-muted-foreground">
@@ -60,14 +74,31 @@ export default function ProjectDetailPage() {
 
   function handleSave(json: object) {
     if (!current) return
-    updateSection.mutate(
-      {
-        id: current.id,
-        content: json,
-        status: current.status === 'empty' ? 'drafting' : current.status,
-      },
-      { onError: () => toast.error('保存失败') },
-    )
+    // 防抖 2s（设计 13.4）
+    if (saveTimer.current) clearTimeout(saveTimer.current)
+    setSaveState('saving')
+    saveTimer.current = setTimeout(() => {
+      updateSection.mutate(
+        {
+          id: current.id,
+          content: json,
+          status: current.status === 'empty' ? 'drafting' : current.status,
+          expected_version: current.version,
+        },
+        {
+          onSuccess: () => setSaveState('saved'),
+          onError: (err: { code?: string; message?: string }) => {
+            if (err?.code === 'conflict') {
+              toast.error('内容已被其他端修改，已刷新为最新版本')
+              qc.invalidateQueries({ queryKey: queryKeys.sections(projectId) })
+            } else {
+              toast.error('保存失败')
+            }
+            setSaveState('idle')
+          },
+        },
+      )
+    }, 2000)
   }
 
   function handleConfirm() {
@@ -127,9 +158,17 @@ export default function ProjectDetailPage() {
       {/* 中栏：编辑器 */}
       <section className="flex min-w-0 flex-col overflow-hidden">
         <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b px-4">
-          <h1 className="truncate text-[15px] font-semibold">
-            {current?.title ?? '未选择章节'}
-          </h1>
+          <div className="flex items-center gap-2">
+            <h1 className="truncate text-[15px] font-semibold">
+              {current?.title ?? '未选择章节'}
+            </h1>
+            {saveState === 'saving' && (
+              <span className="text-[11px] text-muted-foreground">保存中…</span>
+            )}
+            {saveState === 'saved' && (
+              <span className="text-[11px] text-muted-foreground">已保存</span>
+            )}
+          </div>
           {current && (
             <div className="flex shrink-0 items-center gap-1">
               <Button variant="ghost" size="sm" className="h-8 gap-1.5" asChild>
@@ -175,7 +214,7 @@ export default function ProjectDetailPage() {
           )}
         </div>
         <div className="flex-1 overflow-y-auto px-6 py-6">
-          <div className="mx-auto max-w-3xl">
+          <div className="mx-auto max-w-5xl">
             {current && (
               <TiptapEditor
                 key={current.id}

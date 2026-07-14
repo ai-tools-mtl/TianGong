@@ -95,7 +95,7 @@ export const api = {
 
   getSection: (id: string) => request<import('@/types/api').Section>(`/sections/${id}`),
 
-  updateSection: (id: string, data: { content?: object; status?: string }) =>
+  updateSection: (id: string, data: { content?: object; status?: string; expected_version?: number }) =>
     request<import('@/types/api').Section>(`/sections/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
