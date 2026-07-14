@@ -1,10 +1,12 @@
 'use client'
 
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { toast } from 'sonner'
 
+import { PageHeader, PageShell } from '@/components/page-shell'
 import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { api } from '@/lib/api'
@@ -59,49 +61,80 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-2xl space-y-6">
-      <h1 className="text-xl font-bold">LLM 配置</h1>
+    <PageShell width="narrow">
+      <PageHeader title="设置" description="配置你的 LLM 接入（BYOK）" />
 
-      <div className="space-y-1">
-        <p className="text-sm text-muted-foreground">
-          {myLLM
-            ? `当前使用：自配 Key（${myLLM.api_key_masked}，模型 ${myLLM.model}）`
-            : '当前使用：全局配置（如有）'}
+      <div className="py-6 space-y-4">
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-[15px]">当前状态</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-[13px] text-muted-foreground">
+              {myLLM
+                ? `使用自配 Key（${myLLM.api_key_masked}，模型 ${myLLM.model}）`
+                : '使用全局配置（如有）'}
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-[15px]">LLM 配置</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="baseUrl">API Base URL</Label>
+              <Input
+                id="baseUrl"
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder="https://open.bigmodel.cn/api/paas/v4"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="apiKey">API Key</Label>
+              <Input
+                id="apiKey"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder={myLLM?.api_key_masked || '输入你的 API Key'}
+                type="password"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="model">模型名</Label>
+              <Input
+                id="model"
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                placeholder="glm-4-flash"
+              />
+            </div>
+            <div className="flex flex-wrap gap-2 pt-1">
+              <Button onClick={handleTest} variant="outline" disabled={testing || !apiKey}>
+                {testing ? '测试中...' : '测试连通'}
+              </Button>
+              <Button onClick={() => saveLLM.mutate()} disabled={saveLLM.isPending || !apiKey}>
+                {saveLLM.isPending ? '保存中...' : '保存'}
+              </Button>
+              {myLLM && (
+                <Button
+                  onClick={() => deleteLLM.mutate()}
+                  variant="ghost"
+                  className="text-destructive hover:text-destructive"
+                >
+                  清除（用全局）
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        <p className="px-1 text-[12px] text-muted-foreground">
+          支持 OpenAI 兼容 Provider（智谱 GLM / OpenAI / DeepSeek / 本地 Ollama 等）。Key 加密存储，不明文返回。
         </p>
       </div>
-
-      <div className="space-y-4 rounded-lg border p-4">
-        <div className="space-y-2">
-          <Label htmlFor="baseUrl">API Base URL</Label>
-          <Input id="baseUrl" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://open.bigmodel.cn/api/paas/v4" />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="apiKey">API Key</Label>
-          <Input id="apiKey" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={myLLM?.api_key_masked || '输入你的 API Key'} type="password" />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="model">模型名</Label>
-          <Input id="model" value={model} onChange={(e) => setModel(e.target.value)} placeholder="glm-4-flash" />
-        </div>
-        <div className="flex gap-2">
-          <Button onClick={handleTest} variant="outline" disabled={testing || !apiKey}>
-            {testing ? '测试中...' : '测试连通'}
-          </Button>
-          <Button onClick={() => saveLLM.mutate()} disabled={saveLLM.isPending || !apiKey}>
-            {saveLLM.isPending ? '保存中...' : '保存'}
-          </Button>
-          {myLLM && (
-            <Button onClick={() => deleteLLM.mutate()} variant="ghost" className="text-destructive">
-              清除（用全局）
-            </Button>
-          )}
-        </div>
-      </div>
-
-      <p className="text-xs text-muted-foreground">
-        支持 OpenAI 兼容 Provider（智谱 GLM / OpenAI / DeepSeek / 本地 Ollama 等）。
-        Key 加密存储，不明文返回。
-      </p>
-    </div>
+    </PageShell>
   )
 }

@@ -6,8 +6,9 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { useDeleteProject } from '@/lib/queries'
 import { api } from '@/lib/api'
+import { useDeleteProject } from '@/lib/queries'
+import { cn } from '@/lib/utils'
 import type { Project } from '@/types/api'
 
 const STATUS_LABEL: Record<string, string> = {
@@ -15,6 +16,13 @@ const STATUS_LABEL: Record<string, string> = {
   in_progress: '进行中',
   completed: '已完成',
   archived: '已归档',
+}
+
+const STATUS_TONE: Record<string, string> = {
+  draft: 'bg-muted text-muted-foreground',
+  in_progress: 'bg-info/10 text-info',
+  completed: 'bg-success/10 text-success',
+  archived: 'bg-muted text-muted-foreground',
 }
 
 export function ProjectCard({ project }: { project: Project }) {
@@ -39,29 +47,55 @@ export function ProjectCard({ project }: { project: Project }) {
   }
 
   return (
-    <Card>
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-base cursor-pointer" onClick={() => router.push(`/projects/${project.id}`)}>
-          {project.title}
-        </CardTitle>
-        <Badge variant="secondary">{STATUS_LABEL[project.status] || project.status}</Badge>
+    <Card
+      className="group cursor-pointer transition-colors hover:border-foreground/20"
+      onClick={() => router.push(`/projects/${project.id}`)}
+    >
+      <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
+        <CardTitle className="text-[15px] leading-snug">{project.title}</CardTitle>
+        <Badge
+          variant="secondary"
+          className={cn('shrink-0', STATUS_TONE[project.status])}
+        >
+          {STATUS_LABEL[project.status] || project.status}
+        </Badge>
       </CardHeader>
-      <CardContent className="space-y-2">
-        <p className="text-xs text-muted-foreground">
-          阶段：{project.stage} · 进度 {project.progress_pct}%
-        </p>
-        <p className="text-xs text-muted-foreground">
-          更新于 {new Date(project.updated_at).toLocaleString('zh-CN')}
-        </p>
-        <div className="flex gap-1">
-          {project.status === 'completed' && (
-            <Button variant="ghost" size="sm" onClick={handleArchive}>
-              归档
+      <CardContent className="space-y-3">
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+            <span>{project.stage}</span>
+            <span className="tabular-nums">{project.progress_pct}%</span>
+          </div>
+          <div className="h-1 overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full bg-primary transition-all"
+              style={{ width: `${project.progress_pct}%` }}
+            />
+          </div>
+        </div>
+        <div className="flex items-center justify-between pt-1">
+          <p className="text-[11px] text-muted-foreground">
+            {new Date(project.updated_at).toLocaleDateString('zh-CN')}
+          </p>
+          <div
+            className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {project.status === 'completed' && (
+              <Button variant="ghost" size="xs" onClick={handleArchive}>
+                归档
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="xs"
+              className="text-destructive hover:text-destructive"
+              onClick={handleDelete}
+              disabled={del.isPending}
+            >
+              删除
             </Button>
-          )}
-          <Button variant="ghost" size="sm" className="text-destructive" onClick={handleDelete} disabled={del.isPending}>
-            删除
-          </Button>
+          </div>
         </div>
       </CardContent>
     </Card>

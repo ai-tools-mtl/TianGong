@@ -1,21 +1,25 @@
 import Link from 'next/link'
 
 import { AuthForm } from '@/components/auth-form'
+import { Logo } from '@/components/logo'
 
 export default function RegisterPage() {
   return (
-    <main className="flex min-h-screen items-center justify-center px-4">
-      <div className="w-full max-w-sm space-y-6">
-        <div className="text-center space-y-2">
-          <h1 className="text-2xl font-bold">天工 TianGong</h1>
-          <p className="text-sm text-muted-foreground">创建新账户</p>
-        </div>
-        <AuthForm mode="register" />
-        <p className="text-center text-sm text-muted-foreground">
-          已有账户？{' '}
-          <Link href="/login" className="text-primary underline">登录</Link>
-        </p>
+    <div className="space-y-6">
+      <div className="space-y-2 lg:hidden">
+        <Logo />
       </div>
-    </main>
+      <div className="space-y-1.5">
+        <h1 className="text-2xl font-bold tracking-tight">创建账户</h1>
+        <p className="text-[13px] text-muted-foreground">开始你的第一份交底书</p>
+      </div>
+      <AuthForm mode="register" />
+      <p className="text-center text-[13px] text-muted-foreground">
+        已有账户？{' '}
+        <Link href="/login" className="font-medium text-primary hover:underline">
+          登录
+        </Link>
+      </p>
+    </div>
   )
 }
