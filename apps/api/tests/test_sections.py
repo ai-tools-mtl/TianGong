@@ -54,3 +54,60 @@ def test_update_section_invalid_status(client, registered_user, db_session):
 
     res = client.patch(f"/api/v1/sections/{sections[0]['id']}", json={"status": "bogus"})
     assert res.status_code == 422
+
+
+def _make_section(db_session, registered_user):
+    """建项目取第一个章节。返回 (section, user)。"""
+    from app.services.seed_service import ensure_default_template
+    from app.services.project_service import create_project
+    from app.services.section_service import list_sections
+    from app.models import User
+    from sqlalchemy import select
+
+    ensure_default_template(db_session)
+    user = db_session.scalar(select(User).where(User.email == registered_user["email"]))
+    p = create_project(db_session, user=user, title="测试发明")
+    section = list_sections(db_session, user_id=user.id, project_id=str(p.id))[0]
+    return section, user
+
+
+def test_update_section_version_mismatch_raises_conflict(db_session, registered_user):
+    """乐观锁：expected_version 不匹配时抛 ConflictError。"""
+    from app.core.exceptions import ConflictError
+    from app.services.section_service import update_section
+
+    section, user = _make_section(db_session, registered_user)
+    assert section.version == 1
+
+    import pytest
+    with pytest.raises(ConflictError):
+        update_section(
+            db_session, user_id=user.id, section_id=str(section.id),
+            content={"type": "doc"}, expected_version=999,
+        )
+
+
+def test_update_section_version_match_increments(db_session, registered_user):
+    """乐观锁：expected_version 匹配时更新成功且 version +1。"""
+    from app.services.section_service import update_section
+
+    section, user = _make_section(db_session, registered_user)
+    assert section.version == 1
+
+    updated = update_section(
+        db_session, user_id=user.id, section_id=str(section.id),
+        content={"type": "doc"}, expected_version=1,
+    )
+    assert updated.version == 2
+
+
+def test_update_section_without_expected_version_skips_lock(db_session, registered_user):
+    """不传 expected_version 时跳过乐观锁（向后兼容旧客户端）。"""
+    from app.services.section_service import update_section
+
+    section, user = _make_section(db_session, registered_user)
+    updated = update_section(
+        db_session, user_id=user.id, section_id=str(section.id),
+        content={"type": "doc"},
+    )
+    assert updated.version == 2

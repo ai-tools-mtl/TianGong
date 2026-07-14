@@ -14,7 +14,7 @@ def _to_out(s) -> SectionOut:
     return SectionOut(
         id=str(s.id), project_id=str(s.project_id), order=s.order, key=s.key,
         title=s.title, content=s.content, summary=s.summary, status=s.status,
-        created_at=s.created_at, updated_at=s.updated_at,
+        version=s.version, created_at=s.created_at, updated_at=s.updated_at,
     )
 
 
@@ -50,5 +50,6 @@ def update_section(
     s = section_service.update_section(
         db, user_id=current_user.id, section_id=section_id,
         content=payload.content, status=payload.status,
+        expected_version=payload.expected_version,
     )
     return _to_out(s)
