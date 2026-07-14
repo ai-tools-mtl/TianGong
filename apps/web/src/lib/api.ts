@@ -138,6 +138,10 @@ export const api = {
 
   exportDocxUrl: (projectId: string) => `${BASE}/api/v1/projects/${projectId}/export/docx`,
   exportMarkdownUrl: (projectId: string) => `${BASE}/api/v1/projects/${projectId}/export/markdown`,
+
+  // ── 知识库 ──
+  archiveProject: (projectId: string) =>
+    request<{ project_id: string; chunks: number; status: string }>(`/projects/${projectId}/archive`, { method: 'POST' }),
 }
 
 async function _consumeSSE(res: Response, onToken: (t: string) => void): Promise<void> {
