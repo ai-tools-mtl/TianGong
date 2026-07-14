@@ -211,6 +211,15 @@ export const api = {
   setGlobalLLM: (data: { enabled: boolean; base_url?: string; api_key?: string; model?: string }) =>
     request<import('@/types/api').GlobalLLMSettings>(`/admin/llm-config`, { method: 'PUT', body: JSON.stringify(data) }),
 
+  banUser: (userId: string, status: 'active' | 'disabled') =>
+    request<{ id: string; status: string }>(`/admin/users/${userId}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  resetUserPassword: (userId: string, newPassword: string) =>
+    request<{ ok: boolean }>(`/admin/users/${userId}/reset-password`, { method: 'POST', body: JSON.stringify({ new_password: newPassword }) }),
+  listLLMStats: (days = 7) =>
+    request<import('@/types/api').LLMStats>(`/admin/stats/llm?days=${days}`),
+  listAuditLogs: (page = 1, size = 50) =>
+    request<import('@/types/api').AuditLogPage>(`/admin/audit-logs?page=${page}&size=${size}`),
+
   // ── 用户设置 ──
   getMyLLM: () => request<import('@/types/api').UserLLMSettings | null>(`/settings/llm`),
   setMyLLM: (data: { provider?: string; base_url: string; api_key: string; model: string; embedding_model?: string }) =>

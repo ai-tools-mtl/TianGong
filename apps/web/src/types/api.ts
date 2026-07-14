@@ -184,6 +184,54 @@ export interface GlobalLLMSettings {
   global_config: { base_url: string; api_key_masked: string; model: string } | null
 }
 
+// ── LLM 调用统计（plan 13）──
+
+export interface LLMStatsByModel {
+  model: string
+  calls: number
+  success: number
+  failed: number
+  avg_duration_ms: number | null
+}
+
+export interface LLMStatsByUser {
+  user_id: string | null
+  email: string
+  calls: number
+  success: number
+  failed: number
+}
+
+export interface LLMStats {
+  days: number
+  total_calls: number
+  total_success: number
+  total_failed: number
+  avg_duration_ms: number | null
+  by_model: LLMStatsByModel[]
+  by_user: LLMStatsByUser[]
+}
+
+// ── 审计日志（plan 13）──
+
+export interface AuditLogItem {
+  id: string
+  actor_id: string | null
+  actor_email: string
+  action: string
+  target_type: string
+  target_id: string | null
+  detail: Record<string, unknown> | null
+  created_at: string | null
+}
+
+export interface AuditLogPage {
+  total: number
+  page: number
+  size: number
+  items: AuditLogItem[]
+}
+
 export interface UserLLMSettings {
   provider: string
   base_url: string
