@@ -1,5 +1,7 @@
 """管理员 API + 用户 LLM 设置 API（设计 8.2/8.4）。"""
 
+import uuid as _uuid
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -8,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.deps import get_current_user, require_admin
 from app.models import Project, User, UserLLMConfig
-from app.services import llm_config_service
+from app.services import admin_service, llm_config_service
 
 router = APIRouter(tags=["admin"])
 
@@ -41,6 +43,44 @@ def list_users(
             "created_at": u.created_at.isoformat(),
         })
     return result
+
+
+# ── 管理员：用户运营（封禁/解禁/重置密码，设计 8.1）──
+
+class UserStatusUpdate(BaseModel):
+    status: str  # active / disabled
+
+
+class PasswordReset(BaseModel):
+    new_password: str
+
+
+@router.patch("/admin/users/{user_id}/status")
+def update_user_status(
+    user_id: str,
+    payload: UserStatusUpdate,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """封禁/解禁用户。自我保护在 service 层强制。"""
+    target = admin_service.set_user_status(
+        db, actor=admin, user_id=_uuid.UUID(user_id), status=payload.status,
+    )
+    return {"id": str(target.id), "status": target.status}
+
+
+@router.post("/admin/users/{user_id}/reset-password")
+def reset_user_password(
+    user_id: str,
+    payload: PasswordReset,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """重置用户密码（管理员线下告知，不返回敏感信息）。"""
+    admin_service.reset_user_password(
+        db, actor=admin, user_id=_uuid.UUID(user_id), new_password=payload.new_password,
+    )
+    return {"ok": True}
 
 
 # ── 管理员：全局 LLM 配置 ──
