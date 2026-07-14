@@ -216,3 +216,61 @@ def test_retrieve_knowledge_runs_when_rag_search_enabled(db):
         assert retrieve_called["n"] == 1
     finally:
         retriever_mod.retrieve = original_retrieve
+
+
+def test_run_review_raises_when_rubric_review_disabled(db):
+    """rubric_review 禁用时 run_review 拒绝执行。"""
+    import pytest
+    from app.core.exceptions import ValidationError
+    from app.models import AgentSkill, Section
+
+    p = _make_project(db)
+    db.add(AgentSkill(project_id=p.id, skill_key="rubric_review", enabled=False))
+    db.commit()
+    # 加一个章节（review 需要）
+    s = Section(project_id=p.id, template_section_id="t1", order=1, key="name",
+                title="发明名称", status="empty")
+    db.add(s)
+    db.commit()
+
+    from app.services import review_service
+    with pytest.raises(ValidationError):
+        review_service.run_review(db, user_id=p.user_id, project_id=str(p.id))
+
+
+def test_run_review_uses_one_run_when_consistency_check_disabled(db, monkeypatch):
+    """consistency_check 禁用时 _score_dimension 只调一次（CONSISTENCY_RUNS=1）。"""
+    from app.models import Section
+
+    p = _make_project(db)
+    # 禁用 consistency_check
+    from app.models import AgentSkill
+    db.add(AgentSkill(project_id=p.id, skill_key="consistency_check", enabled=False))
+    db.commit()
+    # 加章节
+    s = Section(project_id=p.id, template_section_id="t1", order=1, key="name",
+                title="发明名称", status="confirmed")
+    s.content = {"text": "some content"}
+    db.add(s)
+    db.commit()
+
+    # mock _score_dimension 计数
+    calls = {"n": 0}
+
+    import app.services.review_service as rs
+    def counting_score(criterion, sections):
+        calls["n"] += 1
+        return (80, "ev", "sug")
+
+    monkeypatch.setattr(rs, "_score_dimension", counting_score)
+    # mock get_effective_rubric 返回 1 个 criterion，避免依赖种子
+    def fake_rubric(d, user_id):
+        class FakeRubric:
+            criteria = [{"key": "k", "name": "N", "weight": 1.0}]
+        return FakeRubric()
+    monkeypatch.setattr(rs, "get_effective_rubric", fake_rubric)
+
+    rs.run_review(db, user_id=p.user_id, project_id=str(p.id))
+
+    # 1 维度 × 1 run（consistency_check 禁用）= 1 次
+    assert calls["n"] == 1

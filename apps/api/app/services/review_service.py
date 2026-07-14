@@ -13,11 +13,12 @@ from sqlalchemy.orm import Session
 
 from app.ai.llm_client import get_llm
 from app.ai.rubric_prompts import SCORE_SYSTEM_PROMPT, build_score_prompt
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import NotFoundError, ValidationError
 from app.models import Project, ReviewRecord, Section
 from app.services.rubric_service import get_effective_rubric
+from app.services.skill_service import is_skill_enabled
 
-CONSISTENCY_RUNS = 2  # 自一致性：每维度评分次数
+CONSISTENCY_RUNS = 2  # 自一致性：每维度评分次数（consistency_check 启用）
 
 
 def run_review(db: Session, *, user_id, project_id: str) -> ReviewRecord:
@@ -31,6 +32,14 @@ def run_review(db: Session, *, user_id, project_id: str) -> ReviewRecord:
     if project is None or project.user_id != user_id:
         raise NotFoundError("项目不存在")
 
+    # 设计 7.4：rubric_review 禁用则拒绝审查
+    if not is_skill_enabled(db, project_id=pid, skill_key="rubric_review"):
+        raise ValidationError("已禁用 Rubric 审查技能")
+    # consistency_check 禁用则每维度只跑一次
+    runs = CONSISTENCY_RUNS if is_skill_enabled(
+        db, project_id=pid, skill_key="consistency_check"
+    ) else 1
+
     # ① load
     rubric = get_effective_rubric(db, user_id=user_id)
     sections = _get_section_texts(db, pid)
@@ -42,7 +51,7 @@ def run_review(db: Session, *, user_id, project_id: str) -> ReviewRecord:
         scores = []
         last_evidence = ""
         last_suggestion = ""
-        for _ in range(CONSISTENCY_RUNS):
+        for _ in range(runs):
             score, evidence, suggestion = _score_dimension(criterion, sections)
             scores.append(score)
             last_evidence = evidence
