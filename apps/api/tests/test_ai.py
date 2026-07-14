@@ -1,3 +1,21 @@
+def _make_logged_in_section(client, registered_user, db_session):
+    """登录 + 建项目 + 返回第一个 section 对象（含真实 id）。"""
+    from app.services.seed_service import ensure_default_template
+    from app.services.project_service import create_project
+    from app.services.section_service import list_sections
+    from app.models import User
+    from sqlalchemy import select
+
+    ensure_default_template(db_session)
+    user = db_session.scalar(select(User).where(User.email == registered_user["email"]))
+    p = create_project(db_session, user=user, title="测试发明")
+    sections = list_sections(db_session, user_id=user.id, project_id=str(p.id))
+    client.post("/api/v1/auth/login", json={
+        "email": registered_user["email"], "password": registered_user["password"],
+    })
+    return sections[0]
+
+
 def test_astream_functions_exist():
     """三个异步编排函数存在且是 async generator function。"""
     import inspect
@@ -12,3 +30,43 @@ def test_sync_functions_still_exist():
     from app.ai.orchestrator import stream_chat, stream_generate, stream_rewrite
     for fn in (stream_chat, stream_generate, stream_rewrite):
         assert callable(fn)
+
+
+def test_chat_endpoint_emits_done_event_with_heartbeat_support(client, registered_user, db_session, monkeypatch):
+    """SSE chat 端点：mock LLM，验证 token/done 事件格式 + 异步 generate。"""
+    section = _make_logged_in_section(client, registered_user, db_session)
+
+    # mock astream_chat 返回固定 token
+    async def fake_astream_chat(db, section, history, msg):
+        yield "hello"
+
+    monkeypatch.setattr("app.api.ai.astream_chat", fake_astream_chat)
+
+    res = client.post(f"/api/v1/sections/{section.id}/chat", json={"message": "hi"})
+    assert res.status_code == 200
+    body = res.text
+    assert "event: token" in body
+    assert "event: done" in body
+    assert "hello" in body
+
+
+def test_generate_saves_draft_on_completion(client, registered_user, db_session, monkeypatch):
+    """generate 端点正常完成时把 markdown 转为 tiptap 存入 section.content。"""
+    section = _make_logged_in_section(client, registered_user, db_session)
+    assert section.content is None  # 初始为空
+
+    async def fake_astream_generate(db, sec, history):
+        yield "# 标题"
+
+    monkeypatch.setattr("app.api.ai.astream_generate", fake_astream_generate)
+
+    res = client.post(f"/api/v1/sections/{section.id}/generate")
+    assert res.status_code == 200
+    assert "event: done" in res.text
+
+    # 验证草稿已存
+    db_session.expire_all()
+    from app.models import Section
+    s = db_session.get(Section, section.id)
+    assert s.content is not None
+    assert s.status == "drafting"
