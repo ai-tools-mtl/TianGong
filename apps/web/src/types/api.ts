@@ -14,6 +14,7 @@ export interface Project {
   status: string
   progress_pct: number
   metadata: Record<string, unknown> | null
+  archived_at: string | null
   created_at: string
   updated_at: string
 }

@@ -1,6 +1,6 @@
 'use client'
 
-import { CheckCircle2, Eye, History, PanelLeft, PanelRight, Search } from 'lucide-react'
+import { Archive, CheckCircle2, Eye, History, PanelLeft, PanelRight, Search } from 'lucide-react'
 import { useParams } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
@@ -14,7 +14,7 @@ import type { TiptapEditorRef } from '@/components/editor/tiptap-editor'
 import { VersionDrawer } from '@/components/version-drawer'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
-import { queryKeys, useSections, useUpdateSection } from '@/lib/queries'
+import { queryKeys, useArchiveProject, useProject, useSections, useUpdateSection } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import { useUIStore } from '@/stores/ui'
 import type { Section } from '@/types/api'
@@ -25,6 +25,8 @@ export default function ProjectDetailPage() {
   const { data, isLoading } = useSections(projectId)
   const sections: Section[] = data ?? []
   const updateSection = useUpdateSection()
+  const { data: project } = useProject(projectId)
+  const archiveMutation = useArchiveProject()
   const qc = useQueryClient()
   const [currentId, setCurrentId] = useState<string | null>(null)
   const [current, setCurrent] = useState<Section | null>(null)
@@ -113,6 +115,20 @@ export default function ProjectDetailPage() {
         onError: () => toast.error('操作失败'),
       },
     )
+  }
+
+  function handleArchive() {
+    archiveMutation.mutate(projectId, {
+      onSuccess: (res) => {
+        if (project?.status === 'archived') {
+          toast.success('知识库已更新')
+        } else {
+          toast.success(`已归档，写入 ${res.chunks} 个知识块`)
+        }
+      },
+      onError: (err: { code?: string; message?: string }) =>
+        toast.error(err?.message || '归档失败'),
+    })
   }
 
   // 三栏宽度按折叠态切换：左栏 240 / 收起 56；右栏 360 / 收起 0
@@ -212,6 +228,16 @@ export default function ProjectDetailPage() {
               >
                 <CheckCircle2 className="size-3.5" />
                 确认完成
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 gap-1.5"
+                onClick={handleArchive}
+                disabled={archiveMutation.isPending}
+              >
+                <Archive className="size-3.5" />
+                {project?.status === 'archived' ? '更新知识库' : '归档到知识库'}
               </Button>
             </div>
           )}

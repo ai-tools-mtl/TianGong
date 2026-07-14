@@ -11,6 +11,7 @@ import type { Project, ProjectCreate, Section, TemplateSummary } from '@/types/a
 
 export const queryKeys = {
   projects: ['projects'] as const,
+  project: (id: string) => ['projects', id] as const,
   me: ['me'] as const,
   templates: ['templates'] as const,
   sections: (id: string) => ['sections', id] as const,
@@ -37,6 +38,22 @@ export function useDeleteProject() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => api.deleteProject(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.projects }),
+  })
+}
+
+export function useProject(projectId: string) {
+  return useQuery<Project>({
+    queryKey: queryKeys.project(projectId),
+    queryFn: () => api.getProject(projectId),
+    enabled: !!projectId,
+  })
+}
+
+export function useArchiveProject() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.archiveProject(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.projects }),
   })
 }
