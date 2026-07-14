@@ -72,6 +72,9 @@ export default function ProjectDetailPage() {
                 <a href={`/projects/${projectId}/preview`}>
                   <Button variant="outline" size="sm">预览</Button>
                 </a>
+                <a href={`/projects/${projectId}/review`}>
+                  <Button variant="outline" size="sm">审查</Button>
+                </a>
                 <a href={api.exportDocxUrl(projectId)} target="_blank" rel="noopener noreferrer">
                   <Button variant="outline" size="sm">导出 Word</Button>
                 </a>
