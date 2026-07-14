@@ -100,4 +100,47 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
+
+  // ── AI（SSE 流式）──
+  streamChat: async (sectionId: string, message: string, onToken: (t: string) => void) => {
+    const res = await fetch(`${BASE}/api/v1/sections/${sectionId}/chat`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message }),
+    })
+    return _consumeSSE(res, onToken)
+  },
+
+  streamGenerate: async (sectionId: string, onToken: (t: string) => void) => {
+    const res = await fetch(`${BASE}/api/v1/sections/${sectionId}/generate`, {
+      method: 'POST',
+      credentials: 'include',
+    })
+    return _consumeSSE(res, onToken)
+  },
+}
+
+async function _consumeSSE(res: Response, onToken: (t: string) => void): Promise<void> {
+  if (!res.body) return
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    const lines = buffer.split('\n')
+    buffer = lines.pop() || ''
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        try {
+          const data = JSON.parse(line.slice(6))
+          if (data.text) onToken(data.text)
+        } catch {
+          // 忽略解析失败的行
+        }
+      }
+    }
+  }
 }

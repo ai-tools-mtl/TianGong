@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     # 加密
     encryption_key: str
 
+    # LLM（GLM via OpenAI 兼容协议）
+    glm_api_key: str = ""
+    glm_base_url: str = "https://open.bigmodel.cn/api/paas/v4"
+    glm_model: str = "glm-4-flash"
+
     # CORS（环境变量中以逗号分隔，按 CSV 解析）
     # NoDecode 阻止 pydantic-settings 把字符串当 JSON 解析，交给下面的 validator 切分
     cors_origins: Annotated[List[str], NoDecode] = ["http://localhost:3000"]
