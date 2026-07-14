@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.deps import get_current_user, require_admin
 from app.models import Project, User, UserLLMConfig
-from app.services import admin_service, llm_config_service
+from app.services import admin_service, llm_config_service, stats_service
 
 router = APIRouter(tags=["admin"])
 
@@ -81,6 +81,20 @@ def reset_user_password(
         db, actor=admin, user_id=_uuid.UUID(user_id), new_password=payload.new_password,
     )
     return {"ok": True}
+
+
+# ── 管理员：LLM 调用统计（设计 8.2④，仅元数据聚合）──
+
+@router.get("/admin/stats/llm")
+def get_llm_stats_endpoint(
+    days: int = 7,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """LLM 调用统计聚合（绝不返回 prompt/completion 内容）。"""
+    if days < 1 or days > 90:
+        days = 7
+    return stats_service.get_llm_stats(db, days=days)
 
 
 # ── 管理员：全局 LLM 配置 ──

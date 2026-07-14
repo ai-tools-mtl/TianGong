@@ -154,3 +154,35 @@ def test_set_global_llm_writes_audit_without_api_key(client, admin_and_login, db
     assert detail.get("enabled") is True
     assert log.actor_email == admin_and_login.email
     assert log.target_type == "system_setting"
+
+
+# ── LLM 调用统计端点 ──
+
+def test_get_llm_stats_endpoint_admin_ok(client, admin_and_login, db_session):
+    """管理员可访问统计端点。"""
+    from app.models import LLMCallLog
+    log = LLMCallLog(
+        user_id=admin_and_login.id, project_id=None, action="chat",
+        model="glm-4-flash", provider="global", duration_ms=100, status="success",
+    )
+    db_session.add(log)
+    db_session.commit()
+
+    res = client.get("/api/v1/admin/stats/llm?days=7")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["total_calls"] == 1
+    assert data["total_success"] == 1
+    assert len(data["by_model"]) == 1
+    # 红线：响应里绝无内容字段
+    assert "prompt" not in data
+    assert "completion" not in data
+
+
+def test_get_llm_stats_endpoint_normal_user_forbidden(client, registered_user):
+    """普通用户 403。"""
+    client.post("/api/v1/auth/login", json={
+        "email": registered_user["email"], "password": registered_user["password"],
+    })
+    res = client.get("/api/v1/admin/stats/llm")
+    assert res.status_code == 403
