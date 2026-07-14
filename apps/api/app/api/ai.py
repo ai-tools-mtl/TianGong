@@ -2,8 +2,9 @@
 
 import asyncio
 import json
+from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -35,28 +36,35 @@ def _get_section_with_history(
     return section, history
 
 
-async def _yield_with_heartbeat(async_gen):
+async def _yield_with_heartbeat(async_gen) -> AsyncIterator[tuple[str, str]]:
     """包装异步 token 生成器，空闲超 HEARTBEAT_INTERVAL 时插心跳事件。
+
+    用 asyncio.wait + task 复用（而非 wait_for），避免超时时取消
+    __anext__() 导致生成器被永久关闭（wait_for 的 bug 会杀掉慢速 LLM 流）。
 
     LLM 生成慢或长时间无 token 时，中间代理可能掐断空闲连接；
     心跳让连接保持活跃。token 与心跳交替 yield（统一 str）。
     """
     ait = async_gen.__aiter__()
+    nxt = asyncio.ensure_future(ait.__anext__())
     while True:
-        try:
-            token = await asyncio.wait_for(ait.__anext__(), timeout=HEARTBEAT_INTERVAL)
+        done, _pending = await asyncio.wait({nxt}, timeout=HEARTBEAT_INTERVAL)
+        if nxt in done:
+            try:
+                token = nxt.result()
+            except StopAsyncIteration:
+                break
             yield ("token", token)
-        except asyncio.TimeoutError:
+            nxt = asyncio.ensure_future(ait.__anext__())
+        else:
+            # 超时但 task 仍在运行（不取消），发心跳保活
             yield ("heartbeat", "")
-        except StopAsyncIteration:
-            break
 
 
 @router.post("/sections/{section_id}/chat")
 async def chat(
     section_id: str,
     payload: ChatRequest,
-    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -95,7 +103,6 @@ async def chat(
 @router.post("/sections/{section_id}/generate")
 async def generate_draft(
     section_id: str,
-    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -136,7 +143,6 @@ async def generate_draft(
 async def rewrite(
     section_id: str,
     payload: RewriteRequest,
-    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):

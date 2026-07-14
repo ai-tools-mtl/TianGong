@@ -70,3 +70,33 @@ def test_generate_saves_draft_on_completion(client, registered_user, db_session,
     s = db_session.get(Section, section.id)
     assert s.content is not None
     assert s.status == "drafting"
+
+
+def test_heartbeat_does_not_kill_slow_stream(client, registered_user, db_session, monkeypatch):
+    """心跳不能杀死慢速 LLM 流：第一个 token 后 sleep > 心跳间隔，第二个 token 仍应到达。
+
+    这是 wait_for bug 的回归测试：wait_for 超时会取消 __anext__()，
+    永久关闭生成器，导致心跳后的 token 全部丢失。
+    """
+    import asyncio
+
+    import app.api.ai as ai_module
+
+    section = _make_logged_in_section(client, registered_user, db_session)
+
+    # 把心跳间隔改小，让测试跑得快
+    monkeypatch.setattr(ai_module, "HEARTBEAT_INTERVAL", 0.3)
+
+    async def slow_astream_chat(db, sec, history, msg):
+        yield "first"
+        await asyncio.sleep(0.6)  # > 心跳间隔，触发心跳
+        yield "second"  # 心跳后这个 token 必须仍能到达（原 bug 会丢失）
+
+    monkeypatch.setattr("app.api.ai.astream_chat", slow_astream_chat)
+
+    res = client.post(f"/api/v1/sections/{section.id}/chat", json={"message": "hi"})
+    assert res.status_code == 200
+    body = res.text
+    assert "event: heartbeat" in body  # 心跳确实发了
+    assert "first" in body
+    assert "second" in body  # 关键：心跳后的 token 仍到达（原 bug 会丢失）
