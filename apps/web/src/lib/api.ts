@@ -154,6 +154,31 @@ export const api = {
   archiveProject: (projectId: string) =>
     request<{ project_id: string; chunks: number; status: string }>(`/projects/${projectId}/archive`, { method: 'POST' }),
 
+  // ── 附件 ──
+  listAttachments: (projectId: string) =>
+    request<import('@/types/api').Attachment[]>(`/projects/${projectId}/attachments`),
+
+  uploadAttachment: async (sectionId: string, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(`${BASE}/api/v1/sections/${sectionId}/attachments`, {
+      method: 'POST',
+      credentials: 'include',
+      body: form,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: `HTTP ${res.status}` }))
+      throw err
+    }
+    return res.json() as Promise<import('@/types/api').Attachment>
+  },
+
+  deleteAttachment: (id: string) =>
+    request<void>(`/attachments/${id}`, { method: 'DELETE' }),
+
+  attachmentUrl: (projectId: string, attachmentId: string) =>
+    `${BASE}/api/v1/projects/${projectId}/attachments/${attachmentId}/file`,
+
   // ── 审查 ──
   runReview: (projectId: string) =>
     request<import('@/types/api').ReviewRecord>(`/projects/${projectId}/review`, { method: 'POST' }),

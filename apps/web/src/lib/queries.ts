@@ -14,6 +14,7 @@ export const queryKeys = {
   me: ['me'] as const,
   templates: ['templates'] as const,
   sections: (id: string) => ['sections', id] as const,
+  attachments: (projectId: string) => ['attachments', projectId] as const,
 }
 
 // ── 项目 ──
@@ -81,5 +82,22 @@ export function useUpdateSection() {
       expected_version?: number
     }) => api.updateSection(id, { content, status, expected_version }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sections'] }),
+  })
+}
+
+// ── 附件 ──
+export function useAttachments(projectId: string) {
+  return useQuery({
+    queryKey: queryKeys.attachments(projectId),
+    queryFn: () => api.listAttachments(projectId),
+    enabled: !!projectId,
+  })
+}
+
+export function useDeleteAttachment() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.deleteAttachment(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['attachments'] }),
   })
 }

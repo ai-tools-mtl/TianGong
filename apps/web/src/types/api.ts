@@ -153,6 +153,18 @@ export interface Rubric {
   is_customized: boolean
 }
 
+// ── 附件 ──
+
+export interface Attachment {
+  id: string
+  project_id: string
+  section_id: string | null
+  filename: string
+  mime_type: string
+  size: number
+  created_at: string
+}
+
 // ── 管理 ──
 
 export interface AdminUser {
