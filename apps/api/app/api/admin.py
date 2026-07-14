@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.deps import get_current_user, require_admin
-from app.models import Project, User, UserLLMConfig
+from app.models import AuditLog, Project, User, UserLLMConfig
 from app.services import admin_service, llm_config_service, stats_service
 
 router = APIRouter(tags=["admin"])
@@ -95,6 +95,48 @@ def get_llm_stats_endpoint(
     if days < 1 or days > 90:
         days = 7
     return stats_service.get_llm_stats(db, days=days)
+
+
+# ── 管理员：审计日志列表（设计 8.2⑤）──
+
+@router.get("/admin/audit-logs")
+def list_audit_logs(
+    page: int = 1,
+    size: int = 50,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """审计日志列表（分页，时间倒序）。"""
+    if page < 1:
+        page = 1
+    if size < 1 or size > 200:
+        size = 50
+
+    total = db.scalar(select(func.count(AuditLog.id))) or 0
+    rows = list(db.scalars(
+        select(AuditLog)
+        .order_by(AuditLog.created_at.desc())
+        .offset((page - 1) * size)
+        .limit(size)
+    ))
+    return {
+        "total": total,
+        "page": page,
+        "size": size,
+        "items": [
+            {
+                "id": str(r.id),
+                "actor_id": str(r.actor_id) if r.actor_id else None,
+                "actor_email": r.actor_email,
+                "action": r.action,
+                "target_type": r.target_type,
+                "target_id": r.target_id,
+                "detail": r.detail,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+    }
 
 
 # ── 管理员：全局 LLM 配置 ──
