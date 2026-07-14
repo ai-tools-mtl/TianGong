@@ -44,3 +44,44 @@ export interface LoginRequest {
   email: string
   password: string
 }
+
+// ── 模板 ──
+
+export interface TemplateSection {
+  id: string
+  order: number
+  key: string
+  title: string
+  level: number
+}
+
+export interface TemplateSummary {
+  id: string
+  name: string
+  is_default: boolean
+  is_system: boolean
+  section_count: number
+}
+
+export interface Template extends TemplateSummary {
+  source_filename: string | null
+  structure: TemplateSection[]
+  styles: Record<string, unknown> | null
+  numbering: Record<string, unknown> | null
+  created_at: string
+}
+
+// ── 章节 ──
+
+export interface Section {
+  id: string
+  project_id: string
+  order: number
+  key: string
+  title: string
+  content: Record<string, unknown> | null
+  summary: string | null
+  status: 'empty' | 'drafting' | 'confirmed'
+  created_at: string
+  updated_at: string
+}
