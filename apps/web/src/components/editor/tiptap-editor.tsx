@@ -28,9 +28,12 @@ export function TiptapEditor({ content, onChange, editable = true }: TiptapEdito
   if (!editor) return null
 
   return (
-    <div className="border rounded-lg">
+    <div className="overflow-hidden rounded-lg border bg-card">
       <Toolbar editor={editor} />
-      <EditorContent editor={editor} className="prose prose-sm max-w-none p-4 min-h-[300px] focus:outline-none" />
+      <EditorContent
+        editor={editor}
+        className="prose prose-sm tiptap max-w-none p-5 min-h-[400px] focus:outline-none"
+      />
     </div>
   )
 }

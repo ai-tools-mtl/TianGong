@@ -1,11 +1,16 @@
 'use client'
 
+import { PanelRight, Sparkles } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { api } from '@/lib/api'
+import { queryKeys } from '@/lib/queries'
+import { cn } from '@/lib/utils'
+import { useUIStore } from '@/stores/ui'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -14,9 +19,13 @@ interface ChatMessage {
 
 interface AIChatPanelProps {
   sectionId: string
+  /** 用于草稿生成后精确刷新当前项目的章节缓存（替代 window.location.reload） */
+  projectId: string
 }
 
-export function AIChatPanel({ sectionId }: AIChatPanelProps) {
+export function AIChatPanel({ sectionId, projectId }: AIChatPanelProps) {
+  const qc = useQueryClient()
+  const toggleRight = useUIStore((s) => s.toggleRight)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -55,7 +64,8 @@ export function AIChatPanel({ sectionId }: AIChatPanelProps) {
         md += token
       })
       toast.success('草稿已生成并填入编辑器')
-      setTimeout(() => window.location.reload(), 500)
+      // 刷新章节缓存，编辑器会自动拿到新内容——不再整页重载，保留三栏滚动状态
+      await qc.invalidateQueries({ queryKey: queryKeys.sections(projectId) })
     } catch {
       toast.error('生成失败')
     } finally {
@@ -64,36 +74,67 @@ export function AIChatPanel({ sectionId }: AIChatPanelProps) {
   }
 
   return (
-    <div className="flex h-full flex-col border-l pl-4" style={{ width: 320 }}>
-      <div className="flex items-center justify-between pb-2">
-        <h3 className="text-sm font-semibold">AI 助手</h3>
-        <Button size="sm" variant="outline" onClick={handleGenerate} disabled={generating}>
-          {generating ? '生成中...' : '生成草稿'}
-        </Button>
+    <div
+      className={cn(
+        'flex h-full flex-col',
+        generating && 'ai-generating',
+      )}
+    >
+      <div className="flex items-center justify-between gap-1 border-b px-2 py-1.5">
+        <h3 className="flex items-center gap-1.5 px-1 text-[13px] font-semibold">
+          <Sparkles className="size-3.5 text-ai" />
+          AI 助手
+        </h3>
+        <div className="flex items-center gap-1">
+          <Button size="xs" variant="outline" onClick={handleGenerate} disabled={generating}>
+            {generating ? '生成中...' : '生成草稿'}
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            onClick={toggleRight}
+            aria-label="收起 AI 面板"
+            title="收起 AI 面板"
+          >
+            <PanelRight className="size-3.5" />
+          </Button>
+        </div>
       </div>
 
-      <div className="flex-1 space-y-3 overflow-y-auto py-2" style={{ maxHeight: '400px' }}>
+      <div className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
         {messages.length === 0 && (
-          <p className="text-sm text-muted-foreground">向 AI 描述你的想法，或直接点「生成草稿」</p>
-        )}
-        {messages.map((m, i) => (
-          <div key={i} className={m.role === 'user' ? 'text-right' : ''}>
-            <div className={`inline-block max-w-[90%] rounded-lg px-3 py-2 text-sm ${
-              m.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted'
-            }`}>
-              {m.content || '...'}
-            </div>
+          <div className="rounded-md bg-ai-muted px-3 py-3 text-[13px] text-ai-muted-foreground">
+            向 AI 描述你的想法，或直接点「生成草稿」
           </div>
-        ))}
+        )}
+        {messages.map((m, i) =>
+          m.role === 'user' ? (
+            <div key={i} className="flex justify-end">
+              <div className="inline-block max-w-[90%] rounded-md bg-primary px-3 py-2 text-[13px] text-primary-foreground">
+                {m.content}
+              </div>
+            </div>
+          ) : (
+            // AI 气泡：淡紫底 + 紫色字 + 紫色左边框，是 AI 身份的视觉锚点
+            <div key={i} className="flex justify-start">
+              <div className="inline-block max-w-[90%] rounded-md border-l-2 border-ai bg-ai-muted px-3 py-2 text-[13px] text-foreground whitespace-pre-wrap">
+                {m.content || '...'}
+              </div>
+            </div>
+          ),
+        )}
       </div>
 
-      <div className="flex gap-2 pt-2">
+      <div className="flex gap-2 border-t p-3">
         <Input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleSend())}
+          onKeyDown={(e) =>
+            e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleSend())
+          }
           placeholder="问 AI..."
           disabled={loading}
+          className="h-8 text-[13px]"
         />
         <Button size="sm" onClick={handleSend} disabled={loading || !input.trim()}>
           发送
