@@ -2,6 +2,7 @@ from app.models.agent_skill import AgentSkill
 from app.models.attachment import Attachment
 from app.models.base import Base, JSONType
 from app.models.knowledge_chunk import KnowledgeChunk
+from app.models.llm_call_log import LLMCallLog
 from app.models.message import Message
 from app.models.parse_job import ParseJob
 from app.models.project import Project
@@ -20,4 +21,5 @@ __all__ = [
     "Template", "ParseJob", "Section", "SectionVersion", "Message",
     "KnowledgeChunk", "ReviewRubric", "ReviewRecord", "UserLLMConfig",
     "AgentSkill",
+    "LLMCallLog",
 ]
