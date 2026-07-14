@@ -100,3 +100,78 @@ def test_heartbeat_does_not_kill_slow_stream(client, registered_user, db_session
     assert "event: heartbeat" in body  # 心跳确实发了
     assert "first" in body
     assert "second" in body  # 关键：心跳后的 token 仍到达（原 bug 会丢失）
+
+
+# ── LLM 调用日志（plan 13）──
+
+def test_chat_writes_llm_call_log_on_success(client, registered_user, db_session, monkeypatch):
+    """chat 端点成功完成时写一条 LLMCallLog（status=success）。"""
+    section = _make_logged_in_section(client, registered_user, db_session)
+
+    async def fake_astream_chat(db, sec, history, msg):
+        yield "hello"
+
+    monkeypatch.setattr("app.api.ai.astream_chat", fake_astream_chat)
+
+    res = client.post(f"/api/v1/sections/{section.id}/chat", json={"message": "hi"})
+    assert res.status_code == 200
+    assert "event: done" in res.text
+
+    from app.models import LLMCallLog
+    from sqlalchemy import select
+    logs = list(db_session.scalars(select(LLMCallLog).where(LLMCallLog.action == "chat")))
+    assert len(logs) == 1
+    log = logs[0]
+    assert log.status == "success"
+    assert log.action == "chat"
+    assert log.user_id is not None
+    assert log.project_id == section.project_id
+    assert log.duration_ms is not None and log.duration_ms >= 0
+    assert log.error is None
+    # 红线：绝不存 prompt/completion 内容
+    assert not hasattr(log, "prompt")
+    assert not hasattr(log, "completion")
+
+
+def test_generate_writes_llm_call_log_on_success(client, registered_user, db_session, monkeypatch):
+    """generate 端点成功完成时写一条 LLMCallLog。"""
+    section = _make_logged_in_section(client, registered_user, db_session)
+
+    async def fake_astream_generate(db, sec, history):
+        yield "# 标题"
+
+    monkeypatch.setattr("app.api.ai.astream_generate", fake_astream_generate)
+
+    res = client.post(f"/api/v1/sections/{section.id}/generate")
+    assert res.status_code == 200
+    assert "event: done" in res.text
+
+    from app.models import LLMCallLog
+    from sqlalchemy import select
+    logs = list(db_session.scalars(select(LLMCallLog).where(LLMCallLog.action == "generate")))
+    assert len(logs) == 1
+    assert logs[0].status == "success"
+
+
+def test_chat_writes_llm_call_log_on_failure(client, registered_user, db_session, monkeypatch):
+    """chat 端点 LLM 异常时写一条 LLMCallLog（status=failed, error 记原因）。"""
+    section = _make_logged_in_section(client, registered_user, db_session)
+
+    async def fake_astream_chat(db, sec, history, msg):
+        raise RuntimeError("boom")
+        yield  # 让它成为 async generator
+
+    monkeypatch.setattr("app.api.ai.astream_chat", fake_astream_chat)
+
+    res = client.post(f"/api/v1/sections/{section.id}/chat", json={"message": "hi"})
+    assert res.status_code == 200
+    assert "event: error" in res.text
+
+    from app.models import LLMCallLog
+    from sqlalchemy import select
+    logs = list(db_session.scalars(select(LLMCallLog).where(LLMCallLog.action == "chat")))
+    assert len(logs) == 1
+    log = logs[0]
+    assert log.status == "failed"
+    assert log.error is not None
+    assert "boom" in log.error

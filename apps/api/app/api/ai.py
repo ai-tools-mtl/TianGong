@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends
@@ -15,9 +16,9 @@ from app.ai.orchestrator import astream_chat, astream_generate, astream_rewrite
 from app.core.database import get_db
 from app.core.exceptions import ValidationError
 from app.deps import get_current_user
-from app.models import Message, Section, User
+from app.models import LLMCallLog, Message, Section, User
 from app.schemas.ai import ChatRequest, RewriteRequest
-from app.services import section_service
+from app.services import llm_config_service, section_service
 
 router = APIRouter(tags=["ai"])
 
@@ -37,6 +38,58 @@ def _get_section_with_history(
         select(Message).where(Message.section_id == section.id).order_by(Message.created_at)
     ))
     return section, history
+
+
+def _resolve_provider(db: Session, user_id) -> str:
+    """判断本次 LLM 调用走用户自配还是全局配置（用于日志 provider 字段）。"""
+    try:
+        cfg = llm_config_service.resolve_llm_config(db, user_id=user_id)
+        if cfg is not None:
+            return cfg.source  # "user" / "global"
+    except Exception:
+        pass
+    return "global"
+
+
+def _resolve_model(db: Session, user_id) -> str:
+    """取生效 model 名（用于日志 model 字段）。失败回退 settings.glm_model。"""
+    try:
+        cfg = llm_config_service.resolve_llm_config(db, user_id=user_id)
+        if cfg is not None and cfg.model:
+            return cfg.model
+    except Exception:
+        pass
+    from app.core.config import get_settings
+    return get_settings().glm_model
+
+
+def _log_llm_call(
+    db: Session, *,
+    user_id, project_id, action: str, model: str, provider: str,
+    status: str, tokens=None, duration_ms=None, error=None,
+) -> None:
+    """写一条 LLM 调用元数据日志（设计 8.3 红线：只存元数据，不存内容）。
+
+    MVP 简化：token 先记 None（精确 usage 需透传 LangChain chunk.usage_metadata）。
+    """
+    try:
+        log = LLMCallLog(
+            user_id=user_id,
+            project_id=project_id,
+            action=action,
+            model=model,
+            provider=provider,
+            token_prompt=tokens.get("prompt") if tokens else None,
+            token_completion=tokens.get("completion") if tokens else None,
+            duration_ms=duration_ms,
+            status=status,
+            error=(str(error)[:500] if error else None),
+        )
+        db.add(log)
+        db.commit()
+    except Exception:
+        # 日志失败不阻断主流程（已 yield 给用户的内容不丢）
+        db.rollback()
 
 
 async def _yield_with_heartbeat(async_gen) -> AsyncIterator[tuple[str, str]]:
@@ -78,6 +131,9 @@ async def chat(
 
     async def generate():
         full_response = ""
+        start = time.monotonic()
+        status = "success"
+        err = None
         try:
             async for kind, text in _yield_with_heartbeat(
                 astream_chat(db, section, history, payload.message)
@@ -96,9 +152,25 @@ async def chat(
             if full_response:
                 db.add(Message(section_id=section.id, role="assistant", content=full_response))
                 db.commit()
+            status = "failed"
+            err = "client_cancelled"
             raise
         except Exception as e:
+            status = "failed"
+            err = e
             yield _sse_event("error", {"code": "llm_error", "message": str(e)[:200]})
+        finally:
+            _log_llm_call(
+                db,
+                user_id=current_user.id,
+                project_id=section.project_id,
+                action="chat",
+                model=_resolve_model(db, current_user.id),
+                provider=_resolve_provider(db, current_user.id),
+                status=status,
+                duration_ms=int((time.monotonic() - start) * 1000),
+                error=err,
+            )
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -113,6 +185,9 @@ async def generate_draft(
 
     async def generate():
         full_md = ""
+        start = time.monotonic()
+        status = "success"
+        err = None
         try:
             async for kind, text in _yield_with_heartbeat(
                 astream_generate(db, section, history)
@@ -135,9 +210,25 @@ async def generate_draft(
                 section.content = markdown_to_tiptap(full_md)
                 section.status = "drafting"
                 db.commit()
+            status = "failed"
+            err = "client_cancelled"
             raise
         except Exception as e:
+            status = "failed"
+            err = e
             yield _sse_event("error", {"code": "llm_error", "message": str(e)[:200]})
+        finally:
+            _log_llm_call(
+                db,
+                user_id=current_user.id,
+                project_id=section.project_id,
+                action="generate",
+                model=_resolve_model(db, current_user.id),
+                provider=_resolve_provider(db, current_user.id),
+                status=status,
+                duration_ms=int((time.monotonic() - start) * 1000),
+                error=err,
+            )
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -152,6 +243,9 @@ async def rewrite(
     section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
 
     async def generate():
+        start = time.monotonic()
+        status = "success"
+        err = None
         try:
             async for kind, text in _yield_with_heartbeat(
                 astream_rewrite(section, payload.selected_text, payload.instruction)
@@ -162,9 +256,25 @@ async def rewrite(
                     yield _sse_event("token", {"text": text})
             yield _sse_event("done", {})
         except asyncio.CancelledError:
+            status = "failed"
+            err = "client_cancelled"
             raise
         except Exception as e:
+            status = "failed"
+            err = e
             yield _sse_event("error", {"code": "llm_error", "message": str(e)[:200]})
+        finally:
+            _log_llm_call(
+                db,
+                user_id=current_user.id,
+                project_id=section.project_id,
+                action="rewrite",
+                model=_resolve_model(db, current_user.id),
+                provider=_resolve_provider(db, current_user.id),
+                status=status,
+                duration_ms=int((time.monotonic() - start) * 1000),
+                error=err,
+            )
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
