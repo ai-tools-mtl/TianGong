@@ -1,5 +1,7 @@
 """管理员 API + 用户 LLM 设置 API（设计 8.2/8.4）。"""
 
+import uuid as _uuid
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -7,8 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.deps import get_current_user, require_admin
-from app.models import Project, User, UserLLMConfig
-from app.services import llm_config_service
+from app.models import AuditLog, Project, User, UserLLMConfig
+from app.services import admin_service, llm_config_service, stats_service
 
 router = APIRouter(tags=["admin"])
 
@@ -43,6 +45,100 @@ def list_users(
     return result
 
 
+# ── 管理员：用户运营（封禁/解禁/重置密码，设计 8.1）──
+
+class UserStatusUpdate(BaseModel):
+    status: str  # active / disabled
+
+
+class PasswordReset(BaseModel):
+    new_password: str
+
+
+@router.patch("/admin/users/{user_id}/status")
+def update_user_status(
+    user_id: str,
+    payload: UserStatusUpdate,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """封禁/解禁用户。自我保护在 service 层强制。"""
+    target = admin_service.set_user_status(
+        db, actor=admin, user_id=_uuid.UUID(user_id), status=payload.status,
+    )
+    return {"id": str(target.id), "status": target.status}
+
+
+@router.post("/admin/users/{user_id}/reset-password")
+def reset_user_password(
+    user_id: str,
+    payload: PasswordReset,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """重置用户密码（管理员线下告知，不返回敏感信息）。"""
+    admin_service.reset_user_password(
+        db, actor=admin, user_id=_uuid.UUID(user_id), new_password=payload.new_password,
+    )
+    return {"ok": True}
+
+
+# ── 管理员：LLM 调用统计（设计 8.2④，仅元数据聚合）──
+
+@router.get("/admin/stats/llm")
+def get_llm_stats_endpoint(
+    days: int = 7,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """LLM 调用统计聚合（绝不返回 prompt/completion 内容）。"""
+    if days < 1 or days > 90:
+        days = 7
+    return stats_service.get_llm_stats(db, days=days)
+
+
+# ── 管理员：审计日志列表（设计 8.2⑤）──
+
+@router.get("/admin/audit-logs")
+def list_audit_logs(
+    page: int = 1,
+    size: int = 50,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """审计日志列表（分页，时间倒序）。"""
+    if page < 1:
+        page = 1
+    if size < 1 or size > 200:
+        size = 50
+
+    total = db.scalar(select(func.count(AuditLog.id))) or 0
+    rows = list(db.scalars(
+        select(AuditLog)
+        .order_by(AuditLog.created_at.desc())
+        .offset((page - 1) * size)
+        .limit(size)
+    ))
+    return {
+        "total": total,
+        "page": page,
+        "size": size,
+        "items": [
+            {
+                "id": str(r.id),
+                "actor_id": str(r.actor_id) if r.actor_id else None,
+                "actor_email": r.actor_email,
+                "action": r.action,
+                "target_type": r.target_type,
+                "target_id": r.target_id,
+                "detail": r.detail,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in rows
+        ],
+    }
+
+
 # ── 管理员：全局 LLM 配置 ──
 
 class GlobalLLMSettings(BaseModel):
@@ -66,10 +162,24 @@ def set_global_llm(
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    return llm_config_service.set_global_llm_settings(
+    result = llm_config_service.set_global_llm_settings(
         db, enabled=payload.enabled,
         base_url=payload.base_url, api_key=payload.api_key, model=payload.model,
     )
+    # 审计：detail 只记非敏感字段，绝不传 api_key 明文（设计 8.3 脱敏）
+    admin_service._audit(
+        db,
+        actor=admin,
+        action="set_global_llm",
+        target_type="system_setting",
+        target_id="llm_global_config",
+        detail={
+            "enabled": payload.enabled,
+            "base_url": payload.base_url,
+            "model": payload.model,
+        },
+    )
+    return result
 
 
 # ── 用户：自有 LLM 配置（BYOK）──

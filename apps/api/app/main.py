@@ -33,3 +33,12 @@ app.include_router(api_router)
 @app.on_event("startup")
 def on_startup():
     loguru.logger.info("TianGong API 启动")
+    # 恢复扫描：重启后重入队崩溃中断的解析任务（设计 P0 #6）
+    try:
+        from app.services.parse_service import recover_pending_jobs
+
+        n = recover_pending_jobs("uploads")
+        if n:
+            loguru.logger.info(f"恢复扫描：重新入队 {n} 个解析任务")
+    except Exception as e:
+        loguru.logger.exception(f"恢复扫描失败（不阻塞启动）：{e}")

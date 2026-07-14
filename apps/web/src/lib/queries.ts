@@ -11,9 +11,12 @@ import type { Project, ProjectCreate, Section, TemplateSummary } from '@/types/a
 
 export const queryKeys = {
   projects: ['projects'] as const,
+  project: (id: string) => ['projects', id] as const,
   me: ['me'] as const,
   templates: ['templates'] as const,
   sections: (id: string) => ['sections', id] as const,
+  attachments: (projectId: string) => ['attachments', projectId] as const,
+  skills: (id: string) => ['skills', id] as const,
 }
 
 // ── 项目 ──
@@ -36,6 +39,22 @@ export function useDeleteProject() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => api.deleteProject(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.projects }),
+  })
+}
+
+export function useProject(projectId: string) {
+  return useQuery<Project>({
+    queryKey: queryKeys.project(projectId),
+    queryFn: () => api.getProject(projectId),
+    enabled: !!projectId,
+  })
+}
+
+export function useArchiveProject() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.archiveProject(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.projects }),
   })
 }
@@ -69,8 +88,52 @@ export function useSections(projectId: string) {
 export function useUpdateSection() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, content, status }: { id: string; content?: object; status?: string }) =>
-      api.updateSection(id, { content, status }),
+    mutationFn: ({
+      id,
+      content,
+      status,
+      expected_version,
+    }: {
+      id: string
+      content?: object
+      status?: string
+      expected_version?: number
+    }) => api.updateSection(id, { content, status, expected_version }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sections'] }),
+  })
+}
+
+// ── 附件 ──
+export function useAttachments(projectId: string) {
+  return useQuery({
+    queryKey: queryKeys.attachments(projectId),
+    queryFn: () => api.listAttachments(projectId),
+    enabled: !!projectId,
+  })
+}
+
+export function useDeleteAttachment() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.deleteAttachment(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['attachments'] }),
+  })
+}
+
+// ── 技能 ──
+export function useSkills(projectId: string) {
+  return useQuery<import('@/types/api').AgentSkill[]>({
+    queryKey: queryKeys.skills(projectId),
+    queryFn: () => api.listSkills(projectId),
+    enabled: !!projectId,
+  })
+}
+
+export function useUpdateSkill(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ skillKey, enabled, config }: { skillKey: string; enabled: boolean; config?: object | null }) =>
+      api.updateSkill(projectId, skillKey, { enabled, config }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.skills(projectId) }),
   })
 }

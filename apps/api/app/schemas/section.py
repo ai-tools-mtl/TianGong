@@ -12,6 +12,7 @@ class SectionOut(BaseModel):
     content: dict | None
     summary: str | None
     status: str
+    version: int
     created_at: datetime
     updated_at: datetime
 
@@ -21,3 +22,4 @@ class SectionOut(BaseModel):
 class SectionUpdate(BaseModel):
     content: dict | None = None
     status: str | None = None  # empty/drafting/confirmed
+    expected_version: int | None = None  # 乐观锁：客户端传读取时的版本号

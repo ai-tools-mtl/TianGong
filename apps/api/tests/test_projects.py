@@ -105,3 +105,108 @@ def test_api_access_other_users_project_returns_404(client, registered_user, db_
 def test_api_unauthenticated_returns_401(client):
     res = client.get("/api/v1/projects")
     assert res.status_code == 401
+
+
+def test_api_get_project_returns_status_and_archived_at(client, registered_user, db_session):
+    """GET /projects/{id} 响应含 status 与 archived_at（archived_at 初始为 null）。"""
+    from app.services.seed_service import ensure_default_template
+    ensure_default_template(db_session)
+    client.post("/api/v1/auth/login", json={
+        "email": registered_user["email"], "password": registered_user["password"],
+    })
+    res = client.post("/api/v1/projects", json={"title": "测试发明"})
+    project_id = res.json()["id"]
+
+    res = client.get(f"/api/v1/projects/{project_id}")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "draft"
+    assert "archived_at" in body
+    assert body["archived_at"] is None  # 未归档
+
+
+# ── 归档端点（POST /projects/{id}/archive）──
+
+def _login(client, registered_user):
+    client.post("/api/v1/auth/login", json={
+        "email": registered_user["email"], "password": registered_user["password"],
+    })
+
+
+def _seed_project_with_confirmed_section(db_session, registered_user, title="可归档发明"):
+    """建项目并在 DB 层把第一个章节置为 confirmed+非空（绕过 confirm 时触发的 LLM summary）。"""
+    from sqlalchemy import select
+    from app.models import User
+    from app.services.seed_service import ensure_default_template
+    from app.services.project_service import create_project
+    from app.services.section_service import list_sections
+
+    ensure_default_template(db_session)
+    user = db_session.scalar(select(User).where(User.email == registered_user["email"]))
+    p = create_project(db_session, user=user, title=title)
+    section = list_sections(db_session, user_id=user.id, project_id=str(p.id))[0]
+    section.status = "confirmed"
+    section.content = {"type": "doc", "content": [
+        {"type": "paragraph", "content": [{"type": "text", "text": "本发明涉及一种新型装置。"}]}
+    ]}
+    db_session.commit()
+    return p
+
+
+def test_api_archive_success(client, registered_user, db_session, monkeypatch):
+    """归档成功返回 chunk 数（mock archiver 避开 sqlite pgvector 限制）。"""
+    p = _seed_project_with_confirmed_section(db_session, registered_user)
+    _login(client, registered_user)
+
+    def fake_archive(db, *, user_id, project_id):
+        return {"project_id": project_id, "chunks": 5, "status": "archived"}
+    monkeypatch.setattr("app.api.projects.archive_service.archive", fake_archive)
+
+    res = client.post(f"/api/v1/projects/{p.id}/archive")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["project_id"] == str(p.id)
+    assert body["chunks"] == 5
+    assert body["status"] == "archived"
+
+
+def test_api_archive_idempotent(client, registered_user, db_session, monkeypatch):
+    """重复归档幂等：二次调用同样 200。"""
+    p = _seed_project_with_confirmed_section(db_session, registered_user)
+    _login(client, registered_user)
+
+    def fake_archive(db, *, user_id, project_id):
+        return {"project_id": project_id, "chunks": 5, "status": "archived"}
+    monkeypatch.setattr("app.api.projects.archive_service.archive", fake_archive)
+
+    r1 = client.post(f"/api/v1/projects/{p.id}/archive")
+    r2 = client.post(f"/api/v1/projects/{p.id}/archive")
+    assert r1.status_code == 200
+    assert r2.status_code == 200
+
+
+def test_api_archive_other_user_404(client, registered_user, db_session):
+    """非本人项目归档返回 404（防探测，与 get/patch/delete 一致）。"""
+    p = _seed_project_with_confirmed_section(db_session, registered_user)
+
+    from app.core.security import hash_password
+    from app.models import User
+    other = User(email="other@b.com", password_hash=hash_password("Pass1234!"), name="Other")
+    db_session.add(other)
+    db_session.commit()
+    client.post("/api/v1/auth/login", json={"email": "other@b.com", "password": "Pass1234!"})
+
+    res = client.post(f"/api/v1/projects/{p.id}/archive")
+    assert res.status_code == 404
+
+
+def test_api_archive_empty_project_422(client, registered_user, db_session):
+    """无已确认章节的空项目归档返回 422（防造垃圾 chunk）。"""
+    from app.services.seed_service import ensure_default_template
+    ensure_default_template(db_session)
+    _login(client, registered_user)
+    res = client.post("/api/v1/projects", json={"title": "空项目"})
+    project_id = res.json()["id"]
+
+    res = client.post(f"/api/v1/projects/{project_id}/archive")
+    assert res.status_code == 422

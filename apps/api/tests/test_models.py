@@ -83,3 +83,25 @@ def test_parse_job_defaults():
     db.flush()
     assert job.status == "pending"
     assert job.template_id is None
+
+
+def test_section_has_version_field_default_1(db_session):
+    """Section.version 默认 1（乐观锁基线）。"""
+    from app.models import Project, Section
+    # 字段定义存在
+    s = Section(
+        project_id=None, template_section_id="t1", order=1, key="name",
+        title="发明名称", status="empty",
+    )
+    assert hasattr(s, "version")
+    # Python 端 default 在 flush/INSERT 时生效：需父级 project 以满足外键约束
+    u = User(email="v@b.com", password_hash="x", name="V")
+    db_session.add(u)
+    db_session.flush()
+    p = Project(user_id=u.id, title="P")
+    db_session.add(p)
+    db_session.flush()
+    s.project_id = p.id
+    db_session.add(s)
+    db_session.flush()
+    assert s.version == 1

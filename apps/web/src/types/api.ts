@@ -14,6 +14,7 @@ export interface Project {
   status: string
   progress_pct: number
   metadata: Record<string, unknown> | null
+  archived_at: string | null
   created_at: string
   updated_at: string
 }
@@ -82,6 +83,7 @@ export interface Section {
   content: Record<string, unknown> | null
   summary: string | null
   status: 'empty' | 'drafting' | 'confirmed'
+  version: number
   created_at: string
   updated_at: string
 }
@@ -152,6 +154,18 @@ export interface Rubric {
   is_customized: boolean
 }
 
+// ── 附件 ──
+
+export interface Attachment {
+  id: string
+  project_id: string
+  section_id: string | null
+  filename: string
+  mime_type: string
+  size: number
+  created_at: string
+}
+
 // ── 管理 ──
 
 export interface AdminUser {
@@ -170,6 +184,54 @@ export interface GlobalLLMSettings {
   global_config: { base_url: string; api_key_masked: string; model: string } | null
 }
 
+// ── LLM 调用统计（plan 13）──
+
+export interface LLMStatsByModel {
+  model: string
+  calls: number
+  success: number
+  failed: number
+  avg_duration_ms: number | null
+}
+
+export interface LLMStatsByUser {
+  user_id: string | null
+  email: string
+  calls: number
+  success: number
+  failed: number
+}
+
+export interface LLMStats {
+  days: number
+  total_calls: number
+  total_success: number
+  total_failed: number
+  avg_duration_ms: number | null
+  by_model: LLMStatsByModel[]
+  by_user: LLMStatsByUser[]
+}
+
+// ── 审计日志（plan 13）──
+
+export interface AuditLogItem {
+  id: string
+  actor_id: string | null
+  actor_email: string
+  action: string
+  target_type: string
+  target_id: string | null
+  detail: Record<string, unknown> | null
+  created_at: string | null
+}
+
+export interface AuditLogPage {
+  total: number
+  page: number
+  size: number
+  items: AuditLogItem[]
+}
+
 export interface UserLLMSettings {
   provider: string
   base_url: string
@@ -177,4 +239,25 @@ export interface UserLLMSettings {
   model: string
   embedding_model: string | null
   is_active: boolean
+}
+
+// ── 技能开关 ──
+
+export interface AgentSkill {
+  skill_key: string
+  name: string
+  description: string
+  enabled: boolean
+  config: Record<string, unknown> | null
+  is_builtin: boolean
+  is_overridden: boolean
+}
+
+// ── 解析任务 ──
+
+export interface ParseJob {
+  id: string
+  status: string
+  template_id: string | null
+  error_message: string | null
 }

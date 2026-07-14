@@ -1,6 +1,6 @@
 """LLM 抽象层。封装 ChatOpenAI 接入 GLM（OpenAI 兼容协议）。"""
 
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 
 from langchain_core.messages import BaseMessage
 from langchain_openai import ChatOpenAI
@@ -24,5 +24,17 @@ def stream_llm(messages: list[BaseMessage]) -> Iterator[str]:
     """流式调用 LLM，逐 token yield 文本。"""
     llm = get_llm(streaming=True)
     for chunk in llm.stream(messages):
+        if chunk.content:
+            yield chunk.content
+
+
+async def astream_llm(messages: list[BaseMessage]) -> AsyncIterator[str]:
+    """异步流式调用 LLM，逐 token yield 文本。
+
+    用于 SSE 端点：客户端断开时 generator 被取消，底层 httpx 连接关闭，
+    真正停止从 LLM API 拉取（不浪费 token）。
+    """
+    llm = get_llm(streaming=True)
+    async for chunk in llm.astream(messages):
         if chunk.content:
             yield chunk.content

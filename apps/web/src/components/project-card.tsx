@@ -6,8 +6,7 @@ import { toast } from 'sonner'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { api } from '@/lib/api'
-import { useDeleteProject } from '@/lib/queries'
+import { useArchiveProject, useDeleteProject } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import type { Project } from '@/types/api'
 
@@ -28,14 +27,13 @@ const STATUS_TONE: Record<string, string> = {
 export function ProjectCard({ project }: { project: Project }) {
   const router = useRouter()
   const del = useDeleteProject()
+  const archive = useArchiveProject()
 
-  async function handleArchive() {
-    try {
-      const res = await api.archiveProject(project.id)
-      toast.success(`已归档到知识库（${res.chunks} 个知识块）`)
-    } catch {
-      toast.error('归档失败')
-    }
+  function handleArchive() {
+    archive.mutate(project.id, {
+      onSuccess: (res) => toast.success(`已归档到知识库（${res.chunks} 个知识块）`),
+      onError: () => toast.error('归档失败'),
+    })
   }
 
   function handleDelete() {
@@ -81,9 +79,14 @@ export function ProjectCard({ project }: { project: Project }) {
             className="flex gap-1 opacity-0 transition-opacity group-hover:opacity-100"
             onClick={(e) => e.stopPropagation()}
           >
-            {project.status === 'completed' && (
-              <Button variant="ghost" size="xs" onClick={handleArchive}>
-                归档
+            {(project.status === 'completed' || project.status === 'archived') && (
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={handleArchive}
+                disabled={archive.isPending}
+              >
+                {project.status === 'archived' ? '更新' : '归档'}
               </Button>
             )}
             <Button

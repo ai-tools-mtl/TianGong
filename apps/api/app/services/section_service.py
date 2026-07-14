@@ -3,7 +3,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import NotFoundError, ValidationError
+from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.models import Project, Section
 
 
@@ -36,9 +36,17 @@ def get_section(db: Session, *, user_id, section_id: str) -> Section:
 
 
 def update_section(
-    db: Session, *, user_id, section_id: str, content=None, status=None
+    db: Session, *, user_id, section_id: str,
+    content=None, status=None, expected_version: int | None = None,
 ) -> Section:
     section = get_section(db, user_id=user_id, section_id=section_id)
+
+    # 乐观锁：传了 expected_version 则校验（设计 13.4）
+    if expected_version is not None and expected_version != section.version:
+        raise ConflictError(
+            f"内容已被修改（当前版本 {section.version}，期望 {expected_version}）"
+        )
+
     if content is not None:
         section.content = content
     if status is not None:
@@ -53,6 +61,7 @@ def update_section(
             # 触发 summary 生成（供跨章节上下文用，设计 5.10）
             from app.services.summary_service import generate_summary
             generate_summary(db, section)
+    section.version += 1  # 乐观锁版本号自增
     db.commit()
     db.refresh(section)
     return section

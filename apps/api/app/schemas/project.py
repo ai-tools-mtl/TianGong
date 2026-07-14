@@ -22,6 +22,7 @@ class ProjectOut(BaseModel):
     status: str
     progress_pct: int
     metadata: dict[str, Any] | None = None
+    archived_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 

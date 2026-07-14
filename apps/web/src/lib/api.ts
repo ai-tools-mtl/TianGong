@@ -83,11 +83,25 @@ export const api = {
     return res.json()
   },
 
+  getParseJob: (jobId: string) =>
+    request<{ id: string; status: string; template_id: string | null; error_message: string | null }>(
+      `/templates/parse-jobs/${jobId}`,
+    ),
+
   deleteTemplate: (id: string) =>
     request<void>(`/templates/${id}`, { method: 'DELETE' }),
 
   setDefaultTemplate: (id: string) =>
     request<import('@/types/api').TemplateSummary>(`/templates/${id}/default`, { method: 'POST' }),
+
+  // ── 技能开关 ──
+  listSkills: (projectId: string) =>
+    request<import('@/types/api').AgentSkill[]>(`/projects/${projectId}/skills`),
+
+  updateSkill: (projectId: string, skillKey: string, data: { enabled: boolean; config?: object | null }) =>
+    request<import('@/types/api').AgentSkill>(`/projects/${projectId}/skills/${skillKey}`, {
+      method: 'PUT', body: JSON.stringify(data),
+    }),
 
   // ── 章节 ──
   listSections: (projectId: string) =>
@@ -95,27 +109,38 @@ export const api = {
 
   getSection: (id: string) => request<import('@/types/api').Section>(`/sections/${id}`),
 
-  updateSection: (id: string, data: { content?: object; status?: string }) =>
+  updateSection: (id: string, data: { content?: object; status?: string; expected_version?: number }) =>
     request<import('@/types/api').Section>(`/sections/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
 
   // ── AI（SSE 流式）──
-  streamChat: async (sectionId: string, message: string, onToken: (t: string) => void) => {
+  streamChat: async (
+    sectionId: string,
+    message: string,
+    onToken: (t: string) => void,
+    signal?: AbortSignal,
+  ) => {
     const res = await fetch(`${BASE}/api/v1/sections/${sectionId}/chat`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message }),
+      signal,
     })
     return _consumeSSE(res, onToken)
   },
 
-  streamGenerate: async (sectionId: string, onToken: (t: string) => void) => {
+  streamGenerate: async (
+    sectionId: string,
+    onToken: (t: string) => void,
+    signal?: AbortSignal,
+  ) => {
     const res = await fetch(`${BASE}/api/v1/sections/${sectionId}/generate`, {
       method: 'POST',
       credentials: 'include',
+      signal,
     })
     return _consumeSSE(res, onToken)
   },
@@ -143,6 +168,31 @@ export const api = {
   archiveProject: (projectId: string) =>
     request<{ project_id: string; chunks: number; status: string }>(`/projects/${projectId}/archive`, { method: 'POST' }),
 
+  // ── 附件 ──
+  listAttachments: (projectId: string) =>
+    request<import('@/types/api').Attachment[]>(`/projects/${projectId}/attachments`),
+
+  uploadAttachment: async (sectionId: string, file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(`${BASE}/api/v1/sections/${sectionId}/attachments`, {
+      method: 'POST',
+      credentials: 'include',
+      body: form,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: `HTTP ${res.status}` }))
+      throw err
+    }
+    return res.json() as Promise<import('@/types/api').Attachment>
+  },
+
+  deleteAttachment: (id: string) =>
+    request<void>(`/attachments/${id}`, { method: 'DELETE' }),
+
+  attachmentUrl: (projectId: string, attachmentId: string) =>
+    `${BASE}/api/v1/projects/${projectId}/attachments/${attachmentId}/file`,
+
   // ── 审查 ──
   runReview: (projectId: string) =>
     request<import('@/types/api').ReviewRecord>(`/projects/${projectId}/review`, { method: 'POST' }),
@@ -160,6 +210,15 @@ export const api = {
   getGlobalLLM: () => request<import('@/types/api').GlobalLLMSettings>(`/admin/llm-config`),
   setGlobalLLM: (data: { enabled: boolean; base_url?: string; api_key?: string; model?: string }) =>
     request<import('@/types/api').GlobalLLMSettings>(`/admin/llm-config`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  banUser: (userId: string, status: 'active' | 'disabled') =>
+    request<{ id: string; status: string }>(`/admin/users/${userId}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  resetUserPassword: (userId: string, newPassword: string) =>
+    request<{ ok: boolean }>(`/admin/users/${userId}/reset-password`, { method: 'POST', body: JSON.stringify({ new_password: newPassword }) }),
+  listLLMStats: (days = 7) =>
+    request<import('@/types/api').LLMStats>(`/admin/stats/llm?days=${days}`),
+  listAuditLogs: (page = 1, size = 50) =>
+    request<import('@/types/api').AuditLogPage>(`/admin/audit-logs?page=${page}&size=${size}`),
 
   // ── 用户设置 ──
   getMyLLM: () => request<import('@/types/api').UserLLMSettings | null>(`/settings/llm`),
@@ -179,16 +238,22 @@ async function _consumeSSE(res: Response, onToken: (t: string) => void): Promise
     const { done, value } = await reader.read()
     if (done) break
     buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n')
-    buffer = lines.pop() || ''
-    for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        try {
-          const data = JSON.parse(line.slice(6))
-          if (data.text) onToken(data.text)
-        } catch {
-          // 忽略解析失败的行
-        }
+    // SSE 事件以空行分隔
+    const events = buffer.split('\n\n')
+    buffer = events.pop() || ''
+    for (const evt of events) {
+      const lines = evt.split('\n')
+      let dataLine = ''
+      for (const line of lines) {
+        if (line.startsWith('data: ')) dataLine = line.slice(6)
+      }
+      if (!dataLine) continue
+      try {
+        const data = JSON.parse(dataLine)
+        if (data.text) onToken(data.text)
+        // heartbeat/error/done 事件无 text，忽略（上层靠流结束判断）
+      } catch {
+        // 忽略解析失败的行
       }
     }
   }
