@@ -32,3 +32,12 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     if user is None or user.status != "active":
         raise UnauthorizedError("用户不存在或已禁用")
     return user
+
+
+def require_admin(current_user: User = Depends(get_current_user)) -> User:
+    """校验当前用户是 admin，否则 403。"""
+    from app.core.exceptions import ForbiddenError
+
+    if current_user.role != "admin":
+        raise ForbiddenError("需要管理员权限")
+    return current_user
