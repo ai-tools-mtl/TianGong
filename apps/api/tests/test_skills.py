@@ -151,3 +151,68 @@ def test_set_skill_unknown_key_raises(db):
     p = _make_project(db)
     with pytest.raises(ValidationError):
         skill_service.set_skill(db, project_id=p.id, skill_key="not_a_real_skill", enabled=False)
+
+
+def test_retrieve_knowledge_skipped_when_rag_search_disabled(db):
+    """rag_search 禁用时，orchestrator._retrieve_knowledge 直接返回 None，不调 retrieve。"""
+    from app.models import AgentSkill, Section
+
+    p = _make_project(db)
+    # 禁用 rag_search
+    db.add(AgentSkill(project_id=p.id, skill_key="rag_search", enabled=False))
+    db.commit()
+    section = Section(
+        project_id=p.id, template_section_id="t1", order=1, key="name",
+        title="发明名称", status="empty",
+    )
+    db.add(section)
+    db.commit()
+
+    retrieve_called = {"n": 0}
+
+    import app.rag.retriever as retriever_mod
+    original_retrieve = retriever_mod.retrieve
+
+    def fake_retrieve(*args, **kwargs):
+        retrieve_called["n"] += 1
+        return []
+
+    retriever_mod.retrieve = fake_retrieve
+    try:
+        from app.ai.orchestrator import _retrieve_knowledge
+        result = _retrieve_knowledge(db, section, "查询")
+        assert result is None
+        assert retrieve_called["n"] == 0
+    finally:
+        retriever_mod.retrieve = original_retrieve
+
+
+def test_retrieve_knowledge_runs_when_rag_search_enabled(db):
+    """rag_search 启用时，_retrieve_knowledge 进入原检索逻辑。"""
+    from app.models import Section
+
+    p = _make_project(db)
+    section = Section(
+        project_id=p.id, template_section_id="t1", order=1, key="name",
+        title="发明名称", status="empty",
+    )
+    db.add(section)
+    db.commit()
+
+    retrieve_called = {"n": 0}
+
+    import app.rag.retriever as retriever_mod
+    original_retrieve = retriever_mod.retrieve
+
+    def fake_retrieve(*args, **kwargs):
+        retrieve_called["n"] += 1
+        return []
+
+    retriever_mod.retrieve = fake_retrieve
+    try:
+        from app.ai.orchestrator import _retrieve_knowledge
+        _retrieve_knowledge(db, section, "查询")
+        # retrieve 被调用了（或异常降级路径，但至少进了检索分支）
+        assert retrieve_called["n"] == 1
+    finally:
+        retriever_mod.retrieve = original_retrieve

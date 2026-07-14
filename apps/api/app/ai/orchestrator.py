@@ -39,15 +39,19 @@ def stream_generate(
 
 
 def _retrieve_knowledge(db, section: Section, query: str) -> list[dict] | None:
-    """检索用户知识库（RAG）。异常降级为空，不阻断 AI 对话。"""
+    """检索用户知识库（RAG）。禁用技能短路；异常降级为空。"""
     try:
         from sqlalchemy import select
 
         from app.models import Project
         from app.rag.retriever import retrieve
+        from app.services.skill_service import is_skill_enabled
 
         project = db.scalar(select(Project).where(Project.id == section.project_id))
         if project is None:
+            return None
+        # 设计 7.4：rag_search 禁用则不检索
+        if not is_skill_enabled(db, project_id=project.id, skill_key="rag_search"):
             return None
         results = retrieve(db, user_id=project.user_id, query=query)
         return [
