@@ -15,7 +15,8 @@ def stream_chat(
 ) -> Iterator[str]:
     """引导对话：流式回复用户问题。"""
     summaries = get_project_summaries(db, section.project_id)
-    messages = assemble_messages(section, history, user_input, summaries)
+    knowledge = _retrieve_knowledge(db, section, user_input)
+    messages = assemble_messages(section, history, user_input, summaries, knowledge)
     yield from stream_llm(messages)
 
 
@@ -24,14 +25,41 @@ def stream_generate(
 ) -> Iterator[str]:
     """生成草稿：基于对话历史生成本章草稿（Markdown 流式）。"""
     summaries = get_project_summaries(db, section.project_id)
+    knowledge = _retrieve_knowledge(db, section, section.title)
     sp = get_section_prompt(section.key)
-    messages = assemble_messages(section, history, project_summaries=summaries)
+    messages = assemble_messages(
+        section, history, project_summaries=summaries, knowledge_context=knowledge
+    )
     instruction = (
         f"请根据以上对话内容，整理生成本章节【{section.title}】的草稿。"
         f"要求：{sp.output_format}。用 Markdown 格式输出。"
     )
     messages.append(HumanMessage(content=instruction))
     yield from stream_llm(messages)
+
+
+def _retrieve_knowledge(db, section: Section, query: str) -> list[dict] | None:
+    """检索用户知识库（RAG）。异常降级为空，不阻断 AI 对话。"""
+    try:
+        from sqlalchemy import select
+
+        from app.models import Project
+        from app.rag.retriever import retrieve
+
+        project = db.scalar(select(Project).where(Project.id == section.project_id))
+        if project is None:
+            return None
+        results = retrieve(db, user_id=project.user_id, query=query)
+        return [
+            {
+                "content": r.content,
+                "section_key": r.source_section_key,
+                "project_title": r.project_title,
+            }
+            for r in results
+        ]
+    except Exception:
+        return None
 
 
 def stream_rewrite(

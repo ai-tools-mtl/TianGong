@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useDeleteProject } from '@/lib/queries'
+import { api } from '@/lib/api'
 import type { Project } from '@/types/api'
 
 const STATUS_LABEL: Record<string, string> = {
@@ -19,6 +20,15 @@ const STATUS_LABEL: Record<string, string> = {
 export function ProjectCard({ project }: { project: Project }) {
   const router = useRouter()
   const del = useDeleteProject()
+
+  async function handleArchive() {
+    try {
+      const res = await api.archiveProject(project.id)
+      toast.success(`已归档到知识库（${res.chunks} 个知识块）`)
+    } catch {
+      toast.error('归档失败')
+    }
+  }
 
   function handleDelete() {
     if (!confirm(`确认删除「${project.title}」？此操作不可恢复。`)) return
@@ -43,9 +53,16 @@ export function ProjectCard({ project }: { project: Project }) {
         <p className="text-xs text-muted-foreground">
           更新于 {new Date(project.updated_at).toLocaleString('zh-CN')}
         </p>
-        <Button variant="ghost" size="sm" className="text-destructive" onClick={handleDelete} disabled={del.isPending}>
-          删除
-        </Button>
+        <div className="flex gap-1">
+          {project.status === 'completed' && (
+            <Button variant="ghost" size="sm" onClick={handleArchive}>
+              归档
+            </Button>
+          )}
+          <Button variant="ghost" size="sm" className="text-destructive" onClick={handleDelete} disabled={del.isPending}>
+            删除
+          </Button>
+        </div>
       </CardContent>
     </Card>
   )
