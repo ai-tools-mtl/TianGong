@@ -44,3 +44,42 @@ def test_system_setting_key_value():
     db.flush()
     assert s.key == "llm_global_enabled"
     assert s.value == {"enabled": True}
+
+
+def test_template_defaults():
+    from app.models import Template
+    db = _session()
+    t = Template(name="测试模板", structure=[])
+    db.add(t)
+    db.flush()
+    assert t.is_default is False
+    assert t.is_system is False
+
+
+def test_section_defaults():
+    from app.models import Section
+    db = _session()
+    u = User(email="s@b.com", password_hash="x", name="S")
+    db.add(u)
+    db.flush()
+    p = Project(user_id=u.id, title="P")
+    db.add(p)
+    db.flush()
+    s = Section(project_id=p.id, template_section_id="ts1", order=1, key="name", title="发明名称")
+    db.add(s)
+    db.flush()
+    assert s.status == "empty"
+    assert s.content is None
+
+
+def test_parse_job_defaults():
+    from app.models import ParseJob
+    db = _session()
+    u = User(email="pj@b.com", password_hash="x", name="PJ")
+    db.add(u)
+    db.flush()
+    job = ParseJob(user_id=u.id, source_path="/tmp/test.docx")
+    db.add(job)
+    db.flush()
+    assert job.status == "pending"
+    assert job.template_id is None

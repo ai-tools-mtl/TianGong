@@ -18,6 +18,7 @@ dependencies = [
     "python-multipart>=0.0.12",
     "loguru>=0.7.0",
     "email-validator>=2.3.0",
+    "python-docx>=1.2.0",
 ]
 
 [project.optional-dependencies]

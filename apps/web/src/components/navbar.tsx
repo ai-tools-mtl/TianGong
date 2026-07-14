@@ -26,7 +26,11 @@ export function Navbar() {
   return (
     <header className="border-b bg-background">
       <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
-        <span className="font-bold">天工 TianGong</span>
+        <div className="flex items-center gap-4">
+          <span className="font-bold">天工 TianGong</span>
+          <a href="/dashboard" className="text-sm text-muted-foreground hover:text-foreground">工作台</a>
+          <a href="/templates" className="text-sm text-muted-foreground hover:text-foreground">模板</a>
+        </div>
         {user && (
           <div className="flex items-center gap-3 text-sm">
             <span className="text-muted-foreground">{user.email}</span>

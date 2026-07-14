@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundError
-from app.models import Project, User
+from app.models import Project, Section, Template, User
 
 
 def create_project(
@@ -12,13 +12,36 @@ def create_project(
     template_id: str | None = None,
     metadata: dict | None = None,
 ) -> Project:
+    # 解析模板：指定 > 默认 > 系统
+    tpl = None
+    if template_id:
+        tpl = db.get(Template, uuid.UUID(template_id))
+    if tpl is None:
+        tpl = db.scalar(select(Template).where(Template.is_default.is_(True)))
+    if tpl is None:
+        tpl = db.scalar(select(Template).where(Template.is_system.is_(True)))
+
     project = Project(
         user_id=user.id,
+        template_id=tpl.id if tpl else None,
         title=title,
-        template_id=uuid.UUID(template_id) if template_id else None,
         metadata_=metadata,
     )
     db.add(project)
+    db.flush()
+
+    # 按模板结构快照生成 sections（创建时快照，详见设计 9.7）
+    if tpl:
+        for ts in tpl.structure:
+            section = Section(
+                project_id=project.id,
+                template_section_id=ts.get("id", ""),
+                order=ts.get("order", 0),
+                key=ts.get("key", "custom"),
+                title=ts.get("title", ""),
+            )
+            db.add(section)
+
     db.commit()
     db.refresh(project)
     return project

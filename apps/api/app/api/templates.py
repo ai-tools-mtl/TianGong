@@ -1,0 +1,82 @@
+from fastapi import APIRouter, Depends, File, UploadFile
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
+from app.core.exceptions import ValidationError
+from app.deps import get_current_user
+from app.models import User
+from app.schemas.template import TemplateOut, TemplateSummary
+from app.services import parse_service, template_service
+
+router = APIRouter(prefix="/templates", tags=["templates"])
+
+
+@router.get("", response_model=list[TemplateSummary])
+def list_all(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    templates = template_service.list_templates(db, user_id=current_user.id)
+    return [
+        TemplateSummary(
+            id=str(t.id), name=t.name, is_default=t.is_default,
+            is_system=t.is_system, section_count=len(t.structure),
+        )
+        for t in templates
+    ]
+
+
+@router.post("", response_model=dict, status_code=202)
+async def upload(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """上传 Word 文件创建模板。"""
+    if not file.filename or not file.filename.lower().endswith(".docx"):
+        raise ValidationError("仅支持 .docx 文件")
+    content = await file.read()
+    job = parse_service.create_parse_job(
+        db, user_id=current_user.id, filename=file.filename,
+        file_bytes=content, upload_dir="uploads",
+    )
+    # MVP 同步执行（后续可改 BackgroundTasks）
+    parse_service.run_parse_job(db, str(job.id), "uploads")
+    return {"parse_job_id": str(job.id), "status": "completed"}
+
+
+@router.get("/{template_id}", response_model=TemplateOut)
+def get_one(
+    template_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    t = template_service.get_template(db, user_id=current_user.id, template_id=template_id)
+    return TemplateOut(
+        id=str(t.id), name=t.name, source_filename=t.source_filename,
+        structure=t.structure, styles=t.styles, numbering=t.numbering,
+        is_default=t.is_default, is_system=t.is_system, created_at=t.created_at,
+    )
+
+
+@router.delete("/{template_id}", status_code=204)
+def delete(
+    template_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    template_service.delete_template(db, user_id=current_user.id, template_id=template_id)
+    return None
+
+
+@router.post("/{template_id}/default", response_model=TemplateSummary)
+def set_default(
+    template_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    t = template_service.set_default(db, user_id=current_user.id, template_id=template_id)
+    return TemplateSummary(
+        id=str(t.id), name=t.name, is_default=t.is_default,
+        is_system=t.is_system, section_count=len(t.structure),
+    )

@@ -62,4 +62,42 @@ export const api = {
 
   deleteProject: (id: string) =>
     request<void>(`/projects/${id}`, { method: 'DELETE' }),
+
+  // ── 模板 ──
+  listTemplates: () => request<import('@/types/api').TemplateSummary[]>('/templates'),
+
+  getTemplate: (id: string) => request<import('@/types/api').Template>(`/templates/${id}`),
+
+  uploadTemplate: async (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(`${BASE}/api/v1/templates`, {
+      method: 'POST',
+      credentials: 'include',
+      body: form,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: `HTTP ${res.status}` }))
+      throw err
+    }
+    return res.json()
+  },
+
+  deleteTemplate: (id: string) =>
+    request<void>(`/templates/${id}`, { method: 'DELETE' }),
+
+  setDefaultTemplate: (id: string) =>
+    request<import('@/types/api').TemplateSummary>(`/templates/${id}/default`, { method: 'POST' }),
+
+  // ── 章节 ──
+  listSections: (projectId: string) =>
+    request<import('@/types/api').Section[]>(`/projects/${projectId}/sections`),
+
+  getSection: (id: string) => request<import('@/types/api').Section>(`/sections/${id}`),
+
+  updateSection: (id: string, data: { content?: object; status?: string }) =>
+    request<import('@/types/api').Section>(`/sections/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
 }
