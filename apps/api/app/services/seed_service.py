@@ -3,6 +3,40 @@ from sqlalchemy.orm import Session
 
 from app.models import ReviewRubric, Template
 
+# 系统内置 Agent 技能定义（设计 7.4）。name/description/is_builtin 仅存在代码中。
+BUILTIN_SKILLS = [
+    {
+        "skill_key": "rag_search",
+        "name": "知识库检索",
+        "description": "撰写/审查时检索用户知识库",
+        "default_enabled": True,
+    },
+    {
+        "skill_key": "rubric_review",
+        "name": "Rubric 审查",
+        "description": "按 Rubric 逐维度评分",
+        "default_enabled": True,
+    },
+    {
+        "skill_key": "consistency_check",
+        "name": "自一致性校验",
+        "description": "关键评分多次取均值",
+        "default_enabled": True,
+    },
+    {
+        "skill_key": "quality_report",
+        "name": "质量报告",
+        "description": "生成结构化审查报告",
+        "default_enabled": True,
+    },
+    {
+        "skill_key": "prior_art_hint",
+        "name": "现有技术提示",
+        "description": "撰写背景技术时提示检索方向（占位，检索在 P1）",
+        "default_enabled": True,
+    },
+]
+
 # 系统默认交底书模板的 8 章节
 DEFAULT_STRUCTURE = [
     {"id": "name", "order": 1, "key": "name", "title": "发明名称", "level": 1},
