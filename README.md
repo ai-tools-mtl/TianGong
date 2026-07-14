@@ -19,9 +19,11 @@
 | 后端 | Python 3.11+ · FastAPI · SQLAlchemy 2.0 · Alembic · uv |
 | 前端 | Next.js · TypeScript · shadcn/ui · Tailwind CSS · pnpm |
 | 数据库 | PostgreSQL 16 + pgvector |
-| AI 编排 | LangGraph（状态机/记忆/HITL）|
-| RAG 检索 | LlamaIndex |
+| AI 编排 | LangChain（编排 + 流式 SSE，详见设计文档 5 章）|
+| RAG 检索 | LangChain Embedding + pgvector |
 | LLM | GLM-5.2（OpenAI 兼容，可切换）|
+
+> 注：原设计曾规划 LangGraph + LlamaIndex，实际落地为纯 LangChain（原因见 GOTCHAS E3：LlamaIndex 不支持国产 embedding 模型名）。
 
 ## 项目结构
 
@@ -111,13 +113,16 @@ cd apps/api && uv run alembic upgrade head
 
 | 计划 | 状态 | 说明 |
 |---|---|---|
-| 1 后端地基 | ✅ 完成 | FastAPI + 数据模型 + 认证 + 项目 CRUD + 权限 |
+| 1 后端地基 | ✅ 完成 | FastAPI + 数据模型 + 认证 + 项目 CRUD + 资源级权限 |
 | 2 前端地基 | ✅ 完成 | Next.js + 登录注册 + 工作台 + 项目管理 |
-| 3 模板与编辑器 | 🚧 规划中 | Word 解析 + Tiptap 富文本 |
-| 4 AI 撰写引擎 | 📋 待定 | LangGraph 状态机 + 引导对话 |
-| 5 版本/预览/导出 | 📋 待定 | 版本快照 + Word 导出 |
-| 6 知识库 RAG | 📋 待定 | LlamaIndex 检索 + 归档 |
-| 7 审查/自定义/管理 | 📋 待定 | 审查引擎 + BYOK + 管理后台 |
+| 3 模板与编辑器 | ✅ 完成 | Word 解析（三层编号策略）+ Tiptap 富文本 + 样式继承解析 |
+| 4 AI 撰写引擎 | ✅ 完成 | LLM Client + Prompt 注册表 + 五层上下文装配 + 流式 SSE + 跨章节 summary |
+| 5 版本/预览/导出 | ✅ 完成 | 章节版本快照 + 全篇预览 + Word/Markdown 导出渲染器 |
+| 6 知识库 RAG | ✅ 完成 | LangChain Embedding + pgvector + 分块归档 + 检索注入（注：弃用 LlamaIndex，见 GOTCHAS E3）|
+| 7 审查引擎+Rubric | ✅ 完成 | 确定性评估管线 + Rubric 覆盖式配置 + 自一致性 + 跨对话稳定验证 |
+| 7b 管理后台+BYOK | ✅ 完成 | 管理员 API + 三级 Provider 解析 + 全局开关 + 用户自配 Key + 前端管理/设置页 |
+
+> **MVP 全部 P0 功能已落地并端到端验证。** 下一步见设计文档 11.2（P1 迭代：专利检索 / PDF 导出 / 全篇质量报告 / 灵感补全 / agent 记忆）。
 
 ## 文档
 

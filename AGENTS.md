@@ -5,8 +5,8 @@
 ## 项目简介
 
 天工是 AI 驱动的专利交底书撰写智能体——从灵感到授权全生命周期的 Agent 系统。
-- **当前阶段**：MVP（计划 1 后端地基 + 计划 2 前端地基已完成）
-- **技术栈**：FastAPI(Python) 后端 + Next.js 前端 + PostgreSQL(pgvector) + LangGraph + LlamaIndex
+- **当前阶段**：MVP 全部 P0 已完成（计划 1–7b：后端地基→前端地基→模板编辑器→AI 撰写→版本导出→知识库 RAG→审查引擎→管理后台 BYOK）
+- **技术栈**：FastAPI(Python) 后端 + Next.js 前端 + PostgreSQL(pgvector) + LangChain（编排 + Embedding）。注：原设计曾规划 LangGraph + LlamaIndex，落地中调整为纯 LangChain（见 GOTCHAS E3）
 
 ## 必读文档（按顺序）
 

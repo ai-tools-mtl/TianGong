@@ -14,6 +14,22 @@
   - v1.3 (2026-07-13): 引入双框架（LangGraph 编排 + LlamaIndex RAG），审查与评分纳入 MVP P0，新增确定性评估管线（Rubric + 自一致性 + 跨会话记忆）根治评分跨对话不稳定，新增三套自定义能力（审查标准覆盖式 / 知识库·技能增量式）
   - v1.4 (2026-07-13): 新增管理员角色（MVP 做 C 系统运维版，数据模型预留 A/B 演进），明确角色权限矩阵与数据可见性红线（用户私人数据默认不可见）
   - v1.5 (2026-07-13): 新增 LLM Key 管理与 BYOK（管理员全局开关 + 用户可覆盖 + 任意 OpenAI 兼容 Provider），新增 SystemSetting 表与 UserLLMConfig 实体，明确 Provider 解析优先级
+  - v1.5.1 (2026-07-14): ⚠️ **实现现状校正**。v1.3 计划的 LangGraph + LlamaIndex 双框架在落地中调整，本文档原描述保留作为设计意图，差异见下方「实现现状」说明
+
+---
+
+> ## ⚠️ 实现现状（2026-07-14 校正）
+>
+> v1.3 设计规划用 **LangGraph（编排）+ LlamaIndex（RAG）** 双框架，但实际落地有调整。下文保留原设计描述作为意图参考，阅读时请注意以下差异：
+>
+> | 维度 | 原设计（v1.3） | 实际实现（MVP 已落地） |
+> |---|---|---|
+> | **RAG 检索** | LlamaIndex | **LangChain `OpenAIEmbeddings` + pgvector 直连**。原因：LlamaIndex 的 `OpenAIEmbedding` 强制校验模型名，不支持智谱等国产 embedding 模型（详见 GOTCHAS E3） |
+> | **AI 编排** | LangGraph StateGraph + Checkpoint + HITL + PostgresSaver + Store | **LangChain `ChatOpenAI` + 手搓编排器**（`app/ai/orchestrator.py`，Python generator 流式 yield）。章节状态推进用 Section.status + 服务层逻辑实现，未用 StateGraph。HITL 确认、跨会话记忆、Checkpoint 恢复**尚未用框架落地** |
+> | **LLM/Embedding** | LangChain ModelAdapter / init_chat_model | **`langchain_openai.ChatOpenAI` + `OpenAIEmbeddings`**，经 OpenAI 兼容协议接 GLM |
+> | **依赖** | — | `pyproject.toml` 装了 `langgraph` 但源码**零 import**（预留，未启用）|
+>
+> **结论**：MVP 的 AI 能力（撰写流式、审查 Rubric 评分、RAG 检索注入）均已用 LangChain 实现，功能完整；LangGraph 带来的 Checkpoint 断点恢复 / HITL 暂停 / 跨会话 Store 记忆等「框架红利」暂缺，如需引入后续可作为增强项。本文档涉及 LlamaIndex/LangGraph 的具体描述（尤其第 4.2 技术选型表、第 5 章 AI 编排、第 10 章 RAG 架构、附录 A 决策记录）请结合本说明阅读。
 
 ---
 
@@ -481,7 +497,7 @@ User (1) ──── (N) Project ──── (1) Template
 │  │   ├─ 撰写 Graph（章节状态机 + Checkpoint + HITL） │
 │  │   ├─ 审查 Graph（确定性评估管线，第 8 章）        │
 │  │   └─ Store（跨会话记忆：审查记录/修改历史）       │
-│  ├─ RAG 层 (LlamaIndex：检索/重排/注入)             │
+│  ├─ RAG 层 (LangChain Embedding + pgvector：检索/注入) │
 │  ├─ 自定义层 (Rubric 配置/知识库扩充/技能挂载)       │
 │  ├─ 模板解析层 (Word 解析/异步任务)                  │
 │  └─ 基础设施层 (DB/存储/ModelAdapter)               │
@@ -500,34 +516,36 @@ User (1) ──── (N) Project ──── (1) Template
 ### 4.2 技术选型
 
 > **v1.3 关键变更**：引入双 Agent 框架。编排/状态机/记忆由 **LangGraph** 接管（取代手搓），RAG 检索由 **LlamaIndex** 接管（取代手搓 Retriever）。详见第 5 章。
+>
+> ⚠️ **v1.5.1 校正**：上述双框架规划在落地中调整——实际编排用 LangChain 手搓（见 5 章）、RAG 用 LangChain Embedding + pgvector（见 10 章）。下表「实际选型」列为 MVP 真实使用的库；原 LlamaIndex/LangGraph 相关行保留为「设计选型」并标注差异。
 
-| 层 | 选型 | 理由 |
-|---|---|---|
-| 前端框架 | Next.js 14+ (App Router) + TypeScript | 全栈能力、SSR、生态成熟 |
-| UI 组件 | shadcn/ui + Tailwind CSS | 可定制、不锁框架 |
-| 富文本 | Tiptap v2 | JSON 结构化、AI 友好 |
-| 状态管理 | Zustand（UI）+ TanStack Query（服务端） | 轻量、分工清晰 |
-| AI 流式 | SSE (Server-Sent Events) | 单向流足够、自动重连 |
-| 后端框架 | FastAPI + Python 3.11+ | 异步、类型友好、AI 生态最佳 |
-| **Agent 编排** | **LangGraph**（StateGraph + Checkpoint + Store + HITL） | 章节状态机、服务重启恢复、跨会话记忆、用户确认环节，开箱即用（详见 5.2） |
-| **RAG 检索** | **LlamaIndex**（Retriever / 混合检索 / 重排） | RAG 质量业界最佳；pgvector 作存储后端（详见第 10 章） |
-| LLM/Embedding 抽象 | **LangChain `init_chat_model` / ModelAdapter**（原生支持 GLM） | 一行切换 Provider，取代手搓 LLMClient |
-| ORM | SQLAlchemy 2.0 + Alembic | Python ORM 事实标准 |
-| 数据库 | PostgreSQL + **pgvector 扩展** | JSONB 支持好；pgvector 作向量存储后端（被 LlamaIndex 包装） |
-| LangGraph 持久化 | **PostgresSaver**（Checkpoint + Store 落库 Postgres） | 与业务库同库，事务一致 |
-| 鉴权 | JWT (access + refresh token) | 无状态 |
-| LLM | GLM-5.2（经 LangChain ModelAdapter 接入） | 国产模型友好；原生支持 |
-| Embedding | 智谱 embedding API（经 LangChain EmbeddingAdapter） | 与 LLM 同厂商，中文效果好 |
-| Word 解析 | python-docx + lxml 底层访问 | 读样式/章节可靠；**自动编号需自写解析器**（详见 9.6）。LlamaParse 作为后续增强选项 |
-| Word 导出 | python-docx | 套用模板样式（详见 13.5 导出渲染器） |
-| PDF 导出 | 浏览器打印（MVP）/ weasyprint（后续） | MVP 简化 |
-| Markdown→Tiptap | markdown-it + 自定义映射 | AI 输出转换 |
-| 异步任务 | 模板解析用 BackgroundTasks；Agent 执行/审查用 LangGraph（自带 Durable Execution） | LangGraph 接管状态恢复（详见 13.3） |
-| 校验 | Pydantic v2 | FastAPI 原生 |
-| 配置 | pydantic-settings + .env | 标准 |
-| 测试 | pytest + Vitest | 对应规范 |
-| 日志 | loguru + LangSmith（Agent 追踪，可选） | 结构化日志 + Agent 可观测 |
-| 部署 | docker-compose (web + api + postgres) | 一键起 |
+| 层 | 实际选型（MVP 已落地） | 设计选型（v1.3，部分未落地） | 理由 |
+|---|---|---|---|
+| 前端框架 | Next.js 14+ (App Router) + TypeScript | 同 | 全栈能力、SSR、生态成熟 |
+| UI 组件 | shadcn/ui + Tailwind CSS | 同 | 可定制、不锁框架 |
+| 富文本 | Tiptap v2 | 同 | JSON 结构化、AI 友好 |
+| 状态管理 | Zustand（UI）+ TanStack Query（服务端） | 同 | 轻量、分工清晰 |
+| AI 流式 | SSE (Server-Sent Events) | 同 | 单向流足够、自动重连 |
+| 后端框架 | FastAPI + Python 3.11+ | 同 | 异步、类型友好、AI 生态最佳 |
+| **Agent 编排** | **LangChain `ChatOpenAI` + 手搓编排器**（`app/ai/orchestrator.py`） | ~~LangGraph StateGraph + Checkpoint + Store + HITL~~ | ⚠️ 未用 LangGraph，编排为手搓 generator 流式；Checkpoint/HITL/Store 框架红利暂缺（详见顶部「实现现状」） |
+| **RAG 检索** | **LangChain `OpenAIEmbeddings` + pgvector 直连** | ~~LlamaIndex~~ | ⚠️ 弃用 LlamaIndex：其 `OpenAIEmbedding` 不支持国产 embedding 模型名（GOTCHAS E3） |
+| LLM/Embedding 抽象 | **LangChain `ChatOpenAI` / `OpenAIEmbeddings`**（OpenAI 兼容协议接 GLM） | 同 | 经 OpenAI 兼容协议，可切换 Provider |
+| ORM | SQLAlchemy 2.0 + Alembic | 同 | Python ORM 事实标准 |
+| 数据库 | PostgreSQL + **pgvector 扩展** | 同 | JSONB 支持好；pgvector 作向量存储后端（直接 SQLAlchemy 操作） |
+| 持久化（计划） | — | ~~LangGraph PostgresSaver（Checkpoint + Store）~~ | ⚠️ 未落地；模板解析恢复见 13.3，Agent 执行恢复暂未用框架 |
+| 鉴权 | JWT (access + refresh token) | 同 | 无状态 |
+| LLM | GLM-5.2（经 `langchain_openai.ChatOpenAI` 接入） | 同 | 国产模型友好；原生支持 |
+| Embedding | 智谱 embedding API（经 `langchain_openai.OpenAIEmbeddings`） | 同 | 与 LLM 同厂商，中文效果好 |
+| Word 解析 | python-docx + lxml 底层访问 | 同 | 读样式/章节可靠；**自动编号需自写解析器**（详见 9.6）。LlamaParse 作为后续增强选项 |
+| Word 导出 | python-docx | 同 | 套用模板样式（详见 13.5 导出渲染器） |
+| PDF 导出 | 浏览器打印（MVP）/ weasyprint（后续） | 同 | MVP 简化 |
+| Markdown→Tiptap | markdown-it + 自定义映射 | 同 | AI 输出转换 |
+| 异步任务 | 模板解析用 BackgroundTasks + 启动恢复扫描 | ~~Agent 执行/审查用 LangGraph（Durable Execution）~~ | ⚠️ Agent 执行未用 LangGraph，无断点恢复；模板解析恢复见 13.3 |
+| 校验 | Pydantic v2 | 同 | FastAPI 原生 |
+| 配置 | pydantic-settings + .env | 同 | 标准 |
+| 测试 | pytest + Vitest | 同 | 对应规范 |
+| 日志 | loguru + LangSmith（Agent 追踪，可选） | 同 | 结构化日志 + Agent 可观测 |
+| 部署 | docker-compose (web + api + postgres) | 同 | 一键起 |
 
 ### 4.3 项目目录结构
 
@@ -564,22 +582,20 @@ TianGong/
 │       │   │   ├── archive_service.py   # 归档到知识库
 │       │   │   ├── rubric_service.py    # Rubric 覆盖解析
 │       │   │   └── skill_service.py     # 技能挂载
-│       │   ├── agents/         # LangGraph 编排（核心）
-│       │   │   ├── writing_graph.py     # 撰写状态图
-│       │   │   ├── review_graph.py      # 审查状态图（确定性评估管线）
-│       │   │   ├── nodes/               # 图节点
-│       │   │   ├── state.py             # 图状态定义
-│       │   │   └── checkpointer.py      # PostgresSaver 配置
-│       │   ├── ai/             # AI 引擎辅助
-│       │   │   ├── prompt_builder.py
+│       │   ├── agents/         # ⚠️ LangGraph 编排（v1.3 设计，未落地）
+│       │   │   └── # 实际编排见 ai/orchestrator.py（手搓）
+│       │   ├── ai/             # AI 引擎（实际实现）
+│       │   │   ├── orchestrator.py      # ⭐ 编排器（引导对话/生成草稿/重写，流式）
+│       │   │   ├── llm_client.py        # LangChain ChatOpenAI 接入
 │       │   │   ├── context_assembler.py # 五层上下文装配（含知识库层）
 │       │   │   ├── section_prompts.py   # 章节 Prompt 注册表
 │       │   │   ├── rubric_prompts.py    # 审查评分 Prompt（Rubric 驱动）
 │       │   │   └── markdown_to_tiptap.py
-│       │   ├── rag/            # 知识库与 RAG（基于 LlamaIndex）
-│       │   │   ├── indexer.py           # LlamaIndex 索引构建
-│       │   │   ├── retriever.py         # LlamaIndex 检索 + 重排
-│       │   │   └── chunker.py           # 分块器
+│       │   ├── rag/            # 知识库与 RAG（基于 LangChain + pgvector）
+│       │   │   ├── embedding.py         # LangChain OpenAIEmbeddings
+│       │   │   ├── chunker.py           # 分块器
+│       │   │   ├── archiver.py          # 归档入库
+│       │   │   └── retriever.py         # pgvector 余弦检索
 │       │   └── main.py
 │       ├── tests/
 │       ├── alembic/
@@ -630,13 +646,13 @@ v1.3 起，AI 编排从手搓服务改为**基于 LangGraph 的状态图**。所
 │  └─ SectionPromptRegistry (章节 Prompt)     │
 └──────────────────┬──────────────────────────┘
 ┌──────────────────▼──────────────────────────┐
-│  RAG 检索层 (LlamaIndex，第 10 章)            │
-│  └─ Retriever/重排/注入                      │
+│  RAG 检索层 (LangChain Embedding + pgvector) │
+│  └─ 检索/注入（重排后续）                    │
 └──────────────────┬──────────────────────────┘
 ┌──────────────────▼──────────────────────────┐
-│  模型抽象 (LangChain ModelAdapter)           │
-│  ├─ init_chat_model("zhipu:glm-5.2")        │
-│  └─ Embedding (智谱 embedding)              │
+│  模型抽象 (LangChain)                        │
+│  ├─ ChatOpenAI(base_url=智谱, model=glm-5.2)│
+│  └─ OpenAIEmbeddings (智谱 embedding-3)      │
 └─────────────────────────────────────────────┘
 ```
 
@@ -695,7 +711,7 @@ AI 写每一章时，上下文分五层（含知识库层，详见第 10 章）�
 [对话层]     本章节历史对话
 ```
 
-- **知识库层**：LlamaIndex 异步检索用户历史案例，token 预算独立（详见 10.4）；用户可见来源标注
+- **知识库层**：检索用户历史案例（LangChain Embedding + pgvector），token 预算独立（详见 10.4）；用户可见来源标注
 - **项目层做摘要而非全文**：已确认章节内容可能很长，注入全文会爆 token。确认章节时由 AI 生成 `summary`，注入摘要即可
 - **严格顺序的红利**：前面的章节已确认，其 summary 是可靠的上下文
 
@@ -1229,7 +1245,7 @@ Word 的自动编号（1. / 1.1 / 1.1.1）是**渲染时由 Word 计算**的，d
 
 ---
 
-## 10. 知识库与 RAG 架构（MVP 实现基础 RAG，基于 LlamaIndex）
+## 10. 知识库与 RAG 架构（MVP 实现基础 RAG，基于 LangChain Embedding + pgvector）
 
 这是天工作为 **Agent 系统**的核心基础设施——让每一次撰写都为下一次积累知识。MVP 实现基础 RAG：交底书归档 → 向量化入库 → 新交底书撰写时语义检索相似案例。
 
@@ -1451,6 +1467,11 @@ Word 的自动编号（1. / 1.1 / 1.1.1）是**渲染时由 Word 计算**的，d
 阶段 13: 稳定性验证（跨对话复现性测试）+ 打磨与联调（E2E）          
 ```
 
+> ℹ️ **实际落地说明**：MVP 按 `docs/superpowers/plans/` 下的计划 1–7b 拆分实施，全部已完成（见 README 进度表）。其中：
+> - 阶段 4「撰写状态图」实际用 **LangChain + 手搓编排器**（`app/ai/orchestrator.py`）实现，未用 LangGraph StateGraph/Checkpoint/HITL
+> - 阶段 9「知识库 RAG」实际用 **LangChain Embedding + pgvector**，未用 LlamaIndex（GOTCHAS E3）
+> - 阶段 10「审查引擎」用 `services/review_service.py` 确定性管线实现，未用 ReviewGraph 框架
+
 ---
 
 ## 13. 工程细节与安全
@@ -1591,7 +1612,7 @@ Word 的自动编号（1. / 1.1 / 1.1.1）是**渲染时由 Word 计算**的，d
 | Embedding | 智谱 embedding API（OpenAI 兼容） | 与 LLM 同厂商，中文好 |
 | Agent 记忆 | MVP 不做，架构预留（UserMemory） | 主观画像复杂度高，后续迭代 |
 | 案件主线 | Project 预留 stage 字段（MVP=disclosure） | 平滑升级到全生命周期 |
-| Agent 框架 | LangGraph（编排）+ LlamaIndex（RAG）双框架 | 报告模式 A；直击稳定性痛点，避免手搓返工 |
+| Agent 框架 | 设计：LangGraph（编排）+ LlamaIndex（RAG）；实际：**LangChain（编排手搓 + Embedding）+ pgvector**（v1.5.1 校正，详见顶部「实现现状」+ GOTCHAS E3）| 功能达成，框架红利（Checkpoint/Store）暂缺，后续可引入 |
 | 审查功能 | MVP P0（非后续迭代） | 跨对话稳定是核心质量目标，须尽早验证 |
 | 评分机制 | Rubric 驱动 + 自一致性 | 根治标准漂移 + 平滑概率波动 |
 | Rubric 来源 | 系统默认 + 用户覆盖 | 开箱即用 + 可定制 |
@@ -1625,8 +1646,8 @@ Word 的自动编号（1. / 1.1 / 1.1.1）是**渲染时由 Word 计算**的，d
 | pgvector 规模化性能（数据量大后检索变慢） | 🟢 低 | MVP 数据量小；后续可加 IVFFlat/HNSW 索引或迁独立向量库 |
 | embedding API 费用/限流 | 🟢 低 | 仅归档时批量调用；按用户限流；缓存向量 |
 | 归档与编辑冲突（归档后用户又改了） | 🟡 中 | 提示"内容已变更，是否更新知识库"；幂等重生成（10.5） |
-| 框架学习曲线（LangGraph/LlamaIndex） | 🟡 中 | 团队需投入学习；用官方 PostgresSaver/标准 Retriever 减少自定义 |
-| 框架版本锁定 / Breaking Change | 🟢 低 | LangChain 1.0 LTS 承诺；LlamaIndex 尚未 1.0 需锁版本 |
+| 框架学习曲线（LangGraph 未启用 / LlamaIndex 已弃用） | 🟢 已缓解 | MVP 实际仅用 LangChain，学习成本可控；如后续启用 LangGraph 需投入学习 |
+| 框架版本锁定 / Breaking Change | 🟢 低 | LangChain 1.0 LTS 承诺；锁版本。LlamaIndex 已弃用（GOTCHAS E3）|
 | 审查稳定性测试不达标（标准差 > 3） | 🔴 高 | 调整 Rubric 精度、增加自一致性 N、缩小评分范围；必要时降级为"通过/复核/不通过"三档 |
 | Rubric 过严或过松（用户感受差） | 🟡 中 | 系统默认 Rubric 经调优；用户可覆盖；审查报告给证据可解释 |
 | Store 记忆膨胀（审查记录累积） | 🟢 低 | namespace 按 (user, project) 隔离；定期归档旧记录 |
