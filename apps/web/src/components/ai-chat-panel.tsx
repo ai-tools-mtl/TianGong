@@ -2,7 +2,7 @@
 
 import { PanelRight, Sparkles } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -30,6 +30,7 @@ export function AIChatPanel({ sectionId, projectId }: AIChatPanelProps) {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const abortRef = useRef<AbortController | null>(null)
 
   async function handleSend() {
     if (!input.trim() || loading) return
@@ -37,6 +38,7 @@ export function AIChatPanel({ sectionId, projectId }: AIChatPanelProps) {
     setMessages((m) => [...m, userMsg, { role: 'assistant', content: '' }])
     setInput('')
     setLoading(true)
+    abortRef.current = new AbortController()
 
     let aiText = ''
     try {
@@ -47,27 +49,50 @@ export function AIChatPanel({ sectionId, projectId }: AIChatPanelProps) {
           copy[copy.length - 1] = { role: 'assistant', content: aiText }
           return copy
         })
-      })
-    } catch {
-      toast.error('AI 回复失败')
+      }, abortRef.current.signal)
+    } catch (err: unknown) {
+      // abort 不报错（用户主动停止），其他错误提示
+      if (!(err instanceof DOMException && err.name === 'AbortError')) {
+        toast.error('AI 回复失败')
+      }
     } finally {
       setLoading(false)
     }
   }
 
+  function handleStop() {
+    abortRef.current?.abort()
+    setGenerating(false)
+    setMessages((m) => {
+      const copy = [...m]
+      // AI 气泡若为空或 '...'，移除占位
+      const last = copy[copy.length - 1]
+      if (last && last.role === 'assistant' && (!last.content || last.content === '...')) {
+        copy.pop()
+      }
+      return copy
+    })
+  }
+
   async function handleGenerate() {
     setGenerating(true)
     toast.info('正在生成草稿...')
+    abortRef.current = new AbortController()
     try {
       let md = ''
       await api.streamGenerate(sectionId, (token) => {
         md += token
-      })
+      }, abortRef.current.signal)
       toast.success('草稿已生成并填入编辑器')
       // 刷新章节缓存，编辑器会自动拿到新内容——不再整页重载，保留三栏滚动状态
       await qc.invalidateQueries({ queryKey: queryKeys.sections(projectId) })
-    } catch {
-      toast.error('生成失败')
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        toast.info('已停止，已生成内容已保留')
+        await qc.invalidateQueries({ queryKey: queryKeys.sections(projectId) })
+      } else {
+        toast.error('生成失败')
+      }
     } finally {
       setGenerating(false)
     }
@@ -86,9 +111,15 @@ export function AIChatPanel({ sectionId, projectId }: AIChatPanelProps) {
           AI 助手
         </h3>
         <div className="flex items-center gap-1">
-          <Button size="xs" variant="outline" onClick={handleGenerate} disabled={generating}>
-            {generating ? '生成中...' : '生成草稿'}
-          </Button>
+          {generating ? (
+            <Button size="xs" variant="destructive" onClick={handleStop}>
+              停止
+            </Button>
+          ) : (
+            <Button size="xs" variant="outline" onClick={handleGenerate}>
+              生成草稿
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="icon-xs"
