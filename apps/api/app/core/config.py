@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     glm_model: str = "glm-4-flash"
     glm_embedding_model: str = "embedding-3"
 
+    # 文件上传（设计 13.2，附录 B：MVP 本地存储）
+    upload_dir: str = "uploads"
+    max_image_size_mb: int = 10
+
     # CORS（环境变量中以逗号分隔，按 CSV 解析）
     # NoDecode 阻止 pydantic-settings 把字符串当 JSON 解析，交给下面的 validator 切分
     cors_origins: Annotated[List[str], NoDecode] = ["http://localhost:3000"]

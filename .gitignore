@@ -26,3 +26,6 @@ Thumbs.db
 # 项目数据（本地存储，勿提交）
 uploads/
 storage/
+
+# 上传文件（MVP 本地存储）
+apps/api/uploads/
