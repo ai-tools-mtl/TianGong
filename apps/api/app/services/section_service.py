@@ -47,6 +47,9 @@ def update_section(
         old_status = section.status
         section.status = status
         if status == "confirmed" and old_status != "confirmed":
+            # 确认时自动存版本（设计 13.6 + 版本快照）
+            from app.services.version_service import create_version
+            create_version(db, section=section, created_by="auto", note="确认章节时自动保存")
             # 触发 summary 生成（供跨章节上下文用，设计 5.10）
             from app.services.summary_service import generate_summary
             generate_summary(db, section)

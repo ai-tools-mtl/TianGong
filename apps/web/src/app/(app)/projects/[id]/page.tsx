@@ -7,7 +7,9 @@ import { toast } from 'sonner'
 import { TiptapEditor } from '@/components/editor/tiptap-editor'
 import { AIChatPanel } from '@/components/ai-chat-panel'
 import { SectionOutline } from '@/components/section-outline'
+import { VersionDrawer } from '@/components/version-drawer'
 import { Button } from '@/components/ui/button'
+import { api } from '@/lib/api'
 import { useSections, useUpdateSection } from '@/lib/queries'
 import type { Section } from '@/types/api'
 
@@ -19,6 +21,7 @@ export default function ProjectDetailPage() {
   const updateSection = useUpdateSection()
   const [currentId, setCurrentId] = useState<string | null>(null)
   const [current, setCurrent] = useState<Section | null>(null)
+  const [versionOpen, setVersionOpen] = useState(false)
 
   useEffect(() => {
     if (sections && sections.length > 0 && !currentId) {
@@ -65,9 +68,18 @@ export default function ProjectDetailPage() {
           <>
             <div className="flex items-center justify-between">
               <h1 className="text-lg font-bold">{current.title}</h1>
-              <Button onClick={handleConfirm} disabled={updateSection.isPending}>
-                确认完成
-              </Button>
+              <div className="flex items-center gap-2">
+                <a href={`/projects/${projectId}/preview`}>
+                  <Button variant="outline" size="sm">预览</Button>
+                </a>
+                <a href={api.exportDocxUrl(projectId)} target="_blank" rel="noopener noreferrer">
+                  <Button variant="outline" size="sm">导出 Word</Button>
+                </a>
+                <Button variant="outline" size="sm" onClick={() => setVersionOpen(true)}>版本</Button>
+                <Button onClick={handleConfirm} disabled={updateSection.isPending}>
+                  确认完成
+                </Button>
+              </div>
             </div>
             <TiptapEditor
               key={current.id}
@@ -79,6 +91,14 @@ export default function ProjectDetailPage() {
       </div>
 
       {current && <AIChatPanel sectionId={current.id} />}
+
+      {current && (
+        <VersionDrawer
+          sectionId={current.id}
+          open={versionOpen}
+          onClose={() => setVersionOpen(false)}
+        />
+      )}
     </div>
   )
 }
