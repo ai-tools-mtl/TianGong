@@ -89,6 +89,10 @@ def _tiptap_to_markdown(doc_json: dict) -> str:
                 for child in node.get("content", []):
                     walk(child)
                 parts.append("\n\n")
+            elif ntype == "image":
+                src = node.get("attrs", {}).get("src", "")
+                alt = node.get("attrs", {}).get("alt", "")
+                parts.append(f"\n\n![{alt}]({src})\n\n")
             elif ntype in ("bulletList", "orderedList"):
                 for child in node.get("content", []):
                     walk(child)
@@ -120,6 +124,13 @@ def _render_tiptap_to_docx(doc: Document, doc_json: dict) -> None:
                 level = node.get("attrs", {}).get("level", 2)
                 texts = [_get_text(c) for c in node.get("content", [])]
                 doc.add_heading("".join(texts), level=min(level, 3))
+            elif ntype == "image":
+                src = node.get("attrs", {}).get("src", "")
+                alt = node.get("attrs", {}).get("alt", "")
+                import os
+                if src and os.path.exists(src.split("?")[0]):
+                    doc.add_picture(src.split("?")[0])
+                doc.add_paragraph(alt)
             elif ntype in ("bulletList", "orderedList"):
                 style = "List Bullet" if ntype == "bulletList" else "List Number"
                 for item in node.get("content", []):
