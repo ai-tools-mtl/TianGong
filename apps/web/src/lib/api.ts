@@ -83,6 +83,11 @@ export const api = {
     return res.json()
   },
 
+  getParseJob: (jobId: string) =>
+    request<{ id: string; status: string; template_id: string | null; error_message: string | null }>(
+      `/templates/parse-jobs/${jobId}`,
+    ),
+
   deleteTemplate: (id: string) =>
     request<void>(`/templates/${id}`, { method: 'DELETE' }),
 
