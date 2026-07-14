@@ -162,3 +162,43 @@ def test_upload_returns_202_processing_and_background_completes(
     assert data["status"] == "processing"
     assert "parse_job_id" in data
 
+
+# ──────────────────────────────────────────────────────────────
+# Task 3: on_startup 接入恢复扫描
+# ──────────────────────────────────────────────────────────────
+
+
+def test_on_startup_calls_recovery_without_crashing(monkeypatch):
+    """on_startup 调用 recover_pending_jobs，即使抛错也不阻塞。"""
+    called = {"n": 0}
+
+    def fake_recover(upload_dir, stale_minutes=10):
+        called["n"] += 1
+        return 0
+
+    from app.services import parse_service
+
+    monkeypatch.setattr(parse_service, "recover_pending_jobs", fake_recover)
+
+    from app.main import on_startup
+
+    on_startup()  # 不应抛异常
+
+    assert called["n"] == 1
+
+
+def test_on_startup_swallows_recovery_error(monkeypatch):
+    """恢复扫描抛错时 on_startup 仍正常返回（不阻塞启动）。"""
+
+    def boom(upload_dir, stale_minutes=10):
+        raise RuntimeError("db down")
+
+    from app.services import parse_service
+
+    monkeypatch.setattr(parse_service, "recover_pending_jobs", boom)
+
+    from app.main import on_startup
+
+    on_startup()  # 不应抛异常
+
+
