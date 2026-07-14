@@ -18,6 +18,15 @@ from app.models import User
 
 def create_admin(db: Session, *, email: str, password: str) -> User:
     """创建管理员。幂等：若邮箱已存在则跳过。"""
+    # 用与注册相同的邮箱校验，避免"能创建却登不进"的陷阱
+    # （.local/.localhost 等保留域名会被 EmailStr 拒绝）
+    from email_validator import EmailNotValidError, validate_email
+    try:
+        validate_email(email, check_deliverability=False)
+    except EmailNotValidError as e:
+        print(f"错误：邮箱 {email} 不合法 —— {e}. 请用合法域名（如 admin@example.com）")
+        raise SystemExit(1) from e
+
     existing = db.scalar(select(User).where(User.email == email))
     if existing:
         print(f"管理员 {email} 已存在，跳过。")

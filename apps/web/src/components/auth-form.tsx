@@ -62,7 +62,7 @@ export function AuthForm({ mode }: AuthFormProps) {
       )}
       <div className="space-y-2">
         <Label htmlFor="email">邮箱</Label>
-        <Input id="email" name="email" type="email" required placeholder="完整邮箱，如 admin@tiangong.local" />
+        <Input id="email" name="email" type="email" required placeholder="完整邮箱，如 admin@tiangong.dev" />
       </div>
       <div className="space-y-2">
         <Label htmlFor="password">密码</Label>
