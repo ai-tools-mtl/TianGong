@@ -19,15 +19,22 @@ def _clear_cookie_domain(monkeypatch):
 
 @pytest.fixture(scope="function")
 def engine():
-    """每测试用独立 sqlite 内存库。"""
+    """每测试用独立 sqlite 内存库。knowledge_chunks 用 pgvector，sqlite 不支持，跳过。"""
     eng = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    Base.metadata.create_all(eng)
+    # 排除 knowledge_chunks（Vector 类型 sqlite 不支持）
+    tables = {
+        name: t for name, t in Base.metadata.tables.items()
+        if name != "knowledge_chunks"
+    }
+    for t in tables.values():
+        t.create(eng, checkfirst=True)
     yield eng
-    Base.metadata.drop_all(eng)
+    for t in reversed(list(tables.values())):
+        t.drop(eng, checkfirst=True)
     eng.dispose()
 
 
