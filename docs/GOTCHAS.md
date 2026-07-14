@@ -99,3 +99,11 @@
 - **修复**：`uv.lock`（后端）、`pnpm-lock.yaml`（前端）都纳入版本控制
 - **预防**：每次 `add` 依赖后，lock 文件要一起 commit
 - **影响任务**：计划 1/2
+
+### E3: LlamaIndex OpenAIEmbedding 不支持非 OpenAI 官方模型名 ⚠️
+
+- **现象**：`OpenAIEmbedding(model='embedding-3', api_base='智谱...')` 报 `ValueError: 'embedding-3' is not a valid OpenAIEmbeddingModelType`
+- **根因**：LlamaIndex 的 `OpenAIEmbedding` 在构造时强制用 `OpenAIEmbeddingModelType` 枚举验证模型名，只接受 OpenAI 官方模型（text-embedding-ada-002 等），无法接入智谱/DeepSeek 等国产模型的 embedding
+- **修复**：弃用 LlamaIndex 做 embedding，改用 **LangChain 的 `OpenAIEmbeddings`**（接受任意模型名 + 自定义 base_url）。向量存储直接用 pgvector（SQLAlchemy 操作）。设计文档原定 LlamaIndex，据此调整为 LangChain + pgvector
+- **预防**：国产模型生态优先用 LangChain（更灵活），LlamaIndex 对非 OpenAI 模型支持差
+- **影响任务**：计划 6（知识库 RAG）
