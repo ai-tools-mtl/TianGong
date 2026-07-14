@@ -113,3 +113,41 @@ export interface ProjectPreview {
   metadata: Record<string, unknown> | null
   sections: PreviewSection[]
 }
+
+// ── 审查 ──
+
+export interface DimensionScore {
+  key: string
+  name: string
+  weight: number
+  score: number
+  run_scores: number[]
+  evidence: string
+  suggestion: string
+}
+
+export interface ReviewRecord {
+  id: string
+  round: number
+  total_score: number
+  previous_score: number | null
+  dimension_scores: DimensionScore[]
+  resolved_issues: string[]
+  remaining_issues: string[]
+  created_at: string
+}
+
+export interface RubricCriterion {
+  key: string
+  name: string
+  weight: number
+  scoring_guide: Record<string, string>
+}
+
+export interface Rubric {
+  id: string
+  scope: string
+  name: string
+  criteria: RubricCriterion[]
+  is_customized: boolean
+}

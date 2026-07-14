@@ -142,6 +142,18 @@ export const api = {
   // ── 知识库 ──
   archiveProject: (projectId: string) =>
     request<{ project_id: string; chunks: number; status: string }>(`/projects/${projectId}/archive`, { method: 'POST' }),
+
+  // ── 审查 ──
+  runReview: (projectId: string) =>
+    request<import('@/types/api').ReviewRecord>(`/projects/${projectId}/review`, { method: 'POST' }),
+  listReviews: (projectId: string) =>
+    request<import('@/types/api').ReviewRecord[]>(`/projects/${projectId}/reviews`),
+
+  // ── Rubric ──
+  getRubric: () => request<import('@/types/api').Rubric>(`/rubric`),
+  updateRubric: (data: { name?: string; criteria?: Record<string, unknown>[] }) =>
+    request<import('@/types/api').Rubric>(`/rubric`, { method: 'PUT', body: JSON.stringify(data) }),
+  resetRubric: () => request<import('@/types/api').Rubric>(`/rubric/reset`, { method: 'POST' }),
 }
 
 async function _consumeSSE(res: Response, onToken: (t: string) => void): Promise<void> {
