@@ -1,5 +1,6 @@
 from app.models.agent_skill import AgentSkill
 from app.models.attachment import Attachment
+from app.models.audit_log import AuditLog
 from app.models.base import Base, JSONType
 from app.models.knowledge_chunk import KnowledgeChunk
 from app.models.llm_call_log import LLMCallLog
@@ -22,4 +23,5 @@ __all__ = [
     "KnowledgeChunk", "ReviewRubric", "ReviewRecord", "UserLLMConfig",
     "AgentSkill",
     "LLMCallLog",
+    "AuditLog",
 ]
