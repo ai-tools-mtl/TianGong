@@ -33,3 +33,16 @@ class ForbiddenError(AppError):
 class ValidationError(AppError):
     status_code = 422
     code = "validation_error"
+
+
+def register_exception_handlers(app) -> None:
+    """注册全局异常处理器，统一错误响应格式 {code, message}。"""
+    from fastapi import Request
+    from fastapi.responses import JSONResponse
+
+    @app.exception_handler(AppError)
+    async def app_error_handler(request: Request, exc: AppError):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"code": exc.code, "message": exc.message},
+        )
