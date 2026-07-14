@@ -26,6 +26,7 @@ def assemble_messages(
     history: list[Message],
     user_input: str | None = None,
     project_summaries: list[dict] | None = None,
+    knowledge_context: list[dict] | None = None,
 ) -> list:
     """装配完整的消息列表。"""
     messages = []
@@ -41,6 +42,15 @@ def assemble_messages(
         )
         if summary_text:
             system_content += f"\n\n已完成章节摘要（可作为上下文参考）：\n{summary_text}"
+
+    # 知识库层（RAG 检索注入，设计 10.4）
+    if knowledge_context:
+        kb_text = "\n".join(
+            f"- 《{k.get('project_title', '历史案例')}》{k.get('section_key', '')}：{k['content'][:200]}"
+            for k in knowledge_context
+        )
+        if kb_text:
+            system_content += f"\n\n相关知识库参考（来自你的历史案例）：\n{kb_text}"
 
     messages.append(SystemMessage(content=system_content))
 
