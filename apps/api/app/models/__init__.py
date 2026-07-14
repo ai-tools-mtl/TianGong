@@ -1,3 +1,4 @@
+from app.models.agent_skill import AgentSkill
 from app.models.attachment import Attachment
 from app.models.base import Base, JSONType
 from app.models.knowledge_chunk import KnowledgeChunk
@@ -18,4 +19,5 @@ __all__ = [
     "User", "Attachment", "Project", "SystemSetting",
     "Template", "ParseJob", "Section", "SectionVersion", "Message",
     "KnowledgeChunk", "ReviewRubric", "ReviewRecord", "UserLLMConfig",
+    "AgentSkill",
 ]
