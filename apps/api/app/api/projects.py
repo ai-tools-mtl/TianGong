@@ -1,11 +1,13 @@
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.exceptions import ValidationError
 from app.deps import get_current_user
-from app.models import Project, User
+from app.models import Project, Section, User
 from app.schemas.project import ProjectCreate, ProjectOut, ProjectUpdate
-from app.services import project_service
+from app.services import archive_service, project_service
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -52,3 +54,23 @@ def update(project_id: str, payload: ProjectUpdate, current_user: User = Depends
 def delete(project_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     project_service.delete_project(db, user=current_user, project_id=project_id)
     return None
+
+
+@router.post("/{project_id}/archive")
+def archive(project_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # 归属校验：非本人项目返回 404（防探测，与其他端点一致）
+    project = project_service.get_project(db, user=current_user, project_id=project_id)
+
+    # 前置校验：至少一个非空 confirmed 章节（防空项目造垃圾 chunk，spec §6.2）
+    has_confirmed = db.scalar(
+        select(Section).where(
+            (Section.project_id == project.id)
+            & (Section.status == "confirmed")
+            & (Section.content.is_not(None))
+        ).limit(1)
+    )
+    if has_confirmed is None:
+        raise ValidationError("内容不足，无法归档（需至少一个已确认的非空章节）")
+
+    # archive_service.archive 内部二次校验归属并调 rag/archiver（幂等：先删旧 chunk 再重生）
+    return archive_service.archive(db, user_id=current_user.id, project_id=project_id)
