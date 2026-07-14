@@ -81,6 +81,30 @@
 - **预防**：开发/测试时统一用 `localhost`（前后端都别用 `127.0.0.1`）；cookie domain 配置留空则不限制
 - **影响任务**：计划 1 任务 5（后端）+ 计划 2 E2E（前端）
 
+### F5: Turbopack `@plugin` 解析 npm 包名失败 ⚠️
+
+- **现象**：`globals.css` 里 `@plugin "@tailwindcss/typography"`，`pnpm dev`（Turbopack）报 `Can't resolve '@tailwindcss/typography' in '.../src/app'`；但 `pnpm build` 不报错（两者的 CSS 解析路径不同）
+- **根因**：Turbopack 的 CSS `@plugin` 指令解析器在 **Windows + pnpm symlink** 环境下解析 npm 包名失败，不如 JS `import` 解析成熟。包明明装好了（`require.resolve` 成功）但 `@plugin` 找不到
+- **修复**：卸载 `@tailwindcss/typography`，手写约 50 行 `.prose` CSS 直接设 h1-h6/p/ul/ol/blockquote/code/pre/table 的颜色与间距，全部走项目 token
+- **预防**：Tailwind v4 在 Turbopack 下**慎用 `@plugin` 引 npm 包**；能用 CSS 手写就手写，少一个依赖链路上的解析风险
+- **影响任务**：计划 8 阶段 0
+
+### F6: next-themes 装了但没接 ThemeProvider
+
+- **现象**：暗色主题完全无效，`useTheme()` 在组件里返回默认值；`sonner.tsx` 调了 `useTheme()` 但 toggle 不起作用
+- **根因**：`next-themes` 已在 dependencies 里，`sonner.tsx` 也 import 了 `useTheme`，但全局**没有 `<ThemeProvider>` 包裹**——`useTheme` 脱离 provider 就是空转
+- **修复**：`providers.tsx` 包一层 `<ThemeProvider attribute="class" defaultTheme="light" enableSystem disableTransitionOnChange>`；`<html>` 加 `suppressHydrationWarning`
+- **预防**：装了 next-themes 必须在根部接 provider；class 策略下 `<html>` 必须加 `suppressHydrationWarning` 防 SSR 水合警告
+- **影响任务**：计划 8 阶段 0
+
+### F7: 组件放进 grid 时的双重宽度声明
+
+- **现象**：改 grid 列宽（如 `grid-cols-[...320px]`）时，AI 面板宽度不跟随，布局错位
+- **根因**：`ai-chat-panel.tsx` 既被父 grid 列（`320px`）约束，自身又带 `style={{ width: 320 }}` + `border-l pl-4`——宽度声明在两处，互相覆盖
+- **修复**：删组件内联 style 和自带 border，宽度完全交给 grid 列；border 交给 grid 间隔处理
+- **预防**：组件放进 grid 时，**宽度声明只能在一处**——要么 grid 列模板、要么组件自身，不能两边都写
+- **影响任务**：计划 8 阶段 2
+
 ---
 
 ## 通用 / 环境

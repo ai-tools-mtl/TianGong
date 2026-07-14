@@ -13,6 +13,7 @@
 1. **[设计文档](docs/superpowers/specs/2026-07-13-tiangong-mvp-design.md)** — 完整设计（v1.5，13 章），所有架构决策的依据
 2. **[踩坑记录](docs/GOTCHAS.md)** ⚠️ — 实际开发踩到的坑（环境兼容/类型/校验等），**开工前必读，避免重复踩**
 3. **实施计划** — `docs/superpowers/plans/` 下按子系统拆分的 TDD 计划
+4. **UI 设计契约** — `docs/superpowers/specs/` 下还有 UI 重构等独立设计契约（如 [2026-07-14-ui-redesign-contract.md](docs/superpowers/specs/2026-07-14-ui-redesign-contract.md)），前端改动前先读对应契约
 
 ## 代码结构
 
