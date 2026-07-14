@@ -202,3 +202,71 @@ def test_on_startup_swallows_recovery_error(monkeypatch):
     on_startup()  # 不应抛异常
 
 
+# ──────────────────────────────────────────────────────────────
+# Task 4: GET /templates/parse-jobs/{job_id} 状态端点
+# ──────────────────────────────────────────────────────────────
+
+
+def test_get_parse_job_status_completed(
+    client, app_obj, engine, registered_user, monkeypatch
+):
+    """GET /templates/parse-jobs/{id} 返回 status + template_id。"""
+    # BackgroundTask 跑 standalone，需 patch SessionLocal 指向测试库
+    from app.core import database as db_module
+
+    monkeypatch.setattr(db_module, "SessionLocal", sessionmaker(bind=engine))
+
+    client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": registered_user["email"],
+            "password": registered_user["password"],
+        },
+    )
+
+    doc = Document()
+    doc.add_heading("发明名称", level=1)
+    doc.add_paragraph("正文")
+    buf = io.BytesIO()
+    doc.save(buf)
+
+    upload_res = client.post(
+        "/api/v1/templates",
+        files={
+            "file": (
+                "t.docx",
+                buf.getvalue(),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+    )
+    job_id = upload_res.json()["parse_job_id"]
+
+    res = client.get(f"/api/v1/templates/parse-jobs/{job_id}")
+    assert res.status_code == 200
+    data = res.json()
+    # TestClient 在响应返回后同步等待 background task 完成，故通常为 completed
+    assert data["status"] == "completed"
+    assert data["template_id"] is not None
+
+
+def test_get_parse_job_not_found(client, registered_user):
+    """不存在的 job_id 返回 404。"""
+    client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": registered_user["email"],
+            "password": registered_user["password"],
+        },
+    )
+    res = client.get(f"/api/v1/templates/parse-jobs/{uuid.uuid4()}")
+    assert res.status_code == 404
+
+
+def test_get_parse_job_unauthenticated(client):
+    """未登录返回 401。"""
+    res = client.get(f"/api/v1/templates/parse-jobs/{uuid.uuid4()}")
+    assert res.status_code == 401
+
+
+

@@ -26,3 +26,13 @@ class TemplateSummary(BaseModel):
     section_count: int
 
     model_config = {"from_attributes": True}
+
+
+class ParseJobOut(BaseModel):
+    """解析任务状态查询。"""
+    id: str
+    status: str
+    template_id: str | None = None
+    error_message: str | None = None
+
+    model_config = {"from_attributes": True}
