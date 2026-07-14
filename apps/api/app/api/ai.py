@@ -6,11 +6,14 @@ from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.ai.llm_client import astream_llm
 from app.ai.orchestrator import astream_chat, astream_generate, astream_rewrite
 from app.core.database import get_db
+from app.core.exceptions import ValidationError
 from app.deps import get_current_user
 from app.models import Message, Section, User
 from app.schemas.ai import ChatRequest, RewriteRequest
@@ -185,3 +188,48 @@ def list_messages(
         }
         for m in messages
     ]
+
+
+class CaptionRequest(BaseModel):
+    descriptions: list[str]
+
+
+@router.post("/sections/{section_id}/caption-figures")
+async def caption_figures(
+    section_id: str,
+    payload: CaptionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """图注润色：基于文字描述生成规范图注（设计 9.5，仅文本非多模态）。
+
+    直接用 astream_llm 流式生成（不走 heartbeat 包装，简化文本生成）。
+    """
+    section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
+    # 仅附图章节可用
+    if section.key != "drawings":
+        raise ValidationError("图注润色仅限附图说明章节")
+
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    descs = "\n".join(f"- {d}" for d in payload.descriptions)
+    system = (
+        "你是专利交底书撰写助手。请根据用户提供的图片文字描述，"
+        "润色生成规范的图注。要求：统一'图 N 是…'格式，简洁准确。"
+    )
+    messages = [
+        SystemMessage(content=system),
+        HumanMessage(content=f"以下是各图的文字描述，请生成规范图注：\n{descs}"),
+    ]
+
+    async def generate():
+        try:
+            async for token in astream_llm(messages):
+                yield _sse_event("token", {"text": token})
+            yield _sse_event("done", {})
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            yield _sse_event("error", {"code": "llm_error", "message": str(e)[:200]})
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
