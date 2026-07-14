@@ -106,10 +106,24 @@ def set_global_llm(
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    return llm_config_service.set_global_llm_settings(
+    result = llm_config_service.set_global_llm_settings(
         db, enabled=payload.enabled,
         base_url=payload.base_url, api_key=payload.api_key, model=payload.model,
     )
+    # 审计：detail 只记非敏感字段，绝不传 api_key 明文（设计 8.3 脱敏）
+    admin_service._audit(
+        db,
+        actor=admin,
+        action="set_global_llm",
+        target_type="system_setting",
+        target_id="llm_global_config",
+        detail={
+            "enabled": payload.enabled,
+            "base_url": payload.base_url,
+            "model": payload.model,
+        },
+    )
+    return result
 
 
 # ── 用户：自有 LLM 配置（BYOK）──

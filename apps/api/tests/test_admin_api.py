@@ -126,3 +126,31 @@ def test_normal_user_cannot_access_ban(client, registered_user, target_user):
     })
     res = _patch_status(client, target_user.id, "disabled")
     assert res.status_code == 403
+
+
+def test_set_global_llm_writes_audit_without_api_key(client, admin_and_login, db_session):
+    """设置全局 LLM 后，审计日志记录变更但 detail 绝不含 api_key 明文。"""
+    res = client.put("/api/v1/admin/llm-config", json={
+        "enabled": True,
+        "base_url": "https://open.bigmodel.cn/api/paas/v4",
+        "api_key": "sk-super-secret-key-1234567890",
+        "model": "glm-4-flash",
+    })
+    assert res.status_code == 200
+
+    from app.models import AuditLog
+    from sqlalchemy import select
+    logs = list(db_session.scalars(select(AuditLog).where(AuditLog.action == "set_global_llm")))
+    assert len(logs) == 1
+    log = logs[0]
+    detail = log.detail or {}
+    # 关键脱敏断言
+    assert "api_key" not in detail
+    assert "api_key_encrypted" not in detail
+    assert "sk-super-secret-key-1234567890" not in str(detail)
+    # 记录了变更摘要
+    assert detail.get("model") == "glm-4-flash"
+    assert detail.get("base_url") == "https://open.bigmodel.cn/api/paas/v4"
+    assert detail.get("enabled") is True
+    assert log.actor_email == admin_and_login.email
+    assert log.target_type == "system_setting"
