@@ -30,6 +30,10 @@ export function Navbar() {
           <span className="font-bold">天工 TianGong</span>
           <a href="/dashboard" className="text-sm text-muted-foreground hover:text-foreground">工作台</a>
           <a href="/templates" className="text-sm text-muted-foreground hover:text-foreground">模板</a>
+          {user?.role === 'admin' && (
+            <a href="/admin" className="text-sm text-muted-foreground hover:text-foreground">管理</a>
+          )}
+          <a href="/settings" className="text-sm text-muted-foreground hover:text-foreground">设置</a>
         </div>
         {user && (
           <div className="flex items-center gap-3 text-sm">

@@ -151,3 +151,30 @@ export interface Rubric {
   criteria: RubricCriterion[]
   is_customized: boolean
 }
+
+// ── 管理 ──
+
+export interface AdminUser {
+  id: string
+  email: string
+  name: string
+  role: string
+  status: string
+  project_count: number
+  has_own_llm_key: boolean
+  created_at: string
+}
+
+export interface GlobalLLMSettings {
+  llm_global_enabled: boolean
+  global_config: { base_url: string; api_key_masked: string; model: string } | null
+}
+
+export interface UserLLMSettings {
+  provider: string
+  base_url: string
+  api_key_masked: string
+  model: string
+  embedding_model: string | null
+  is_active: boolean
+}

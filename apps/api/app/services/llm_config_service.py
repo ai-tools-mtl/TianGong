@@ -1,0 +1,164 @@
+"""LLM 配置服务：三级 Provider 解析 + 用户/全局配置管理（设计 8.4）。
+
+优先级：用户自配(is_active=True) > 全局(SystemSetting) > 报错
+"""
+
+from dataclasses import dataclass
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.core.security import decrypt_value, encrypt_value
+from app.models import SystemSetting, UserLLMConfig
+
+
+@dataclass
+class ResolvedLLMConfig:
+    """解析后的生效配置。"""
+    base_url: str
+    api_key: str
+    model: str
+    source: str  # "user" / "global"
+
+
+def resolve_llm_config(db: Session, *, user_id) -> ResolvedLLMConfig | None:
+    """三级优先级解析 LLM 配置。无可用配置返回 None。"""
+    # ① 用户自配
+    user_cfg = db.scalar(
+        select(UserLLMConfig).where(
+            (UserLLMConfig.user_id == user_id) & (UserLLMConfig.is_active.is_(True))
+        )
+    )
+    if user_cfg:
+        return ResolvedLLMConfig(
+            base_url=user_cfg.base_url,
+            api_key=decrypt_value(user_cfg.api_key_encrypted),
+            model=user_cfg.model,
+            source="user",
+        )
+
+    # ② 全局配置（llm_global_enabled=true 时）
+    global_enabled = db.scalar(
+        select(SystemSetting).where(SystemSetting.key == "llm_global_enabled")
+    )
+    if global_enabled and global_enabled.value.get("enabled"):
+        global_cfg = db.scalar(
+            select(SystemSetting).where(SystemSetting.key == "llm_global_config")
+        )
+        if global_cfg and global_cfg.value:
+            v = global_cfg.value
+            return ResolvedLLMConfig(
+                base_url=v.get("base_url", ""),
+                api_key=decrypt_value(v["api_key_encrypted"]) if v.get("api_key_encrypted") else "",
+                model=v.get("model", ""),
+                source="global",
+            )
+
+    # ③ 都没有
+    return None
+
+
+# ── 用户 BYOK ──
+
+def get_user_llm_config(db: Session, *, user_id) -> dict | None:
+    """获取用户 LLM 配置（掩码 key）。"""
+    cfg = db.scalar(select(UserLLMConfig).where(UserLLMConfig.user_id == user_id))
+    if not cfg:
+        return None
+    return {
+        "provider": cfg.provider,
+        "base_url": cfg.base_url,
+        "api_key_masked": _mask_key(decrypt_value(cfg.api_key_encrypted)),
+        "model": cfg.model,
+        "embedding_model": cfg.embedding_model,
+        "is_active": cfg.is_active,
+    }
+
+
+def set_user_llm_config(
+    db: Session, *, user_id, provider: str, base_url: str,
+    api_key: str, model: str, embedding_model: str | None = None,
+) -> UserLLMConfig:
+    """设置/更新用户 LLM 配置。"""
+    cfg = db.scalar(select(UserLLMConfig).where(UserLLMConfig.user_id == user_id))
+    if cfg:
+        cfg.provider = provider
+        cfg.base_url = base_url
+        cfg.api_key_encrypted = encrypt_value(api_key)
+        cfg.model = model
+        cfg.embedding_model = embedding_model
+        cfg.is_active = True
+    else:
+        cfg = UserLLMConfig(
+            user_id=user_id, provider=provider, base_url=base_url,
+            api_key_encrypted=encrypt_value(api_key), model=model,
+            embedding_model=embedding_model, is_active=True,
+        )
+        db.add(cfg)
+    db.commit()
+    db.refresh(cfg)
+    return cfg
+
+
+def delete_user_llm_config(db: Session, *, user_id) -> None:
+    cfg = db.scalar(select(UserLLMConfig).where(UserLLMConfig.user_id == user_id))
+    if cfg:
+        db.delete(cfg)
+        db.commit()
+
+
+# ── 全局配置（管理员）──
+
+def get_global_llm_settings(db: Session) -> dict:
+    """获取全局 LLM 设置（掩码 key）。"""
+    enabled = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_enabled"))
+    cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_config"))
+    return {
+        "llm_global_enabled": enabled.value.get("enabled", True) if enabled else False,
+        "global_config": {
+            "base_url": cfg.value.get("base_url", "") if cfg else "",
+            "api_key_masked": _mask_key(decrypt_value(cfg.value["api_key_encrypted"])) if cfg and cfg.value.get("api_key_encrypted") else "",
+            "model": cfg.value.get("model", "") if cfg else "",
+        } if cfg else None,
+    }
+
+
+def set_global_llm_settings(
+    db: Session, *, enabled: bool, base_url: str | None = None,
+    api_key: str | None = None, model: str | None = None,
+) -> dict:
+    """管理员设置全局 LLM。"""
+    # 开关
+    setting = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_enabled"))
+    if setting:
+        setting.value = {"enabled": enabled}
+    else:
+        db.add(SystemSetting(key="llm_global_enabled", value={"enabled": enabled}))
+
+    # 配置（只在提供新值时更新）
+    if base_url or api_key or model:
+        cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_config"))
+        current = cfg.value if cfg else {}
+        new_value = {
+            "base_url": base_url or current.get("base_url", ""),
+            "model": model or current.get("model", ""),
+        }
+        if api_key:
+            new_value["api_key_encrypted"] = encrypt_value(api_key)
+        elif current.get("api_key_encrypted"):
+            new_value["api_key_encrypted"] = current["api_key_encrypted"]
+
+        if cfg:
+            cfg.value = new_value
+        else:
+            db.add(SystemSetting(key="llm_global_config", value=new_value))
+
+    db.commit()
+    return get_global_llm_settings(db)
+
+
+def _mask_key(key: str) -> str:
+    """掩码 API key（sk-****abcd）。"""
+    if len(key) <= 8:
+        return "****"
+    return key[:3] + "****" + key[-4:]
