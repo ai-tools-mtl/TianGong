@@ -116,3 +116,49 @@ def test_recover_pending_jobs_reenqueues_processing_and_stale_pending(
     assert str(j_processing.id) in reloaded
     assert str(j_stale.id) in reloaded
     assert str(j_fresh.id) not in reloaded  # 新 pending 不动
+
+
+# ──────────────────────────────────────────────────────────────
+# Task 2: upload 端点改 BackgroundTasks + 202
+# ──────────────────────────────────────────────────────────────
+
+
+def test_upload_returns_202_processing_and_background_completes(
+    client, app_obj, engine, registered_user, monkeypatch
+):
+    """upload 立即返回 202 + status=processing，BackgroundTasks 在响应后跑完。"""
+    # BackgroundTask 会调 run_parse_job_standalone → 内部 SessionLocal
+    # patch 它指向测试库，否则 standalone 开的 session 连到生产 DB 读不到 job
+    from app.core import database as db_module
+
+    monkeypatch.setattr(db_module, "SessionLocal", sessionmaker(bind=engine))
+
+    client.post(
+        "/api/v1/auth/login",
+        json={
+            "email": registered_user["email"],
+            "password": registered_user["password"],
+        },
+    )
+
+    doc = Document()
+    doc.add_heading("发明名称", level=1)
+    doc.add_paragraph("正文")
+    buf = io.BytesIO()
+    doc.save(buf)
+
+    res = client.post(
+        "/api/v1/templates",
+        files={
+            "file": (
+                "test.docx",
+                buf.getvalue(),
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+        },
+    )
+    assert res.status_code == 202
+    data = res.json()
+    assert data["status"] == "processing"
+    assert "parse_job_id" in data
+

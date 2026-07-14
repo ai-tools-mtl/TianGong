@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -28,11 +28,12 @@ def list_all(
 
 @router.post("", response_model=dict, status_code=202)
 async def upload(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """上传 Word 文件创建模板。"""
+    """上传 Word 文件创建模板。返回 202，解析在后台执行；前端轮询 parse-job 状态。"""
     if not file.filename or not file.filename.lower().endswith(".docx"):
         raise ValidationError("仅支持 .docx 文件")
     content = await file.read()
@@ -40,9 +41,11 @@ async def upload(
         db, user_id=current_user.id, filename=file.filename,
         file_bytes=content, upload_dir="uploads",
     )
-    # MVP 同步执行（后续可改 BackgroundTasks）
-    parse_service.run_parse_job(db, str(job.id), "uploads")
-    return {"parse_job_id": str(job.id), "status": "completed"}
+    # 真异步：BackgroundTasks 在响应返回后才执行，用 standalone 自开 session
+    background_tasks.add_task(
+        parse_service.run_parse_job_standalone, str(job.id), "uploads"
+    )
+    return {"parse_job_id": str(job.id), "status": "processing"}
 
 
 @router.get("/{template_id}", response_model=TemplateOut)
