@@ -1,3 +1,4 @@
+from app.models.attachment import Attachment
 from app.models.base import Base, JSONType
 from app.models.knowledge_chunk import KnowledgeChunk
 from app.models.message import Message
@@ -14,7 +15,7 @@ from app.models.user_llm_config import UserLLMConfig
 
 __all__ = [
     "Base", "JSONType",
-    "User", "Project", "SystemSetting",
+    "User", "Attachment", "Project", "SystemSetting",
     "Template", "ParseJob", "Section", "SectionVersion", "Message",
     "KnowledgeChunk", "ReviewRubric", "ReviewRecord", "UserLLMConfig",
 ]
