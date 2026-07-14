@@ -8,7 +8,9 @@ import { toast } from 'sonner'
 
 import { AIChatPanel } from '@/components/ai-chat-panel'
 import { SectionOutline } from '@/components/section-outline'
+import { FigureUpload } from '@/components/editor/figure-upload'
 import { TiptapEditor } from '@/components/editor/tiptap-editor'
+import type { TiptapEditorRef } from '@/components/editor/tiptap-editor'
 import { VersionDrawer } from '@/components/version-drawer'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
@@ -28,6 +30,7 @@ export default function ProjectDetailPage() {
   const [current, setCurrent] = useState<Section | null>(null)
   const [versionOpen, setVersionOpen] = useState(false)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const editorRef = useRef<TiptapEditorRef>(null)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle')
 
   const leftCollapsed = useUIStore((s) => s.leftCollapsed)
@@ -215,9 +218,19 @@ export default function ProjectDetailPage() {
         </div>
         <div className="flex-1 overflow-y-auto px-6 py-6">
           <div className="mx-auto max-w-5xl">
+            {current && current.key === 'drawings' && (
+              <div className="mb-3">
+                <FigureUpload
+                  sectionId={current.id}
+                  projectId={projectId}
+                  onInsertImage={(src, alt) => editorRef.current?.insertImage(src, alt)}
+                />
+              </div>
+            )}
             {current && (
               <TiptapEditor
                 key={current.id}
+                ref={editorRef}
                 content={current.content}
                 onChange={handleSave}
               />
