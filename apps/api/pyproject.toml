@@ -17,6 +17,7 @@ dependencies = [
     "cryptography>=43.0.0",
     "python-multipart>=0.0.12",
     "loguru>=0.7.0",
+    "email-validator>=2.3.0",
 ]
 
 [project.optional-dependencies]
