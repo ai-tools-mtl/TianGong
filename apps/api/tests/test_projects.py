@@ -105,3 +105,21 @@ def test_api_access_other_users_project_returns_404(client, registered_user, db_
 def test_api_unauthenticated_returns_401(client):
     res = client.get("/api/v1/projects")
     assert res.status_code == 401
+
+
+def test_api_get_project_returns_status_and_archived_at(client, registered_user, db_session):
+    """GET /projects/{id} 响应含 status 与 archived_at（archived_at 初始为 null）。"""
+    from app.services.seed_service import ensure_default_template
+    ensure_default_template(db_session)
+    client.post("/api/v1/auth/login", json={
+        "email": registered_user["email"], "password": registered_user["password"],
+    })
+    res = client.post("/api/v1/projects", json={"title": "测试发明"})
+    project_id = res.json()["id"]
+
+    res = client.get(f"/api/v1/projects/{project_id}")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "draft"
+    assert "archived_at" in body
+    assert body["archived_at"] is None  # 未归档

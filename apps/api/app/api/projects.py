@@ -14,7 +14,7 @@ def _to_out(p: Project) -> ProjectOut:
     return ProjectOut(
         id=str(p.id), title=p.title, stage=p.stage, status=p.status,
         progress_pct=p.progress_pct, metadata=p.metadata_,
-        created_at=p.created_at, updated_at=p.updated_at,
+        archived_at=p.archived_at, created_at=p.created_at, updated_at=p.updated_at,
     )
 
 
