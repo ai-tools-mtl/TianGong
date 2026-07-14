@@ -1,0 +1,101 @@
+# 天工开发踩坑记录（Gotchas）
+
+> 本文件记录实际开发中踩到的、**计划文档无法预见、只有跑起来才暴露**的坑。每条含：现象、根因、修复、预防。
+> 新会话/新开发者开工前应通读本文件，避免重复踩坑。
+
+---
+
+## 后端（apps/api）
+
+### G1: passlib 与 bcrypt 5.x 不兼容
+
+- **现象**：`hash_password` 抛 `ValueError: password cannot be longer than 72 bytes`，且日志有 `AttributeError: module 'bcrypt' has no attribute '__about__'`
+- **根因**：bcrypt 5.x 移除了 `__about__` 属性，passlib 1.7.4 未适配（passlib 已停止维护多年）
+- **修复**：弃用 passlib，改用 bcrypt 库直接调用 `hashpw/checkpw`；密码做 72 字节截断
+- **预防**：不要用停止维护的 passlib；直接用 bcrypt 库
+- **影响任务**：计划 1 任务 1
+
+### G2: JSONB 在 SQLite 测试库不可用
+
+- **现象**：模型测试报 `Compiler can't render element of type JSONB`（SQLite 不支持 PostgreSQL 的 JSONB 类型）
+- **根因**：计划用 SQLite 内存库做单元测试，但模型字段用了 PostgreSQL 专属的 JSONB
+- **修复**：用 `JSONB().with_variant(JSON, "sqlite")`——生产用 JSONB（索引优化），测试降级为通用 JSON
+- **预防**：任何 PostgreSQL 专属类型都要配 `.with_variant()` 兼容 SQLite 测试库
+- **影响任务**：计划 1 任务 2
+
+### G3: JWT sub 是字符串，查 UUID 列报错
+
+- **现象**：`/auth/me` 接口报 `AttributeError: 'str' object has no attribute 'hex'`
+- **根因**：JWT payload 里 `sub` 存的是 `str(user.id)`，但 `get_current_user` 用字符串直接查 `User.id`（UUID 列），SQLAlchemy 的 Uuid 类型处理器期望 UUID 对象
+- **修复**：`deps.py` 里查询前用 `uuid.UUID(user_id)` 转换，并 `try/except ValueError` 防非法 UUID
+- **预防**：JWT 里存的是字符串，查 UUID 列前必须显式转换
+- **影响任务**：计划 1 任务 5
+
+### G4: 管理员邮箱校验绕过（能创建却登不进）⚠️ 重要
+
+- **现象**：用 `create_admin` 脚本创建的 `admin@tiangong.local` 账号，登录时后端报 `value is not a valid email address: The part after the @-sign is a special-use or reserved name`
+- **根因**：`create_admin` 脚本直接写库，**绕过了 EmailStr 校验**；而 `.local` 是 RFC 6761 保留顶级域名，Pydantic EmailStr（基于 email-validator）拒绝它。导致"能创建的账号却无法登录"
+- **修复**：
+  1. 脚本创建前用 `email_validator.validate_email(email, check_deliverability=False)` 校验
+  2. 非法邮箱直接报错退出
+  3. 现有管理员邮箱改为合法域名（`admin@tiangong.dev`）
+- **预防**：
+  - **所有写用户的入口（注册 API、脚本、未来批量导入）必须用同一套邮箱校验**，不能绕过
+  - `.local`/`.localhost`/`.test`/`.example` 等都是保留域名，测试账号别用，用 `.dev`/`.com`/`.test.com` 这类
+  - 测试用户用 `xxx@test.com` / `xxx@example.com` 这类 email-validator 接受的
+- **影响任务**：计划 1 任务 8 + 登录验证
+
+---
+
+## 前端（apps/web）
+
+### F1: shadcn/ui 4.x 不稳定
+
+- **现象**：`npx shadcn@latest init` 装了 base-nova 模板（基于 @base-ui/react），但 `add` 组件时不生成 `src/components/ui/` 文件，静默失败
+- **根因**：shadcn 4.x（2026 中）刚发布，base-nova 风格的行为与文档不符，CLI 不稳定
+- **修复**：退回 shadcn **3.x**（基于 Radix，成熟稳定，文档完善），`npx shadcn@3.2.0 init/add`
+- **预防**：前端工具链尽量用稳定版，不追最新大版本；shadcn 锁 3.x
+- **影响任务**：计划 2 任务 0
+
+### F2: pnpm install 网络超时
+
+- **现象**：`pnpm install` 报 `TimeoutError: The operation was aborted due to timeout`
+- **根因**：pnpm 默认 fetch-timeout 较短，国内网络拉 npm 包易超时
+- **修复**：`pnpm config set fetch-timeout 600000 && pnpm config set fetch-retries 5`；必要时加 `--registry https://registry.npmmirror.com`
+- **预防**：新机器首次装依赖前先调超时配置
+- **影响任务**：计划 2 任务 0
+
+### F3: TanStack Query data 类型推断为 any
+
+- **现象**：`pnpm build` 报 `Parameter 'p' implicitly has an 'any' type`（projects.map 的回调参数）
+- **根因**：`useQuery({ queryFn: api.listProjects })` 没有显式泛型，data 推断为 `unknown`，解构后访问 `.map` 触发隐式 any
+- **修复**：`useQuery<Project[]>({...})` 显式标注返回类型；解构处 `const projects = data ?? []` 兜底 undefined
+- **预防**：所有 useQuery 都加显式泛型 `useQuery<T[]>(...)`，别依赖推断
+- **影响任务**：计划 2 任务 1/5
+
+### F4: httpOnly cookie 跨 host 不传递（TestClient / curl）
+
+- **现象**：登录成功（200）但后续请求 cookie 没带上，返回 401
+- **根因**：后端设 cookie 时带了 `domain=localhost`，但请求用 `127.0.0.1`，domain 不匹配 → 浏览器/curl/TestClient 拒收 cookie
+- **修复**：后端 `_set_auth_cookies` 改为 `domain` 为空时不传该参数；测试用 `monkeypatch` 清空 cookie_domain
+- **预防**：开发/测试时统一用 `localhost`（前后端都别用 `127.0.0.1`）；cookie domain 配置留空则不限制
+- **影响任务**：计划 1 任务 5（后端）+ 计划 2 E2E（前端）
+
+---
+
+## 通用 / 环境
+
+### E1: Windows curl 中文 body 编码错误
+
+- **现象**：curl 传中文 JSON body 报 `There was an error parsing the body`
+- **根因**：Windows Git Bash 的 curl 默认 GBK 编码，中文 UTF-8 内容被破坏
+- **修复**：E2E 验证用英文数据；或用 `-d @file.json` 从文件读（文件存为 UTF-8）
+- **预防**：Windows 下 curl 测中文用文件方式，别直接内联
+- **影响任务**：计划 1/2 端到端验证
+
+### E2: uv.lock 与 pnpm-lock.yaml 必须提交
+
+- **现象**：（非 bug，是规范）依赖锁文件不提交会导致不同环境装出不同版本
+- **修复**：`uv.lock`（后端）、`pnpm-lock.yaml`（前端）都纳入版本控制
+- **预防**：每次 `add` 依赖后，lock 文件要一起 commit
+- **影响任务**：计划 1/2
