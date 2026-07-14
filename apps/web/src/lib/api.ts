@@ -119,6 +119,25 @@ export const api = {
     })
     return _consumeSSE(res, onToken)
   },
+
+  // ── 版本 ──
+  listVersions: (sectionId: string) =>
+    request<import('@/types/api').Version[]>(`/sections/${sectionId}/versions`),
+
+  createVersion: (sectionId: string, note?: string) =>
+    request<import('@/types/api').Version>(`/sections/${sectionId}/versions`, {
+      method: 'POST', body: JSON.stringify({ note }),
+    }),
+
+  rollbackVersion: (sectionId: string, versionId: string) =>
+    request<{ message: string }>(`/sections/${sectionId}/versions/${versionId}/rollback`, { method: 'POST' }),
+
+  // ── 预览/导出 ──
+  previewProject: (projectId: string) =>
+    request<import('@/types/api').ProjectPreview>(`/projects/${projectId}/preview`),
+
+  exportDocxUrl: (projectId: string) => `${BASE}/api/v1/projects/${projectId}/export/docx`,
+  exportMarkdownUrl: (projectId: string) => `${BASE}/api/v1/projects/${projectId}/export/markdown`,
 }
 
 async function _consumeSSE(res: Response, onToken: (t: string) => void): Promise<void> {

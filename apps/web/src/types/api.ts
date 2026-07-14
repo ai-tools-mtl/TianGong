@@ -85,3 +85,31 @@ export interface Section {
   created_at: string
   updated_at: string
 }
+
+// ── 版本 ──
+
+export interface Version {
+  id: string
+  section_id: string
+  content: Record<string, unknown> | null
+  summary: string | null
+  created_by: string
+  note: string | null
+  created_at: string
+}
+
+// ── 预览 ──
+
+export interface PreviewSection {
+  order: number
+  key: string
+  title: string
+  content: Record<string, unknown> | null
+  status: string
+}
+
+export interface ProjectPreview {
+  title: string
+  metadata: Record<string, unknown> | null
+  sections: PreviewSection[]
+}
