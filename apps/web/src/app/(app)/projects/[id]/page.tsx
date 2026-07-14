@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
 import { TiptapEditor } from '@/components/editor/tiptap-editor'
+import { AIChatPanel } from '@/components/ai-chat-panel'
 import { SectionOutline } from '@/components/section-outline'
 import { Button } from '@/components/ui/button'
 import { useSections, useUpdateSection } from '@/lib/queries'
@@ -53,7 +54,7 @@ export default function ProjectDetailPage() {
   }
 
   return (
-    <div className="grid grid-cols-[220px_1fr] gap-6">
+    <div className="grid grid-cols-[200px_1fr_320px] gap-4">
       <aside className="space-y-4">
         <h2 className="text-sm font-semibold text-muted-foreground">章节大纲</h2>
         <SectionOutline sections={sections} currentId={currentId} onSelect={setCurrentId} />
@@ -76,6 +77,8 @@ export default function ProjectDetailPage() {
           </>
         )}
       </div>
+
+      {current && <AIChatPanel sectionId={current.id} />}
     </div>
   )
 }
