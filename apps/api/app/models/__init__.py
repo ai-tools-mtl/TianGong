@@ -10,10 +10,11 @@ from app.models.section_version import SectionVersion
 from app.models.system_setting import SystemSetting
 from app.models.template import Template
 from app.models.user import User
+from app.models.user_llm_config import UserLLMConfig
 
 __all__ = [
     "Base", "JSONType",
     "User", "Project", "SystemSetting",
     "Template", "ParseJob", "Section", "SectionVersion", "Message",
-    "KnowledgeChunk", "ReviewRubric", "ReviewRecord",
+    "KnowledgeChunk", "ReviewRubric", "ReviewRecord", "UserLLMConfig",
 ]
