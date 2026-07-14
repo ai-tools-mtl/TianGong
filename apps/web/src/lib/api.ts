@@ -154,6 +154,20 @@ export const api = {
   updateRubric: (data: { name?: string; criteria?: Record<string, unknown>[] }) =>
     request<import('@/types/api').Rubric>(`/rubric`, { method: 'PUT', body: JSON.stringify(data) }),
   resetRubric: () => request<import('@/types/api').Rubric>(`/rubric/reset`, { method: 'POST' }),
+
+  // ── 管理员 ──
+  listUsers: () => request<import('@/types/api').AdminUser[]>(`/admin/users`),
+  getGlobalLLM: () => request<import('@/types/api').GlobalLLMSettings>(`/admin/llm-config`),
+  setGlobalLLM: (data: { enabled: boolean; base_url?: string; api_key?: string; model?: string }) =>
+    request<import('@/types/api').GlobalLLMSettings>(`/admin/llm-config`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  // ── 用户设置 ──
+  getMyLLM: () => request<import('@/types/api').UserLLMSettings | null>(`/settings/llm`),
+  setMyLLM: (data: { provider?: string; base_url: string; api_key: string; model: string; embedding_model?: string }) =>
+    request<{ message: string }>(`/settings/llm`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteMyLLM: () => request<{ message: string }>(`/settings/llm`, { method: 'DELETE' }),
+  testMyLLM: (data: { base_url: string; api_key: string; model: string }) =>
+    request<{ ok: boolean; response?: string; error?: string }>(`/settings/llm/test`, { method: 'POST', body: JSON.stringify(data) }),
 }
 
 async function _consumeSSE(res: Response, onToken: (t: string) => void): Promise<void> {
