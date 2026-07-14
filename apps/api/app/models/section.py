@@ -20,4 +20,4 @@ class Section(Base, IdMixin, TimestampMixin):
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="empty")  # empty/drafting/confirmed
     # 乐观锁版本号：每次 PATCH 成功 +1；并发更新冲突返回 409（设计 13.4）
-    version: Mapped[int] = mapped_column(Integer, default=1)
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
