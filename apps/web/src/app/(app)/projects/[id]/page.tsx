@@ -1,6 +1,6 @@
 'use client'
 
-import { Archive, CheckCircle2, Eye, History, PanelLeft, PanelRight, Search } from 'lucide-react'
+import { Archive, CheckCircle2, Eye, History, PanelLeft, PanelRight, Search, Sparkles } from 'lucide-react'
 import { useParams } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
@@ -12,6 +12,7 @@ import { FigureUpload } from '@/components/editor/figure-upload'
 import { TiptapEditor } from '@/components/editor/tiptap-editor'
 import type { TiptapEditorRef } from '@/components/editor/tiptap-editor'
 import { VersionDrawer } from '@/components/version-drawer'
+import { SkillsDialog } from '@/components/skills-dialog'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
 import { queryKeys, useArchiveProject, useProject, useSections, useUpdateSection } from '@/lib/queries'
@@ -31,6 +32,7 @@ export default function ProjectDetailPage() {
   const [currentId, setCurrentId] = useState<string | null>(null)
   const [current, setCurrent] = useState<Section | null>(null)
   const [versionOpen, setVersionOpen] = useState(false)
+  const [skillsOpen, setSkillsOpen] = useState(false)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const editorRef = useRef<TiptapEditorRef>(null)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle')
@@ -202,6 +204,15 @@ export default function ProjectDetailPage() {
                   审查
                 </a>
               </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 gap-1.5"
+                onClick={() => setSkillsOpen(true)}
+              >
+                <Sparkles className="size-3.5" />
+                技能
+              </Button>
               <Button variant="ghost" size="sm" className="h-8 gap-1.5" asChild>
                 <a
                   href={api.exportDocxUrl(projectId)}
@@ -294,6 +305,12 @@ export default function ProjectDetailPage() {
           onClose={() => setVersionOpen(false)}
         />
       )}
+
+      <SkillsDialog
+        projectId={projectId}
+        open={skillsOpen}
+        onOpenChange={setSkillsOpen}
+      />
     </div>
   )
 }

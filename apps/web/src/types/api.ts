@@ -192,3 +192,24 @@ export interface UserLLMSettings {
   embedding_model: string | null
   is_active: boolean
 }
+
+// ── 技能开关 ──
+
+export interface AgentSkill {
+  skill_key: string
+  name: string
+  description: string
+  enabled: boolean
+  config: Record<string, unknown> | null
+  is_builtin: boolean
+  is_overridden: boolean
+}
+
+// ── 解析任务 ──
+
+export interface ParseJob {
+  id: string
+  status: string
+  template_id: string | null
+  error_message: string | null
+}
