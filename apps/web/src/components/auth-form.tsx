@@ -38,7 +38,15 @@ export function AuthForm({ mode }: AuthFormProps) {
       toast.success('登录成功')
       router.push('/dashboard')
     } catch (err) {
-      toast.error((err as { message?: string })?.message || '操作失败')
+      const msg = (err as { message?: string })?.message
+      // 后端认证错误的常见提示优化
+      if (msg?.includes('邮箱或密码')) {
+        toast.error('邮箱或密码错误，请检查后重试')
+      } else if (msg?.includes('未登录') || msg?.includes('凭证')) {
+        toast.error('登录态失效，请重新登录')
+      } else {
+        toast.error(msg || '操作失败，请重试')
+      }
     } finally {
       setLoading(false)
     }
@@ -54,7 +62,7 @@ export function AuthForm({ mode }: AuthFormProps) {
       )}
       <div className="space-y-2">
         <Label htmlFor="email">邮箱</Label>
-        <Input id="email" name="email" type="email" required placeholder="you@example.com" />
+        <Input id="email" name="email" type="email" required placeholder="完整邮箱，如 admin@tiangong.local" />
       </div>
       <div className="space-y-2">
         <Label htmlFor="password">密码</Label>
