@@ -34,9 +34,9 @@ export default function AppLayout({
   }
 
   return (
-    <div className="min-h-screen">
+    <div className="flex min-h-screen flex-col">
       <Navbar />
-      <main className="mx-auto max-w-5xl px-4 py-8">{children}</main>
+      <main className="flex-1">{children}</main>
     </div>
   )
 }
