@@ -209,3 +209,84 @@ def test_merge_tags_handles_duplicate_project(db):
     tags = ts.list_tags_for_project(db, user=user, project_id=str(p.id))
     assert len(tags) == 1
     assert tags[0].name == "通信"
+
+
+# ── API 层 ──
+
+def _login(client, registered_user):
+    client.post("/api/v1/auth/login", json={
+        "email": registered_user["email"], "password": registered_user["password"],
+    })
+
+
+def test_api_list_tags_empty(client, registered_user):
+    _login(client, registered_user)
+    res = client.get("/api/v1/tags")
+    assert res.status_code == 200
+    assert res.json() == []
+
+
+def test_api_create_and_list_tag(client, registered_user):
+    _login(client, registered_user)
+    res = client.post("/api/v1/tags", json={"name": "通信"})
+    assert res.status_code == 201
+    assert res.json()["name"] == "通信"
+
+    res = client.get("/api/v1/tags")
+    assert len(res.json()) == 1
+    assert res.json()[0]["name"] == "通信"
+    assert res.json()[0]["project_count"] == 0
+
+
+def test_api_rename_tag(client, registered_user):
+    _login(client, registered_user)
+    tag_id = client.post("/api/v1/tags", json={"name": "通信"}).json()["id"]
+    res = client.patch(f"/api/v1/tags/{tag_id}", json={"name": "通信领域"})
+    assert res.status_code == 200
+    assert res.json()["name"] == "通信领域"
+
+
+def test_api_merge_tags(client, registered_user):
+    _login(client, registered_user)
+    source_id = client.post("/api/v1/tags", json={"name": "通讯"}).json()["id"]
+    target_id = client.post("/api/v1/tags", json={"name": "通信"}).json()["id"]
+    res = client.post("/api/v1/tags/merge", json={"source_id": source_id, "target_id": target_id})
+    assert res.status_code == 200
+
+    tags = client.get("/api/v1/tags").json()
+    assert len(tags) == 1
+    assert tags[0]["name"] == "通信"
+
+
+def test_api_delete_tag(client, registered_user):
+    _login(client, registered_user)
+    tag_id = client.post("/api/v1/tags", json={"name": "通信"}).json()["id"]
+    res = client.delete(f"/api/v1/tags/{tag_id}")
+    assert res.status_code == 204
+    assert client.get("/api/v1/tags").json() == []
+
+
+def test_api_attach_tag_to_project(client, registered_user, db_session):
+    _login(client, registered_user)
+    pid = client.post("/api/v1/projects", json={"title": "P1"}).json()["id"]
+    tid = client.post("/api/v1/tags", json={"name": "通信"}).json()["id"]
+
+    res = client.post(f"/api/v1/projects/{pid}/tags/{tid}")
+    assert res.status_code == 200
+    tags = res.json()
+    assert len(tags) == 1
+    assert tags[0]["name"] == "通信"
+
+
+def test_api_project_out_includes_tags(client, registered_user, db_session):
+    """GET /projects 返回的项目对象含 tags 字段。"""
+    _login(client, registered_user)
+    pid = client.post("/api/v1/projects", json={"title": "P1"}).json()["id"]
+    tid = client.post("/api/v1/tags", json={"name": "通信"}).json()["id"]
+    client.post(f"/api/v1/projects/{pid}/tags/{tid}")
+
+    res = client.get("/api/v1/projects")
+    assert res.status_code == 200
+    projects = res.json()
+    assert len(projects) == 1
+    assert projects[0]["tags"] == [tid]
