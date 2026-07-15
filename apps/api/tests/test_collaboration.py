@@ -475,3 +475,111 @@ def test_member_endpoints_nonexistent_project_returns_404(db_session, client):
     owner, project_id = _seed_and_login_owner(client, db_session)
     res = client.get(f"/api/v1/projects/{uuid.uuid4()}/members")
     assert res.status_code == 404
+
+
+# ── API: 分享链接管理（owner-only）──
+
+def test_create_share_link_endpoint(db_session, client):
+    """owner POST 分享链接 → 201 + ShareLinkOut。"""
+    owner, project_id = _seed_and_login_owner(client, db_session)
+    res = client.post(f"/api/v1/projects/{project_id}/share-links", json={"permissions": "comment"})
+    assert res.status_code == 201, res.text
+    body = res.json()
+    assert body["permissions"] == "comment"
+    assert len(body["token"]) == 32
+    assert body["expires_at"] is None
+    assert body["project_id"] == project_id
+
+
+def test_create_share_link_with_expiry(db_session, client):
+    """带 expires_days 的链接返回非空 expires_at。"""
+    owner, project_id = _seed_and_login_owner(client, db_session)
+    res = client.post(
+        f"/api/v1/projects/{project_id}/share-links",
+        json={"permissions": "readonly", "expires_days": 7},
+    )
+    assert res.status_code == 201
+    assert res.json()["expires_at"] is not None
+
+
+def test_create_share_link_invalid_permissions_422(db_session, client):
+    """permissions 非 comment/readonly → Pydantic 422。"""
+    owner, project_id = _seed_and_login_owner(client, db_session)
+    res = client.post(
+        f"/api/v1/projects/{project_id}/share-links",
+        json={"permissions": "edit"},
+    )
+    assert res.status_code == 422
+
+
+def test_list_share_links_endpoint(db_session, client):
+    """owner GET 分享链接列表。"""
+    owner, project_id = _seed_and_login_owner(client, db_session)
+    client.post(f"/api/v1/projects/{project_id}/share-links", json={"permissions": "comment"})
+    client.post(f"/api/v1/projects/{project_id}/share-links", json={"permissions": "readonly"})
+    res = client.get(f"/api/v1/projects/{project_id}/share-links")
+    assert res.status_code == 200
+    assert len(res.json()) == 2
+
+
+def test_revoke_share_link_endpoint(db_session, client):
+    """owner DELETE 分享链接 → 204。"""
+    owner, project_id = _seed_and_login_owner(client, db_session)
+    create_res = client.post(f"/api/v1/projects/{project_id}/share-links", json={"permissions": "comment"})
+    link_id = create_res.json()["id"]
+    res = client.delete(f"/api/v1/projects/{project_id}/share-links/{link_id}")
+    assert res.status_code == 204
+
+
+def test_share_link_endpoints_non_owner_404(db_session, client):
+    """非 owner 访问分享链接端点 → 404。"""
+    owner, project_id = _seed_and_login_owner(client, db_session)
+    _make_user(db_session, email="stranger@tiangong.dev", name="陌生人")
+    _login(client, "stranger@tiangong.dev")
+    res_get = client.get(f"/api/v1/projects/{project_id}/share-links")
+    res_post = client.post(f"/api/v1/projects/{project_id}/share-links", json={"permissions": "comment"})
+    assert res_get.status_code == 404
+    assert res_post.status_code == 404
+
+
+# ── API: 公开 /shared/{token}（无 cookie 鉴权）──
+
+def test_shared_info_public_endpoint(db_session, client):
+    """GET /shared/{token} 无需登录返回项目标题 + 权限。"""
+    owner = _make_user(db_session, email="owner@tiangong.dev", name="所有者")
+    project = _make_project(db_session, owner, title="公开分享项目")
+    link = share_service.create_share_link(db_session, project.id, owner.id, "comment", None)
+
+    # 清除 cookie，模拟访客
+    client.cookies.clear()
+    res = client.get(f"/api/v1/shared/{link.token}")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["title"] == "公开分享项目"
+    assert body["permissions"] == "comment"
+    assert body["share_token"] == link.token
+
+
+def test_shared_info_nonexistent_token_404(db_session, client):
+    """不存在的 token → 404。"""
+    client.cookies.clear()
+    res = client.get(f"/api/v1/shared/{uuid.uuid4().hex}")
+    assert res.status_code == 404
+
+
+def test_shared_info_expired_token_404(db_session, client):
+    """过期 token → 404。"""
+    owner = _make_user(db_session, email="owner@tiangong.dev", name="所有者")
+    project = _make_project(db_session, owner)
+    link = ShareLink(
+        project_id=project.id,
+        token=uuid.uuid4().hex,
+        permissions="comment",
+        expires_at=datetime.now(timezone.utc) - timedelta(days=1),
+        created_by=owner.id,
+    )
+    db_session.add(link)
+    db_session.commit()
+    client.cookies.clear()
+    res = client.get(f"/api/v1/shared/{link.token}")
+    assert res.status_code == 404

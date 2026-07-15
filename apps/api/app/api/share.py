@@ -22,7 +22,9 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.deps import get_current_user
 from app.models import User
-from app.schemas.share import MemberAdd, MemberOut
+from app.schemas.share import (
+    MemberAdd, MemberOut, ShareLinkCreate, ShareLinkOut, SharedInfo,
+)
 from app.services import project_service, share_service
 
 router = APIRouter(tags=["share"])
@@ -91,3 +93,73 @@ def remove_member(
     project = project_service.get_project(db, user=current_user, project_id=project_id)
     share_service.remove_member(db, project.id, member_id)
     return None
+
+
+# ── 分享链接管理（owner-only）──
+
+@router.post(
+    "/projects/{project_id}/share-links",
+    response_model=ShareLinkOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_share_link(
+    project_id: str,
+    payload: ShareLinkCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """创建分享链接（owner-only）。
+
+    permissions: comment / readonly；expires_days: None=永不过期。
+    """
+    project = project_service.get_project(db, user=current_user, project_id=project_id)
+    link = share_service.create_share_link(
+        db, project.id, created_by=current_user.id,
+        permissions=payload.permissions, expires_days=payload.expires_days,
+    )
+    return ShareLinkOut.model_validate(link, from_attributes=True)
+
+
+@router.get("/projects/{project_id}/share-links", response_model=list[ShareLinkOut])
+def list_share_links(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """列出项目分享链接（owner-only）。"""
+    project = project_service.get_project(db, user=current_user, project_id=project_id)
+    links = share_service.list_share_links(db, project.id)
+    return [ShareLinkOut.model_validate(l, from_attributes=True) for l in links]
+
+
+@router.delete(
+    "/projects/{project_id}/share-links/{link_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def revoke_share_link(
+    project_id: str,
+    link_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """撤销分享链接（owner-only，幂等）。"""
+    project = project_service.get_project(db, user=current_user, project_id=project_id)
+    share_service.revoke_share_link(db, project.id, link_id)
+    return None
+
+
+# ── 公开端点（无 cookie 鉴权，靠 share token）──
+
+@router.get("/shared/{token}", response_model=SharedInfo)
+def get_shared_info(token: str, db: Session = Depends(get_db)):
+    """公开端点：访客凭分享 token 获取项目标题 + 权限。
+
+    无需登录。token 不存在/过期/项目不存在 → 404（统一防探测）。
+    """
+    link, project = share_service.verify_share_link(db, token)
+    return SharedInfo(
+        title=project.title,
+        permissions=link.permissions,
+        project_id=str(project.id),
+        share_token=link.token,
+    )
