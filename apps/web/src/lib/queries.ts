@@ -7,7 +7,7 @@ import {
 } from '@tanstack/react-query'
 
 import { api } from '@/lib/api'
-import type { Project, ProjectCreate, Section, TemplateSummary } from '@/types/api'
+import type { Project, ProjectCreate, Section, Tag, TagCreate, TagMerge, TemplateSummary } from '@/types/api'
 
 export const queryKeys = {
   projects: ['projects'] as const,
@@ -17,13 +17,14 @@ export const queryKeys = {
   sections: (id: string) => ['sections', id] as const,
   attachments: (projectId: string) => ['attachments', projectId] as const,
   skills: (id: string) => ['skills', id] as const,
+  tags: ['tags'] as const,
 }
 
 // ── 项目 ──
-export function useProjects() {
+export function useProjects(status?: string) {
   return useQuery<Project[]>({
-    queryKey: queryKeys.projects,
-    queryFn: api.listProjects,
+    queryKey: status ? [...queryKeys.projects, { status }] : queryKeys.projects,
+    queryFn: () => (status ? api.listProjectsFiltered({ status }) : api.listProjects()),
   })
 }
 
@@ -55,6 +56,15 @@ export function useArchiveProject() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => api.archiveProject(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.projects }),
+  })
+}
+
+export function useUpdateProject() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: { title?: string; metadata?: Record<string, unknown> | null } }) =>
+      api.updateProject(id, data),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.projects }),
   })
 }
@@ -135,5 +145,69 @@ export function useUpdateSkill(projectId: string) {
     mutationFn: ({ skillKey, enabled, config }: { skillKey: string; enabled: boolean; config?: object | null }) =>
       api.updateSkill(projectId, skillKey, { enabled, config }),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.skills(projectId) }),
+  })
+}
+
+// ── 标签 ──
+export function useTags() {
+  return useQuery<Tag[]>({
+    queryKey: queryKeys.tags,
+    queryFn: api.listTags,
+  })
+}
+
+export function useCreateTag() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: TagCreate) => api.createTag(data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.tags }),
+  })
+}
+
+export function useRenameTag() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) => api.renameTag(id, { name }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.tags }),
+  })
+}
+
+export function useDeleteTag() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.deleteTag(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.tags })
+      qc.invalidateQueries({ queryKey: queryKeys.projects })
+    },
+  })
+}
+
+export function useMergeTags() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: TagMerge) => api.mergeTags(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.tags })
+      qc.invalidateQueries({ queryKey: queryKeys.projects })
+    },
+  })
+}
+
+export function useAttachProjectTag() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ projectId, tagId }: { projectId: string; tagId: string }) =>
+      api.attachProjectTag(projectId, tagId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.projects }),
+  })
+}
+
+export function useDetachProjectTag() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ projectId, tagId }: { projectId: string; tagId: string }) =>
+      api.detachProjectTag(projectId, tagId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.projects }),
   })
 }

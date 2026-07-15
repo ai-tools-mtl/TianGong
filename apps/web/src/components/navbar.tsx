@@ -7,6 +7,7 @@ import {
   LogOut,
   Settings,
   Shield,
+  Tags,
 } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
@@ -31,6 +32,7 @@ type NavItem = {
 const NAV_ITEMS: NavItem[] = [
   { href: '/dashboard', label: '工作台', icon: LayoutDashboard },
   { href: '/templates', label: '模板', icon: FileText },
+  { href: '/tags', label: '标签', icon: Tags },
   { href: '/admin', label: '管理', icon: Shield, adminOnly: true },
   { href: '/settings', label: '设置', icon: Settings },
 ]

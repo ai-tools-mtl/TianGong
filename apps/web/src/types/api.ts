@@ -15,6 +15,7 @@ export interface Project {
   progress_pct: number
   metadata: Record<string, unknown> | null
   archived_at: string | null
+  tags: string[]
   created_at: string
   updated_at: string
 }
@@ -260,4 +261,29 @@ export interface ParseJob {
   status: string
   template_id: string | null
   error_message: string | null
+}
+
+// ── 标签 ──
+export interface Tag {
+  id: string
+  name: string
+  project_count: number
+}
+
+export interface TagCreate {
+  name: string
+}
+
+export interface TagUpdate {
+  name: string
+}
+
+export interface TagMerge {
+  source_id: string
+  target_id: string
+}
+
+export interface ProjectTag {
+  id: string
+  name: string
 }
