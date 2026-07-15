@@ -22,13 +22,16 @@ const STATUS_TABS = [
 ]
 
 export function ProjectList() {
-  const { data: rawProjects, isLoading, isError } = useProjects()
-  const { data: allTags } = useTags()
-  const projects: Project[] = rawProjects ?? []
-
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [tagFilter, setTagFilter] = useState<string | null>(null)
+
+  // 当筛选"已归档"时，需带 status 参数请求（后端默认排除 archived）
+  const { data: rawProjects, isLoading, isError } = useProjects(
+    statusFilter === 'archived' ? 'archived' : undefined,
+  )
+  const { data: allTags } = useTags()
+  const projects: Project[] = rawProjects ?? []
 
   // 前端二次筛选（后端已支持参数，但为保持 debounce 简单这里前端筛）
   const filtered = useMemo(() => {

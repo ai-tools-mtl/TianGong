@@ -21,10 +21,10 @@ export const queryKeys = {
 }
 
 // ── 项目 ──
-export function useProjects() {
+export function useProjects(status?: string) {
   return useQuery<Project[]>({
-    queryKey: queryKeys.projects,
-    queryFn: api.listProjects,
+    queryKey: status ? [...queryKeys.projects, { status }] : queryKeys.projects,
+    queryFn: () => (status ? api.listProjectsFiltered({ status }) : api.listProjects()),
   })
 }
 

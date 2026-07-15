@@ -18,7 +18,7 @@ def _to_out(p: Project, tags: list[str] | None = None) -> ProjectOut:
         id=str(p.id), title=p.title, stage=p.stage, status=p.status,
         progress_pct=p.progress_pct, metadata=p.metadata_,
         archived_at=p.archived_at,
-        tags=tags if tags is not None else getattr(p, "_tag_ids", []),
+        tags=tags if tags is not None else [],
         created_at=p.created_at, updated_at=p.updated_at,
     )
 
@@ -61,7 +61,8 @@ def update(project_id: str, payload: ProjectUpdate, current_user: User = Depends
         db, user=current_user, project_id=project_id,
         title=payload.title, metadata=payload.metadata,
     )
-    return _to_out(p)
+    tag_ids = [str(t.id) for t in tag_service.list_tags_for_project(db, user=current_user, project_id=project_id)]
+    return _to_out(p, tags=tag_ids)
 
 
 @router.delete("/{project_id}", status_code=204)
