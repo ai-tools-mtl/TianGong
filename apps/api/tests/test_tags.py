@@ -278,6 +278,18 @@ def test_api_attach_tag_to_project(client, registered_user, db_session):
     assert tags[0]["name"] == "通信"
 
 
+def test_api_detach_tag_from_project(client, registered_user, db_session):
+    _login(client, registered_user)
+    pid = client.post("/api/v1/projects", json={"title": "P1"}).json()["id"]
+    tid = client.post("/api/v1/tags", json={"name": "通信"}).json()["id"]
+    client.post(f"/api/v1/projects/{pid}/tags/{tid}")  # 先贴上
+
+    res = client.delete(f"/api/v1/projects/{pid}/tags/{tid}")
+    assert res.status_code == 200
+    tags = res.json()
+    assert len(tags) == 0  # 摘除后为空
+
+
 def test_api_project_out_includes_tags(client, registered_user, db_session):
     """GET /projects 返回的项目对象含 tags 字段。"""
     _login(client, registered_user)

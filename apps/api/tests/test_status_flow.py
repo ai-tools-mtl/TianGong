@@ -105,3 +105,21 @@ def test_archived_project_not_overridden_by_section_update(db):
 
     db.refresh(p)
     assert p.status == "archived"  # 不被覆盖
+
+
+def test_unconfirm_section_reverts_project_to_in_progress(db):
+    """全部确认（completed）后，撤销一个 section（回退 drafting），项目应回到 in_progress。"""
+    user = _make_user(db)
+    p = _make_project_with_sections(db, user, n=2)
+    sections = list(db.scalars(select(Section).where(Section.project_id == p.id)))
+
+    # 全部确认 → completed
+    for s in sections:
+        ss.update_section(db, user_id=user.id, section_id=str(s.id), status="confirmed")
+    db.refresh(p)
+    assert p.status == "completed"
+
+    # 撤销第一个 → 回到 drafting
+    ss.update_section(db, user_id=user.id, section_id=str(sections[0].id), status="drafting")
+    db.refresh(p)
+    assert p.status == "in_progress"

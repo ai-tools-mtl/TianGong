@@ -93,3 +93,50 @@ def test_list_search_case_insensitive(db):
     result = ps.list_projects(db, user=user, q="ai")
     assert len(result) == 1
     assert result[0].title == "AI Patent"
+
+
+def test_list_filter_by_tag_id(db):
+    """tag_id 参数按标签筛选项目。"""
+    from app.models import Tag, ProjectTag
+    from sqlalchemy import select
+
+    user = _make_user(db)
+    p1 = _make_project(db, user, "有标签")
+    p2 = _make_project(db, user, "无标签")
+
+    tag = Tag(user_id=user.id, name="通信")
+    db.add(tag)
+    db.commit()
+    db.refresh(tag)
+    db.add(ProjectTag(project_id=p1.id, tag_id=tag.id))
+    db.commit()
+
+    result = ps.list_projects(db, user=user, tag_id=str(tag.id))
+    titles = [p.title for p in result]
+    assert titles == ["有标签"]
+
+
+def test_list_filter_by_tag_id_other_user_isolated(db):
+    """A 用户的 tag_id 不会筛出 B 用户的项目。"""
+    from app.models import Tag, ProjectTag
+
+    user_a = _make_user(db, email="a@b.com")
+    user_b = _make_user(db, email="b@b.com")
+    p_a = _make_project(db, user_a, "A的项目")
+    _make_project(db, user_b, "B的项目")
+
+    tag = Tag(user_id=user_a.id, name="A标签")
+    db.add(tag)
+    db.commit()
+    db.refresh(tag)
+    db.add(ProjectTag(project_id=p_a.id, tag_id=tag.id))
+    db.commit()
+
+    # A 用自己的 tag 筛，只看到自己的项目
+    result = ps.list_projects(db, user=user_a, tag_id=str(tag.id))
+    assert len(result) == 1
+    assert result[0].title == "A的项目"
+
+    # B 即便知道 A 的 tag_id，也看不到（list_projects 按 user_id 过滤）
+    result_b = ps.list_projects(db, user=user_b, tag_id=str(tag.id))
+    assert len(result_b) == 0
