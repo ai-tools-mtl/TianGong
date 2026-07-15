@@ -192,3 +192,20 @@ def test_detach_not_attached_is_idempotent(db):
     tag = ts.create_tag(db, user=user, name="通信")
     # 不贴直接摘，不报错
     ts.detach_tag(db, user=user, project_id=str(p.id), tag_id=str(tag.id))
+
+
+def test_merge_tags_handles_duplicate_project(db):
+    """合并时 source 和 target 都关联了同一项目：source link 应被删除而非引发唯一约束冲突。"""
+    user = _make_user(db)
+    p = _make_project(db, user, "P1")
+    source = ts.create_tag(db, user=user, name="通讯")
+    target = ts.create_tag(db, user=user, name="通信")
+    ts.attach_tag(db, user=user, project_id=str(p.id), tag_id=str(source.id))
+    ts.attach_tag(db, user=user, project_id=str(p.id), tag_id=str(target.id))  # both on P1
+
+    ts.merge_tags(db, user=user, source_id=str(source.id), target_id=str(target.id))
+
+    # P1 should have exactly ONE tag link (target), no constraint violation
+    tags = ts.list_tags_for_project(db, user=user, project_id=str(p.id))
+    assert len(tags) == 1
+    assert tags[0].name == "通信"
