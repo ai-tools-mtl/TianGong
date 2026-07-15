@@ -62,6 +62,37 @@ def update_section(
             from app.services.summary_service import generate_summary
             generate_summary(db, section)
     section.version += 1  # 乐观锁版本号自增
+
+    # 反写 Project.status（状态机）：section 流转 → 项目状态联动
+    _sync_project_status(db, section)
+
     db.commit()
     db.refresh(section)
     return section
+
+
+def _sync_project_status(db: Session, section: Section) -> None:
+    """根据项目所有 section 状态反推 Project.status（设计 P1 状态机）。
+
+    规则（归档优先，不覆盖 archived）：
+    - 全部 sections 均 confirmed（≥1）→ completed
+    - 任一 drafting/confirmed → in_progress
+    - 否则 → draft
+    """
+    project = db.scalar(select(Project).where(Project.id == section.project_id))
+    if project is None or project.status == "archived":
+        return  # 归档项目不回退
+
+    sections = list(db.scalars(
+        select(Section).where(Section.project_id == project.id)
+    ))
+    if not sections:
+        return
+
+    statuses = [s.status for s in sections]
+    if all(s == "confirmed" for s in statuses):
+        project.status = "completed"
+    elif any(s in ("drafting", "confirmed") for s in statuses):
+        project.status = "in_progress"
+    else:
+        project.status = "draft"
