@@ -135,3 +135,118 @@ def test_share_link_token_unique(db_session):
     with pytest.raises(IntegrityError):
         db_session.commit()
     db_session.rollback()
+
+
+# ── share_service: 成员管理 ──
+
+from app.core.exceptions import ConflictError, NotFoundError, ValidationError
+from app.services import share_service
+
+
+def test_list_members_returns_project_members(db_session):
+    """list_members 返回项目的所有成员（不含 owner）。"""
+    owner = _make_user(db_session)
+    project = _make_project(db_session, owner)
+    agent = _make_user(db_session, email="agent@tiangong.dev", name="代理人")
+    db_session.add(ProjectMember(project_id=project.id, user_id=agent.id))
+    db_session.commit()
+
+    members = share_service.list_members(db_session, project.id)
+    assert len(members) == 1
+    assert members[0].user_id == agent.id
+    assert members[0].role == "reviewer"
+
+
+def test_list_members_empty(db_session):
+    """无成员时返回空列表。"""
+    owner = _make_user(db_session)
+    project = _make_project(db_session, owner)
+    assert share_service.list_members(db_session, project.id) == []
+
+
+def test_add_member_finds_user_by_email(db_session):
+    """add_member 按邮箱找到已注册用户并创建成员（默认 reviewer）。"""
+    owner = _make_user(db_session)
+    project = _make_project(db_session, owner)
+    _make_user(db_session, email="agent@tiangong.dev", name="代理人")
+
+    member = share_service.add_member(db_session, project.id, "agent@tiangong.dev")
+    assert member.user_id is not None
+    assert member.role == "reviewer"
+    assert member.project_id == project.id
+
+
+def test_add_member_unregistered_email_raises_validation(db_session):
+    """邮箱未注册时抛 ValidationError（用户未注册）。"""
+    owner = _make_user(db_session)
+    project = _make_project(db_session, owner)
+    with pytest.raises(ValidationError) as exc:
+        share_service.add_member(db_session, project.id, "nobody@tiangong.dev")
+    assert "用户未注册" in str(exc.value)
+
+
+def test_add_member_duplicate_raises_conflict(db_session):
+    """重复添加同一成员抛 ConflictError。"""
+    owner = _make_user(db_session)
+    project = _make_project(db_session, owner)
+    _make_user(db_session, email="agent@tiangong.dev", name="代理人")
+    share_service.add_member(db_session, project.id, "agent@tiangong.dev")
+    with pytest.raises(ConflictError):
+        share_service.add_member(db_session, project.id, "agent@tiangong.dev")
+
+
+def test_add_member_owner_self_raises_validation(db_session):
+    """不能把项目 owner 自己加为成员。"""
+    owner = _make_user(db_session, email="owner@tiangong.dev", name="所有者")
+    project = _make_project(db_session, owner)
+    with pytest.raises(ValidationError):
+        share_service.add_member(db_session, project.id, "owner@tiangong.dev")
+
+
+def test_remove_member_deletes_record(db_session):
+    """remove_member 删除成员记录，幂等（不存在不报错）。"""
+    owner = _make_user(db_session)
+    project = _make_project(db_session, owner)
+    agent = _make_user(db_session, email="agent@tiangong.dev", name="代理人")
+    member = ProjectMember(project_id=project.id, user_id=agent.id)
+    db_session.add(member)
+    db_session.commit()
+    db_session.refresh(member)
+
+    share_service.remove_member(db_session, project.id, member.id)
+    assert db_session.get(ProjectMember, member.id) is None
+    # 再次删除不报错（幂等）
+    share_service.remove_member(db_session, project.id, member.id)
+
+
+# ── share_service: get_user_permission ──
+
+def test_get_user_permission_owner(db_session):
+    """owner 返回 'owner'。"""
+    owner = _make_user(db_session)
+    project = _make_project(db_session, owner)
+    assert share_service.get_user_permission(db_session, project.id, owner.id) == "owner"
+
+
+def test_get_user_permission_member(db_session):
+    """项目成员返回其角色（reviewer）。"""
+    owner = _make_user(db_session)
+    project = _make_project(db_session, owner)
+    agent = _make_user(db_session, email="agent@tiangong.dev", name="代理人")
+    db_session.add(ProjectMember(project_id=project.id, user_id=agent.id, role="reviewer"))
+    db_session.commit()
+    assert share_service.get_user_permission(db_session, project.id, agent.id) == "reviewer"
+
+
+def test_get_user_permission_none(db_session):
+    """非 owner 非成员返回 'none'。"""
+    owner = _make_user(db_session)
+    project = _make_project(db_session, owner)
+    stranger = _make_user(db_session, email="stranger@tiangong.dev", name="陌生人")
+    assert share_service.get_user_permission(db_session, project.id, stranger.id) == "none"
+
+
+def test_get_user_permission_nonexistent_project(db_session):
+    """项目不存在返回 'none'（不抛异常，供 collabora-url 安全降级）。"""
+    owner = _make_user(db_session)
+    assert share_service.get_user_permission(db_session, uuid.uuid4(), owner.id) == "none"
