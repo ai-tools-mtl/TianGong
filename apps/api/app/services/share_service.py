@@ -10,6 +10,7 @@
 """
 
 import uuid
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -127,3 +128,85 @@ def _to_uuid_or_none(value):
         return uuid.UUID(str(value))
     except (ValueError, AttributeError):
         return None
+
+
+# ── 分享链接管理 ──
+
+def create_share_link(
+    db: Session, project_id, created_by, permissions: str, expires_days: int | None,
+) -> ShareLink:
+    """创建分享链接。
+
+    - permissions: "comment" | "readonly"，其它值抛 ValidationError
+    - expires_days: None 或 <=0 表示永不过期；>0 设置对应过期时间
+    - token: uuid4().hex（32 位十六进制）
+    """
+    if permissions not in ("comment", "readonly"):
+        raise ValidationError("权限必须为 comment 或 readonly")
+    pid = _to_uuid(project_id, "项目不存在")
+    cby = _to_uuid(created_by, "创建者无效")
+
+    expires_at = None
+    if expires_days is not None and expires_days > 0:
+        expires_at = datetime.now(timezone.utc) + timedelta(days=expires_days)
+
+    link = ShareLink(
+        project_id=pid,
+        token=uuid.uuid4().hex,
+        permissions=permissions,
+        expires_at=expires_at,
+        created_by=cby,
+    )
+    db.add(link)
+    db.commit()
+    db.refresh(link)
+    return link
+
+
+def list_share_links(db: Session, project_id) -> list[ShareLink]:
+    """列出项目所有分享链接，按创建时间降序（新的在前）。"""
+    pid = _to_uuid(project_id, "项目不存在")
+    return list(db.scalars(
+        select(ShareLink)
+        .where(ShareLink.project_id == pid)
+        .order_by(ShareLink.created_at.desc())
+    ))
+
+
+def revoke_share_link(db: Session, project_id, link_id) -> None:
+    """撤销分享链接。幂等：不存在则无操作。
+
+    校验 link 属于该 project（防越权删别项目的链接）。
+    """
+    pid = _to_uuid(project_id, "项目不存在")
+    lid = _to_uuid(link_id, "链接不存在")
+    link = db.get(ShareLink, lid)
+    if link is None or link.project_id != pid:
+        return  # 幂等
+    db.delete(link)
+    db.commit()
+
+
+def verify_share_link(db: Session, token: str) -> tuple[ShareLink, Project]:
+    """校验分享链接：存在 + 未过期 + 项目存在。
+
+    失败一律抛 NotFoundError（防探测，对外统一"链接不存在或已失效"）。
+    返回 (link, project) 供调用方构造受限权限的 Collabora URL。
+    """
+    link = db.scalar(select(ShareLink).where(ShareLink.token == token))
+    if link is None:
+        raise NotFoundError("分享链接不存在或已失效")
+
+    if link.expires_at is not None:
+        now = datetime.now(timezone.utc)
+        exp = link.expires_at
+        # sqlite 测试可能返回 naive datetime，补时区再比较
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if exp < now:
+            raise NotFoundError("分享链接不存在或已失效")
+
+    project = db.get(Project, link.project_id)
+    if project is None:
+        raise NotFoundError("分享链接不存在或已失效")
+    return link, project

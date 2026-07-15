@@ -250,3 +250,123 @@ def test_get_user_permission_nonexistent_project(db_session):
     """项目不存在返回 'none'（不抛异常，供 collabora-url 安全降级）。"""
     owner = _make_user(db_session)
     assert share_service.get_user_permission(db_session, uuid.uuid4(), owner.id) == "none"
+
+
+# ── share_service: 分享链接管理 ──
+
+def test_create_share_link_default_comment(db_session):
+    """create_share_link 默认 permissions=comment，无过期。"""
+    owner = _make_user(db_session)
+    project = _make_project(db_session, owner)
+    link = share_service.create_share_link(
+        db_session, project.id, created_by=owner.id, permissions="comment", expires_days=None,
+    )
+    assert link.token == uuid.UUID(link.token).hex  # 合法 hex
+    assert len(link.token) == 32
+    assert link.permissions == "comment"
+    assert link.expires_at is None
+    assert link.created_by == owner.id
+
+
+def test_create_share_link_readonly_with_expiry(db_session):
+    """permissions=readonly + expires_days 设置过期时间。"""
+    owner = _make_user(db_session)
+    project = _make_project(db_session, owner)
+    link = share_service.create_share_link(
+        db_session, project.id, created_by=owner.id, permissions="readonly", expires_days=7,
+    )
+    assert link.permissions == "readonly"
+    assert link.expires_at is not None
+    # 过期时间约 7 天后
+    now = datetime.now(timezone.utc)
+    exp = link.expires_at
+    if exp.tzinfo is None:
+        exp = exp.replace(tzinfo=timezone.utc)
+    delta = exp - now
+    assert timedelta(days=6, hours=23) < delta < timedelta(days=7, minutes=1)
+
+
+def test_create_share_link_invalid_permissions_raises(db_session):
+    """permissions 非 comment/readonly 抛 ValidationError。"""
+    owner = _make_user(db_session)
+    project = _make_project(db_session, owner)
+    with pytest.raises(ValidationError):
+        share_service.create_share_link(
+            db_session, project.id, created_by=owner.id, permissions="edit", expires_days=None,
+        )
+
+
+def test_create_share_link_unique_tokens(db_session):
+    """连续创建两个链接，token 不同。"""
+    owner = _make_user(db_session)
+    project = _make_project(db_session, owner)
+    l1 = share_service.create_share_link(db_session, project.id, owner.id, "comment", None)
+    l2 = share_service.create_share_link(db_session, project.id, owner.id, "comment", None)
+    assert l1.token != l2.token
+
+
+def test_list_share_links(db_session):
+    """list_share_links 返回项目的所有链接。"""
+    owner = _make_user(db_session)
+    project = _make_project(db_session, owner)
+    share_service.create_share_link(db_session, project.id, owner.id, "comment", None)
+    share_service.create_share_link(db_session, project.id, owner.id, "readonly", 7)
+    links = share_service.list_share_links(db_session, project.id)
+    assert len(links) == 2
+
+
+def test_revoke_share_link_deletes(db_session):
+    """revoke_share_link 删除链接，幂等。"""
+    owner = _make_user(db_session)
+    project = _make_project(db_session, owner)
+    link = share_service.create_share_link(db_session, project.id, owner.id, "comment", None)
+    share_service.revoke_share_link(db_session, project.id, link.id)
+    assert db_session.get(ShareLink, link.id) is None
+    # 幂等
+    share_service.revoke_share_link(db_session, project.id, link.id)
+
+
+# ── share_service: verify_share_link ──
+
+def test_verify_share_link_valid(db_session):
+    """有效链接返回 (link, project)。"""
+    owner = _make_user(db_session)
+    project = _make_project(db_session, owner)
+    link = share_service.create_share_link(db_session, project.id, owner.id, "comment", None)
+    got_link, got_project = share_service.verify_share_link(db_session, link.token)
+    assert got_link.id == link.id
+    assert got_project.id == project.id
+
+
+def test_verify_share_link_nonexistent_raises_not_found(db_session):
+    """不存在的 token 抛 NotFoundError。"""
+    with pytest.raises(NotFoundError):
+        share_service.verify_share_link(db_session, uuid.uuid4().hex)
+
+
+def test_verify_share_link_expired_raises_not_found(db_session):
+    """过期链接抛 NotFoundError。"""
+    owner = _make_user(db_session)
+    project = _make_project(db_session, owner)
+    # 直接构造已过期链接
+    link = ShareLink(
+        project_id=project.id,
+        token=uuid.uuid4().hex,
+        permissions="comment",
+        expires_at=datetime.now(timezone.utc) - timedelta(days=1),
+        created_by=owner.id,
+    )
+    db_session.add(link)
+    db_session.commit()
+    with pytest.raises(NotFoundError):
+        share_service.verify_share_link(db_session, link.token)
+
+
+def test_verify_share_link_no_expiry_never_expires(db_session):
+    """expires_at 为空表示永不过期。"""
+    owner = _make_user(db_session)
+    project = _make_project(db_session, owner)
+    link = share_service.create_share_link(db_session, project.id, owner.id, "comment", None)
+    got_link, got_project = share_service.verify_share_link(db_session, link.token)
+    assert got_link.expires_at is None
+    assert got_project.id == project.id
