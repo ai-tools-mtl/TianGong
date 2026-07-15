@@ -3,8 +3,13 @@ import type {
   LoginRequest,
   Project,
   ProjectCreate,
+  ProjectTag,
   ProjectUpdate,
   RegisterRequest,
+  Tag,
+  TagCreate,
+  TagMerge,
+  TagUpdate,
   User,
 } from '@/types/api'
 
@@ -62,6 +67,32 @@ export const api = {
 
   deleteProject: (id: string) =>
     request<void>(`/projects/${id}`, { method: 'DELETE' }),
+
+  listProjectsFiltered: (params: { status?: string; q?: string; tag_id?: string }) =>
+    request<Project[]>(`/projects?${new URLSearchParams(
+      Object.entries(params).filter(([, v]) => v).map(([k, v]) => [k, v!])
+    ).toString()}`),
+
+  // ── 标签 ──
+  listTags: () => request<Tag[]>('/tags'),
+
+  createTag: (data: TagCreate) =>
+    request<Tag>('/tags', { method: 'POST', body: JSON.stringify(data) }),
+
+  renameTag: (id: string, data: TagUpdate) =>
+    request<Tag>(`/tags/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+
+  deleteTag: (id: string) =>
+    request<void>(`/tags/${id}`, { method: 'DELETE' }),
+
+  mergeTags: (data: TagMerge) =>
+    request<Tag>('/tags/merge', { method: 'POST', body: JSON.stringify(data) }),
+
+  attachProjectTag: (projectId: string, tagId: string) =>
+    request<ProjectTag[]>(`/projects/${projectId}/tags/${tagId}`, { method: 'POST' }),
+
+  detachProjectTag: (projectId: string, tagId: string) =>
+    request<ProjectTag[]>(`/projects/${projectId}/tags/${tagId}`, { method: 'DELETE' }),
 
   // ── 模板 ──
   listTemplates: () => request<import('@/types/api').TemplateSummary[]>('/templates'),
