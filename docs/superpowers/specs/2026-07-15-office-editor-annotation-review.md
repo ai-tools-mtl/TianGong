@@ -1,325 +1,371 @@
-# 天工 TianGong — Office 风格编辑器 + 批注式审查工作流设计文档
+# 天工 TianGong — 混合编辑器架构：Tiptap 撰写 + ONLYOFFICE 审查/批注/导出
 
-> 日期：2026-07-15
-> 目标：将编辑器升级为 Office 风格（Word 工具栏 + A4 页面 + 标尺 + 真分页），并将审查结果从独立报告页改为文档内批注 + 接受/拒绝工作流。
-> 关联：本文档是 [MVP 设计文档](./2026-07-13-tiangong-mvp-design.md) 的 P1 增强扩展，对应设计 11.2「全篇质量检查报告」+ 编辑体验升级。
+> 日期：2026-07-15（修订：从纯 Tiptap 自建方案改为混合方案）
+> 目标：AI 撰写保留 Tiptap 流式体验，审查/协作批注/导出引入 ONLYOFFICE Document Server 获得产品级批注、修订模式（接受/拒绝）、Word/PDF 保真导出。
+> 关联：[MVP 设计文档](./2026-07-13-tiangong-mvp-design.md) P1 增强扩展。
 
 ---
 
-## 1. 背景与动机
+## 1. 背景与决策
 
-P0 全部完成后，系统的核心创作→审查→归档链路已跑通。但两个体验瓶颈阻碍真实使用：
+### 1.1 问题
 
-1. **审查结果与编辑脱节**：当前审查输出在独立 `/review` 页面，用户看到"技术方案缺替代实施方式"后要切回编辑页手动找对应位置修改——来回切换、无法定位、无法一键应用建议。
-2. **编辑器体验粗糙**：当前 Tiptap 只有 6 个简陋按钮（B/I/H2/H3/列表），无字体/字号/颜色/对齐，无 A4 页面感，与代理人熟悉的 Word/WPS 差距大。
+P0 完成后两个瓶颈：
+1. 审查结果与编辑脱节——独立 /review 页，无法定位、无法一键应用建议
+2. 编辑器体验粗糙——无 Office 风格、无批注、无协作
 
-本设计将这两个问题一起解决：**Office 风格编辑器 + 批注式审查**——审查结果以批注形式出现在文档右侧侧栏，锚定到文档具体位置，用户逐条「接受」（AI 替换原文）/「拒绝」（保留原样），消除审查→编辑的来回切换。
+### 1.2 为什么选混合方案（而非纯自建或全量迁移）
 
-## 2. 三大模块概览
+调研了三条路：
 
-| 模块 | 内容 | 依赖 |
-|---|---|---|
-| ① 审查引擎增强 | 跨章节一致性检查 + 问题定位到章节 + 严重程度分级 | 现有 review_service |
-| ② 批注系统 | 自定义 Tiptap Mark + 批注侧栏 + 接受/拒绝工作流 | ① 的输出 + Tiptap |
-| ③ Office 样式编辑器 | Word 风格工具栏 + A4 容器 + 标尺 + 真分页 | Tiptap（无 Pro 依赖） |
+| 方案 | 批注/修订 | Office 视觉 | AI 流式生成 | 导出保真 | 与现有代码兼容 | 许可证 |
+|---|---|---|---|---|---|---|
+| 纯 Tiptap 自建 | 🔴 anchor 定位硬伤 | 🔴 CSS 分页冲突 | ✅ 保留 | 🔴 需手动扩展 | ✅ | ✅ MIT |
+| 全量 ONLYOFFICE | ✅ 开箱即用 | ✅ 真 Word 引擎 | ❌ 流式断裂 | ✅ 原生 | 🔴 数据层重写 | ⚠️ AGPL |
+| **混合方案** | ✅ ONLYOFFICE 原生 | ✅ ONLYOFFICE 原生 | ✅ Tiptap 保留 | ✅ ONLYOFFICE 原生 | 🟡 需转换层 | ⚠️ AGPL |
 
-## 3. 审查引擎增强（模块①）
+混合方案的核心取舍：**AI 撰写阶段用 Tiptap（保流式），审查/协作/导出阶段转 docx 用 ONLYOFFICE**。代价是两套编辑器 + Tiptap↔docx 转换。
 
-### 3.1 与现有审查的关系
+### 1.3 AGPL 许可证处理
 
-融入现有 `run_review`，不新增独立端点。在现有 Rubric 维度评分（②）之后插入两个新阶段：
+ONLYOFFICE Docs Community Edition 是 AGPL v.3。天工是私有项目（README 明确标注"私有项目"），当前阶段仅小团队内部使用，不对外提供 SaaS 服务——AGPL 的网络 copyleft 条款暂不触发。若未来商业化对外服务，需购买商业许可。**在 spec 中记录此约束，部署时不公开 ONLYOFFICE 实例的网络入口**。
+
+---
+
+## 2. 双阶段架构
 
 ```
-① load（不变）
-② score：Rubric 维度评分（prompt 增强：输出 applies_to）
-②b consistency_check：跨章节一致性检查（新增）
-②c locate_and_classify：问题定位与分级（新增）
-③ aggregate：聚合总分 + 生成摘要（增强）
-④ persist：存 ReviewRecord + 生成 Annotation 记录（增强）
+┌─ 阶段一：AI 撰写（Tiptap）──────────────────────────┐
+│                                                       │
+│  Tiptap 编辑器（现有，增强 Office 样式）               │
+│  ├─ AI 流式生成草稿（astream_generate → 逐 token）     │
+│  ├─ AI 引导对话（astream_chat）                        │
+│  ├─ 富文本编辑 + 防抖保存（Plan 9 乐观锁）              │
+│  └─ Section.content = Tiptap JSON（不变）              │
+│                                                       │
+│  撰写完成 → 用户点「进入审查模式」                      │
+│  → 后端: Tiptap JSON → 转 docx（python-docx 生成）     │
+│  → 存为审查版本 docx                                   │
+└───────────────────────┬───────────────────────────────┘
+                        ▼
+┌─ 阶段二：审查/协作/导出（ONLYOFFICE）─────────────────┐
+│                                                       │
+│  ONLYOFFICE Document Editor（iframe 嵌入）             │
+│  ├─ Word 风格编辑 + 标尺 + 真分页（原生）               │
+│  ├─ 批注（代理人/AI 添加，锚定精确到字符）              │
+│  ├─ 修订模式（建议修改 → owner 接受/拒绝）              │
+│  ├─ 协作（注册用户 + 分享链接访客）                     │
+│  ├─ 导出 Word/PDF（原生保真）                          │
+│  └─ 保存回调 → 后端接收 docx                           │
+│                                                       │
+│  owner 接受修订 → ONLYOFFICE 保存 docx                 │
+│  → 后端: docx → 转回 Tiptap JSON → 存回 Section.content│
+│  → 回到阶段一继续 AI 撰写                              │
+└───────────────────────────────────────────────────────┘
 ```
 
-`quality_report` 技能开关（设计 7.4，已在 Plan 12 定义为 BUILTIN_SKILLS 占位）控制 ②b/②c 是否执行——禁用时退化为现有审查行为。
+### 2.1 为什么能解决之前列的 8 个盲点
 
-### 3.2 跨章节一致性检查（②b）
-
-单次 LLM 调用 + 结构化 prompt。检查关键章节对的逻辑一致性：
-
-| 检查对 | 检查内容 |
+| 盲点 | 解决方式 |
 |---|---|
-| 背景技术 ↔ 技术方案 | 技术方案是否解决了背景技术提出的问题 |
-| 技术方案 ↔ 有益效果 | 有益效果是否由技术方案产生 |
-| 技术方案 ↔ 具体实施方式 | 实施方式是否与技术方案一致 |
-
-Prompt 输出结构化 JSON：
-```json
-{
-  "issues": [
-    {
-      "pair": ["background", "solution"],
-      "description": "背景技术提到XX问题，但技术方案未直接解决该问题",
-      "severity": "warning",
-      "anchor_text": "本发明未涉及XX问题的解决方案"
-    }
-  ]
-}
-```
-
-`anchor_text` 是被批注的原文片段，用于前端定位批注位置。
-
-### 3.3 问题定位与分级（②c）
-
-合并 ② 的 Rubric 维度 suggestion + ②b 的一致性 issues，按章节归类 + 分三级：
-
-| 级别 | 判定规则 | 来源 |
-|---|---|---|
-| **critical（严重）** | 跨章节矛盾、关键章节缺失或为空 | ②b 一致性 issues（severity=critical） |
-| **warning（建议）** | Rubric 维度分数 < 70 的改进建议 | ② Rubric suggestion |
-| **suggestion（优化）** | Rubric 维度分数 70-85 的优化点 | ② Rubric suggestion |
-
-每个问题带：
-- `applies_to: [section_key]` — 关联到哪个章节
-- `anchor_text: str` — 被批注的原文片段（用于前端定位）
-- `suggestion: str | None` — AI 建议的修改内容（"接受"时替换原文用）
-
-### 3.4 ReviewRecord 新增字段
-
-```python
-# 新增到 ReviewRecord 模型
-section_health: dict       # {section_key: {"score": int, "status": "good|warning|critical"}}
-classified_issues: list    # 合并后的问题列表（含 severity/applies_to/anchor_text）
-summary: str               # 整体评价摘要（1-2 句话，LLM 生成）
-```
-
-### 3.5 审查输出为批注
-
-审查完成后，除了存 ReviewRecord，还为每个 classified_issue 生成一条 **Annotation 记录**（见模块②），status=pending。前端收到审查结果后加载批注到编辑器。
+| ① anchor_text 定位失败 | ✅ ONLYOFFICE 批注锚定在 OOXML 位置，精确到字符，不靠文本搜索 |
+| ② CSS column 分页冲突 | ✅ ONLYOFFICE 是真 Word 分页引擎 |
+| ③ 导出渲染器不支持新格式 | ✅ ONLYOFFICE 原生导出，格式 100% 保真 |
+| ④ 批注不污染原文 | ✅ 批注/修订是 OOXML 独立层，与正文分离 |
+| ⑤ 接受批注的乐观锁冲突 | ✅ ONLYOFFICE 内部管理修订状态，保存回调串行化 |
+| ⑥ 重新审查旧批注处理 | ✅ ONLYOFFICE 批注有 resolved 状态，重新打开文档旧批注保留 |
+| ⑦ 标尺与导出不一致 | ✅ 标尺即真实页边距，导出一致 |
+| ⑧ 代理人"实时"非实时 | ✅ ONLYOFFICE 原生支持实时协作（多人同时编辑） |
 
 ---
 
-## 4. 批注系统（模块②）
+## 3. Tiptap → docx 转换层
 
-### 4.1 技术方案：自建，不依赖 Tiptap Pro
+这是混合方案的关键接点。现有 `export_service.py` 已有 `_render_tiptap_to_docx`（Tiptap JSON → python-docx），**复用并增强它**作为转换层。
 
-Tiptap 的 `TrackedChanges` 和 `CommentsKit` 是 Pro 付费扩展。本设计自建批注系统：
-- **自定义 Tiptap Mark**（`comment` mark，带 `annotationId` 属性）标记被批注的文本范围
-- **批注数据存外部**（Annotation 表，不嵌在文档 JSON 里），通过 Mark 的 annotationId 关联
-- **ProseMirror Decoration** 做高亮渲染（非破坏式，不改文档状态）
+### 3.1 正向转换：Tiptap JSON → docx（进入审查模式）
 
-社区有成熟实践（[Dev.to: Google Docs-like commenting in Tiptap](https://dev.to/sereneinserenade/how-i-implemented-google-docs-like-commenting-in-tiptap-k2k)）。
+现有 `_render_tiptap_to_docx` 已支持 paragraph/heading/list/image。需扩展支持 Plan 9/10 新增的 marks（如果 Office 样式工具栏加了字体/颜色等）。实际上混合方案下 Tiptap 编辑器**不需要加 Office 样式工具栏**——因为审查阶段用 ONLYOFFICE，Tiptap 只管 AI 撰写，保持简洁即可。
 
-### 4.2 数据模型
+转换流程：
+```
+用户点「进入审查模式」
+  → 后端: 遍历项目所有章节 → _render_tiptap_to_docx 拼成完整 docx
+  → 存到文件系统（uploads/review/{project_id}/{version}.docx）
+  → 返回 ONLYOFFICE 编辑器配置（含文件 URL + callbackUrl）
+  → 前端: 加载 ONLYOFFICE iframe
+```
 
-新增 `Annotation` 实体：
+### 3.2 逆向转换：docx → Tiptap JSON（审查后回写）
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | UUID PK | |
-| project_id | UUID FK CASCADE | |
-| section_id | UUID FK CASCADE | |
-| review_record_id | UUID FK CASCADE | 关联哪轮审查产生 |
-| anchor_text | str | 被批注的原文片段（用于重新定位） |
-| severity | str | critical / warning / suggestion |
-| title | str | 问题标题 |
-| description | str | 问题描述 |
-| suggestion | str nullable | AI 建议的修改内容（"接受"时替换原文） |
-| status | str | pending / accepted / rejected |
-| resolved_at | datetime nullable | 接受/拒绝时间 |
-| created_at / updated_at | datetime | TimestampMixin |
+这是**有损转换**——docx 里的复杂格式（嵌套表格、文本框、艺术字）无法 1:1 转回 Tiptap JSON。但专利交底书内容以段落+标题+列表+图片为主，这些 Tiptap JSON 能完整表达。
 
-### 4.3 批注锚定策略
+逆向转换用现有的 `parsing/docx_parser.py`（模板解析已建好的 Word 解析器）：
+```
+ONLYOFFICE 保存回调 → 后端收到 docx
+  → docx_parser.parse_docx → 提取结构（章节/段落/标题/列表/图片）
+  → 转为 Tiptap JSON（复用 markdown_to_tiptap 的节点构造逻辑）
+  → 存回各 Section.content
+```
 
-文档编辑后字符偏移会失效，采用**文本搜索重新定位**策略：
+### 3.3 转换损耗的取舍
 
-1. 审查时 LLM 输出 `anchor_text`（被批注的原文片段）
-2. 前端加载章节内容时，在 Tiptap 文档中搜索该片段
-3. 找到 → 用 `editor.commands.setTextSelection({from, to})` 定位 + `editor.commands.setMark('comment', {annotationId})` 标记高亮
-4. 找不到（文档已改）→ 降级为章节级批注（锚定到章节标题，不标记具体文本，侧栏仍显示）
+- **简单格式（段落/标题/列表/图片/加粗/斜体）**：双向无损
+- **复杂格式（表格/文本框/分栏）**：正向可生成，逆向降级为纯文本
+- **批注/修订**：不转回 Tiptap JSON——它们留在 docx 审查版本里，Tiptap JSON 只存正文
 
-### 4.4 批注侧栏交互
-
-- 列出当前章节所有 pending 批注，按 severity 分组（严重/建议/优化）
-- 每条批注卡片：severity 图标 + 标题 + 描述 + 建议内容预览
-- **「接受」按钮**：`editor.chain().setTextSelection({from,to}).deleteSelection().insertContent(suggestion).run()` → 标记 annotation.status=accepted → 移除高亮 Mark → 内容变更触发防抖保存（复用 Plan 9 乐观锁）
-- **「拒绝」按钮**：标记 annotation.status=rejected → 移除高亮 Mark
-- 点击批注卡片 → 编辑器滚动到对应位置 + 临时高亮
-- 顶部 tab 切换：待处理 / 已接受 / 已拒绝
-
-### 4.5 API
-
-| 方法 | 路径 | 说明 |
-|---|---|---|
-| GET | `/sections/{section_id}/annotations` | 列出章节的批注（可按 status 过滤） |
-| GET | `/projects/{project_id}/annotations` | 列出项目的全部批注 |
-| POST | `/annotations/{id}/accept` | 接受批注（返回建议内容供前端替换） |
-| POST | `/annotations/{id}/reject` | 拒绝批注 |
-| DELETE | `/annotations/{id}` | 删除批注（仅 pending 可删） |
-
-accept 端点返回 `{suggestion, anchor_text}`，前端拿到后执行编辑器替换。实际的内容替换在前端 Tiptap editor 上操作（后端只更新 Annotation.status），替换后的内容通过现有的防抖保存 PATCH 持久化。
+专利交底书 99% 是简单格式，这个损耗可接受。
 
 ---
 
-## 5. Office 风格编辑器（模块③）
+## 4. ONLYOFFICE 集成
 
-### 5.1 Word 风格工具栏
+### 4.1 部署
 
-替换当前简陋的 6 按钮工具栏。新增 Tiptap 扩展：
+docker-compose 增加 ONLYOFFICE Document Server 服务：
 
-| 扩展 | 功能 |
+```yaml
+onlyoffice:
+  image: onlyoffice/documentserver:latest
+  environment:
+    - JWT_ENABLED=true
+    - JWT_SECRET=${ONLYOFFICE_JWT_SECRET}
+  ports:
+    - "8080:80"
+  volumes:
+    - onlyoffice_data:/var/www/onlyoffice/Data
+```
+
+### 4.2 后端集成（FastAPI 作为 Document Manager）
+
+ONLYOFFICE 的集成模式：FastAPI 充当"文档管理服务"，ONLYOFFICE Document Server 充当"编辑服务"。
+
+**加载文档**：
+1. FastAPI 生成编辑器配置（JSON）：文档 URL、用户信息、权限、callbackUrl
+2. 用 JWT_SECRET 签名配置
+3. 前端用 `DocsAPI.DocEditor` 初始化 iframe，传入签名配置
+
+**保存回调**：
+1. ONLYOFFICE 编辑后通过 `callbackUrl` POST 到 FastAPI
+2. FastAPI 下载更新后的 docx → 触发逆向转换 → 存回 Section.content
+3. 返回 `{"error": 0}` 确认
+
+**关键文件**（新建）：
+- `apps/api/app/services/onlyoffice_service.py` — 配置生成 + JWT 签名 + 回调处理
+- `apps/api/app/api/onlyoffice.py` — `/onlyoffice/config/{project_id}`（返回编辑器配置）、`/onlyoffice/callback`（保存回调）
+- `apps/api/app/core/config.py` — 加 `onlyoffice_url`、`onlyoffice_jwt_secret`
+
+### 4.3 文件存储
+
+审查阶段的 docx 存文件系统（复用 Plan 10 的 upload_dir 配置）：
+- 路径：`uploads/review/{project_id}/{timestamp}.docx`
+- 每次进入审查模式生成新版本（不覆盖旧的）
+- ONLYOFFICE 通过 FastAPI 提供的 URL 读取/写回 docx
+
+---
+
+## 5. 审查引擎增强
+
+### 5.1 一致性检查 + 问题定位（不变）
+
+模块①的逻辑与之前设计相同——单次 LLM 一致性检查 + 问题分级。但**输出方式变化**：
+
+- 之前：生成 Annotation 记录 → 前端 Tiptap Decoration 高亮
+- 现在：**AI 审查结果通过 ONLYOFFICE API 添加为文档批注**
+
+ONLYOFFICE 提供 API 向文档注入批注（通过 connector API 或在生成 docx 时写入 OOXML 批注层）。AI 审查的每个 issue → 转为 ONLYOFFICE 批注（含 anchor 位置 + 描述 + 建议修改）。
+
+### 5.2 审查流程
+
+```
+用户在 ONLYOFFICE 审查视图点「执行 AI 审查」
+  → 后端 run_review:
+      ① 从 docx 提取文本（python-docx 读段落）
+      ② Rubric 评分 + 一致性检查 + 问题分级
+      ③ 生成审查结果
+  → 后端: 审查结果 → ONLYOFFICE 批注 API 注入文档
+      或: 审查结果写入 docx 的 OOXML 批注层 → 重新加载文档
+  → ONLYOFFICE 显示批注（AI 批注 + 代理人批注混合）
+  → owner 逐条接受/拒绝修订
+  → 保存 → 回调 → 逆向转 Tiptap JSON
+```
+
+---
+
+## 6. 协作批注
+
+### 6.1 权限模型
+
+| 角色 | 阶段一（Tiptap 撰写） | 阶段二（ONLYOFFICE 审查） |
+|---|---|---|
+| owner | ✅ 全部 | ✅ 全部（编辑 + 接受/拒绝修订 + 管理批注） |
+| reviewer（注册代理人） | ❌ 不可见 | ✅ 只读 + 批注 + 建议修改（修订模式） |
+| guest（分享链接访客） | ❌ 不可见 | ✅ 只读 + 批注 |
+
+### 6.2 协作者管理
+
+新增 `ProjectMember` 实体：
+- `project_id` FK + `user_id` FK + `role`（reviewer）
+- owner 通过邮箱添加代理人
+
+新增 `ShareLink` 实体：
+- `project_id` FK + `token`（UUID）+ `expires_at` + `permissions`（read/comment）
+- owner 生成链接，访客通过 `/shared/{token}` 进入 ONLYOFFICE 只读+批注模式
+
+### 6.3 批注来源标注
+
+ONLYOFFICE 原生批注显示作者名。AI 审查批注作者标为"AI 审查助手"，代理人批注显示代理人姓名。owner 在侧栏可看到每条批注的来源。
+
+### 6.4 批注不污染原文
+
+ONLYOFFICE 的批注和修订是 OOXML 的独立层（`w:comments` / `w:ins` / `w:del`），与正文（`w:body`）分离。逆向转 Tiptap JSON 时**只提取正文**，批注/修订留在 docx 审查版本里不转回。这天然实现了"批注不污染原始版本"。
+
+---
+
+## 7. 前端架构
+
+### 7.1 两套编辑器视图
+
+| 视图 | 路由 | 编辑器 | 用途 |
+|---|---|---|---|
+| 撰写视图 | `/projects/{id}` | Tiptap（现有，增强） | AI 流式生成 + 富文本编辑 |
+| 审查视图 | `/projects/{id}/review-doc` | ONLYOFFICE iframe | 批注 + 修订 + 协作 + 导出 |
+
+切换：撰写页顶栏「进入审查模式」按钮 → 调后端转换 → 跳转审查视图。审查页顶栏「返回撰写」→ 调后端逆向转换 → 跳回撰写视图。
+
+### 7.2 Tiptap 撰写视图增强
+
+保持现有 Tiptap 编辑器，**不做 Office 样式改造**（Office 体验由 ONLYOFFICE 承担）。仅做：
+- 保持 Plan 9 的防抖保存 + 乐观锁
+- 保持 Plan 10 的附图上传
+- AI 面板 + 章节大纲不变
+- 顶栏加「进入审查模式」入口
+
+### 7.3 ONLYOFFICE 审查视图
+
+- 全屏 ONLYOFFICE iframe（Word 风格 + 标尺 + 分页 + 批注侧栏）
+- 顶栏：项目标题 + 「执行 AI 审查」按钮 + 「导出 Word/PDF」按钮 + 「返回撰写」按钮 + 协作者管理入口
+- ONLYOFFICE 原生批注侧栏（右侧）
+
+### 7.4 分享链接页面
+
+`/shared/{token}` → ONLYOFFICE 只读模式 + 批注权限。不显示 Tiptap 撰写视图，不显示其他项目。
+
+---
+
+## 8. 涉及文件
+
+### 后端
+
+| 文件 | 改动 |
 |---|---|
-| `@tiptap/extension-text-style` | 文本样式基础（字号等依赖） |
-| `@tiptap/extension-font-family` | 字体选择 |
-| `@tiptap/extension-color` + `@tiptap/extension-text-style` | 字体颜色 |
-| `@tiptap/extension-highlight` | 背景高亮 |
-| `@tiptap/extension-underline` | 下划线 |
-| `@tiptap/extension-text-align` | 对齐方式 |
-| `@tiptap/extension-text-style` + 自定义 | 字号（通过 attrs） |
+| `services/onlyoffice_service.py`（新） | 配置生成 + JWT + 回调 + 文件管理 |
+| `api/onlyoffice.py`（新）+ router | 编辑器配置端点 + 回调端点 |
+| `services/export_service.py` | 增强 `_render_tiptap_to_docx`（确保审查转换完整） |
+| `parsing/docx_parser.py` | 增强：docx → Tiptap JSON 逆向转换（复用现有解析 + 节点构造） |
+| `services/review_service.py` | 文本提取改为从 docx 读；审查结果注入 ONLYOFFICE 批注 |
+| `models/project_member.py`（新）+ 迁移 | 协作者实体 |
+| `models/share_link.py`（新）+ 迁移 | 分享链接实体 |
+| `services/share_service.py`（新） | 协作者 + 分享链接 + token 鉴权 |
+| `api/share.py`（新）+ router | 分享/协作者 API |
+| `deps.py` | `get_shared_project`（token 鉴权） |
+| `core/config.py` | onlyoffice_url / onlyoffice_jwt_secret |
+| `docker-compose.yml` | ONLYOFFICE Document Server 服务 |
 
-工具栏布局（Office 功能区风格）：
-- **字体组**：字体下拉 + 字号下拉 + 增大/减小字号
-- **格式组**：加粗 / 斜体 / 下划线 / 删除线
-- **颜色组**：字体颜色 / 背景色
-- **段落组**：左对齐 / 居中 / 右对齐 / 两端对齐 / 增加缩进 / 减少缩进
-- **结构组**：H1/H2/H3 / 无序列表 / 有序列表
+### 前端
 
-### 5.2 A4 页面容器
+| 文件 | 改动 |
+|---|---|
+| `app/(app)/projects/[id]/review-doc/page.tsx`（新） | ONLYOFFICE iframe 审查视图 |
+| `app/shared/[token]/page.tsx`（新） | 分享链接访客页面 |
+| `components/onlyoffice-editor.tsx`（新） | DocsAPI.DocEditor 封装 |
+| `components/share-dialog.tsx`（新） | 协作者管理 + 分享链接生成 |
+| `app/(app)/projects/[id]/page.tsx` | 顶栏加「进入审查模式」按钮 |
+| `lib/api.ts` | onlyoffice config + share API 方法 |
+| `package.json` | 无需新 Tiptap 扩展（Office 样式由 ONLYOFFICE 承担） |
 
-编辑区套 A4 比例容器：
-- 固定宽度 820px（A4 @ 96dpi 的 210mm≈794px，取整 820 含内边距）
-- 白底 + `box-shadow` 模拟纸张悬浮
-- 居中显示在编辑区
-- 默认页边距：上下 2.54cm（96px）、左右 3.18cm（120px）
+### 删除/废弃
 
-### 5.3 标尺
-
-顶部水平标尺组件：
-- 刻度以 cm 为单位（0-21cm，A4 宽度）
-- 左右各一个可拖拽的页边距控制点（三角形滑块）
-- 拖拽时实时调整 A4 容器的 `padding-left` / `padding-right`
-- 标尺刻度与实际页边距联动
-
-实现：React 组件 + `onMouseDown/Move/Up` 拖拽 + 状态管理。不依赖 Tiptap，纯 CSS 定位层。
-
-### 5.4 真分页渲染
-
-内容超出 A4 一页高度时自动分页：
-- 每页固定高度（A4 高度 297mm ≈ 1123px @ 96dpi，减去上下页边距 ≈ 930px 内容区）
-- 内容区用 CSS `column-width` + `column-gap` 实现多列分页效果（每列 = 一页）
-- 页间用 `column-gap` + 背景留白模拟页间距
-- 底部页码显示（第 N 页）
-
-实现策略（CSS column 方案）：
-```css
-.a4-content {
-  column-width: 820px;
-  column-gap: 40px;  /* 页间距 */
-  height: 930px;     /* 单页内容高度 */
-}
-```
-
-ProseMirror 内容流入 column 布局后自然分页。**不做 ProseMirror 级别的精确分页计算**（测量每个节点高度 + 手动插入分页符），那是极高复杂度，MVP 用 CSS column 近似。
-
-### 5.5 三栏布局调整
-
-当前三栏：左大纲(240px) + 中编辑器(1fr) + 右AI面板(360px)。
-
-新增批注侧栏后变为四区：
-- 左：章节大纲（240px，可折叠）
-- 中：A4 编辑器（居中，固定 820px 宽度）
-- 右上：AI 对话面板（360px，可折叠）
-- 右下/右侧：批注侧栏（300px，可折叠）
-
-布局取舍：AI 面板和批注侧栏**不能同时占右栏**（空间不够）。方案：
-- 默认显示批注侧栏（审查后查看批注时）
-- AI 面板和批注侧栏用 tab 切换（同一个右栏区域）
-- 或：批注侧栏作为浮动面板（类似 VS Code 的 Problems 面板），不占固定列宽
-
-MVP 选择：**右栏 tab 切换**（AI 对话 / 批注列表），共享 360px 宽度。
+| 文件 | 处理 |
+|---|---|
+| `editor/office-toolbar.tsx` | 不需要（原计划的 Tiptap Office 工具栏取消） |
+| `editor/ruler.tsx` | 不需要（ONLYOFFICE 原生标尺） |
+| `editor/a4-page.tsx` | 不需要（ONLYOFFICE 原生 A4） |
+| `editor/comment-mark.ts` | 不需要（ONLYOFFICE 原生批注） |
+| `components/annotation-sidebar.tsx` | 不需要（ONLYOFFICE 原生批注侧栏） |
 
 ---
 
-## 6. 数据流
+## 9. 数据流
+
+### 9.1 撰写 → 审查
 
 ```
-用户点「执行审查」（在编辑器页面，不再跳转 /review 页）
+owner 在 Tiptap 编辑器撰写完成
+  → 点「进入审查模式」
+  → POST /projects/{id}/review-doc/enter
+  → 后端: 遍历章节 → _render_tiptap_to_docx → 存 review/{project_id}/{ts}.docx
+  → 返回 ONLYOFFICE 配置（文件 URL + callbackUrl + JWT）
+  → 前端跳转 /projects/{id}/review-doc → 加载 ONLYOFFICE iframe
+```
+
+### 9.2 AI 审查
+
+```
+owner 在审查视图点「执行 AI 审查」
   → POST /projects/{id}/review
-  → run_review:
-      ② Rubric 评分（带 applies_to + anchor_text）
-      ②b 一致性检查（单次 LLM）
-      ②c 问题定位 + 分级
-      ③ 聚合 + 生成 summary
-      ④ 存 ReviewRecord（含 section_health/classified_issues/summary）
-         + 为每个 issue 创建 Annotation 记录（status=pending）
-  → 前端收到 ReviewRecord + Annotation 列表
-  → 编辑器加载批注：
-      → 在文档中搜索 anchor_text → 定位 → setMark('comment') 高亮
-      → 找不到的降级为章节级批注
-  → 批注侧栏展示 pending 批注列表（按 severity 分组）
-  → 用户逐条操作：
-      「接受」→ 前端 editor 替换原文为 suggestion → POST /annotations/{id}/accept
-              → 内容变更触发防抖保存 PATCH（复用 Plan 9 乐观锁）
-      「拒绝」→ POST /annotations/{id}/reject → 移除高亮 Mark
-  → 批注侧栏更新状态
+  → 后端: 从 docx 提取文本 → Rubric 评分 + 一致性检查 + 分级
+  → 审查结果注入 docx 批注层（OOXML w:comments）
+  → 重新加载 ONLYOFFICE 文档
+  → 批注显示在 ONLYOFFICE 侧栏（AI 批注 + 代理人批注）
+```
+
+### 9.3 接受/拒绝修订
+
+```
+owner 在 ONLYOFFICE 内逐条接受/拒绝修订（原生 UI）
+  → owner 点「保存」→ ONLYOFFICE callback → POST /onlyoffice/callback
+  → 后端: 下载更新后 docx → 逆向转换 docx → Tiptap JSON → 存回 Section.content
+  → 返回 {"error": 0}
+```
+
+### 9.4 代理人协作
+
+```
+owner 添加代理人（邮箱）或生成分享链接
+  → 代理人登录/打开链接 → 进入 /projects/{id}/review-doc 或 /shared/{token}
+  → ONLYOFFICE 只读模式 + 批注权限
+  → 代理人添加批注/建议修改 → ONLYOFFICE 保存 → 回调
+  → owner 看到新批注 → 接受/拒绝
+```
+
+### 9.5 导出
+
+```
+owner 在审查视图点「导出 Word」或「导出 PDF」
+  → ONLYOFFICE 原生导出（格式保真）
+  → 直接下载
 ```
 
 ---
 
-## 7. 涉及文件
+## 10. 取舍
 
-### 模块① 审查引擎增强
-
-| 层 | 文件 | 改动 |
-|---|---|---|
-| 后端 | `ai/rubric_prompts.py` | 新增 `build_consistency_prompt` + 修改 `build_score_prompt` 加 applies_to/anchor_text 输出 |
-| 后端 | `services/review_service.py` | 新增 `_check_consistency` + `_locate_and_classify` + 生成 Annotation + summary |
-| 后端 | `models/review_record.py` | 新增 `section_health`/`classified_issues`/`summary` 字段 |
-| 后端 | 迁移 | `add_review_report_fields` |
-| 后端 | `api/review.py` | `_record_to_dict` 输出新字段 |
-| 测试 | `tests/test_review.py`（新/扩展） | 一致性检查 + 问题分级 + applies_to |
-
-### 模块② 批注系统
-
-| 层 | 文件 | 改动 |
-|---|---|---|
-| 后端 | `models/annotation.py`（新）+ 迁移 | Annotation 实体 |
-| 后端 | `services/annotation_service.py`（新） | CRUD + accept/reject |
-| 后端 | `api/annotations.py`（新）+ `router.py` | 批注 API 端点 |
-| 前端 | `editor/comment-mark.ts`（新） | 自定义 Tiptap Mark |
-| 前端 | `components/annotation-sidebar.tsx`（新） | 批注侧栏 + 接受/拒绝 |
-| 前端 | `lib/queries.ts` + `types/api.ts` | annotation hooks + 类型 |
-| 前端 | `lib/api.ts` | annotation API 方法 |
-| 测试 | `tests/test_annotations_review.py`（新） | 审查生成批注 + accept/reject |
-
-### 模块③ Office 样式编辑器
-
-| 层 | 文件 | 改动 |
-|---|---|---|
-| 前端 | `editor/office-toolbar.tsx`（新） | Word 风格工具栏 |
-| 前端 | `editor/ruler.tsx`（新） | 标尺组件 |
-| 前端 | `editor/a4-page.tsx`（新） | A4 容器 + 分页 |
-| 前端 | `editor/tiptap-editor.tsx` | 重构：集成新扩展 + A4 + 标尺 + 工具栏 |
-| 前端 | `app/(app)/projects/[id]/page.tsx` | 四区布局 + 批注/AI tab 切换 |
-| 前端 | `package.json` | 新 Tiptap 扩展依赖 |
-| 前端 | `app/globals.css` | Office 样式 + 批注高亮 + A4 + 标尺 CSS |
+- **两套编辑器**：Tiptap（撰写）+ ONLYOFFICE（审查），体验有切换感。但各司其职，每套在其场景下都是最优。
+- **Tiptap↔docx 转换有损**：简单格式无损，复杂格式降级。专利交底书 99% 是简单格式，可接受。
+- **AGPL 许可证**：小团队内部使用不触发；商业化需购买商业许可。部署时 ONLYOFFICE 不公开网络入口。
+- **AI 审查批注注入**：通过写 OOXML 批注层实现（不是 ONLYOFFICE 实时 API），需要重新加载文档才能看到 AI 批注。可接受（审查不是实时交互）。
+- **不做 Tiptap Office 样式**：原计划的工具栏/标尺/A4/分页全部取消——Office 体验完全由 ONLYOFFICE 承担，避免重复造轮子。
+- **旧 /review 页保留**：作为历史审查记录的只读查看（ReviewRecord 列表），新的批注式审查在 /review-doc 页面。
+- **实时协作**：ONLYOFFICE 原生支持多人同时编辑——这是额外收益，原设计没敢做。
 
 ---
 
-## 8. 取舍
+## 11. 非目标
 
-- **批注锚定用文本搜索而非精确偏移**：文档编辑后偏移失效，`anchor_text` 搜索更鲁棒，找不到降级为章节级。
-- **接受修改用预生成 suggestion**：审查时 LLM 输出建议替换文本，"接受"时直接替换，不再调 LLM。
-- **真分页用 CSS column 方案**：不做 ProseMirror 级精确分页（测量节点高度+手动分页符），用 CSS `column-width` 近似，复杂度可控。
-- **标尺页边距不持久化**：MVP 每次打开用默认页边距，拖拽调整仅当前会话有效。持久化到 Project metadata 是 P2。
-- **AI 面板与批注侧栏共享右栏 tab**：空间不够同时展示，用 tab 切换。
-- **不引入 Tiptap Pro**：自建 CommentMark + Decoration，免费可控。
-- **审查入口从 /review 页移到编辑器内**：不再跳转独立页面，审查按钮直接在编辑器顶栏，结果就地展示为批注。原有 /review 页保留（只读查看历史审查记录）。
-
----
-
-## 9. 非目标（本设计明确不做）
-
-- Tiptap Pro 付费扩展（TrackedChanges/CommentsKit）
-- ProseMirror 级精确分页计算
-- 标尺页边距持久化
-- 多人实时协作批注（批注是单人审查→修改工作流）
-- 批注回复/讨论线程（MVP 每条批注单轮接受/拒绝，不做多轮讨论）
-- 手动添加批注（MVP 批注仅由审查引擎自动生成，用户不手动标注）
+- Tiptap 编辑器的 Office 样式改造（工具栏/标尺/A4/分页）——由 ONLYOFFICE 承担
+- 自建批注系统（CommentMark/Decoration/annotation-sidebar）——由 ONLYOFFICE 承担
+- Tiptap Pro 付费扩展
+- docx 复杂格式的无损逆向转换（表格/文本框/分栏降级为纯文本）
+- 审查批注转回 Tiptap JSON（批注留在 docx，不进 Section.content）
+- 手动在 Tiptap 撰写阶段添加批注（批注只在 ONLYOFFICE 审查阶段）
