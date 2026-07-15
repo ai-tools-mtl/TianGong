@@ -370,3 +370,108 @@ def test_verify_share_link_no_expiry_never_expires(db_session):
     got_link, got_project = share_service.verify_share_link(db_session, link.token)
     assert got_link.expires_at is None
     assert got_project.id == project.id
+
+
+# ── API: 成员管理（owner-only）──
+
+def _login(client, email, password="Pass1234!"):
+    res = client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    assert res.status_code == 200, res.text
+
+
+def _seed_and_login_owner(client, db_session):
+    """创建 owner + 项目，登录 owner，返回 (user, project_id)。"""
+    from app.services.seed_service import ensure_default_template
+    ensure_default_template(db_session)
+    owner = _make_user(db_session, email="owner@tiangong.dev", name="所有者")
+    project = _make_project(db_session, owner, title="成员 API 项目")
+    _login(client, "owner@tiangong.dev")
+    return owner, str(project.id)
+
+
+def test_add_member_endpoint_owner(db_session, client):
+    """owner POST 成员 → 201 + MemberOut。"""
+    owner, project_id = _seed_and_login_owner(client, db_session)
+    _make_user(db_session, email="agent@tiangong.dev", name="代理人")
+
+    res = client.post(f"/api/v1/projects/{project_id}/members", json={"email": "agent@tiangong.dev"})
+    assert res.status_code == 201, res.text
+    body = res.json()
+    assert body["email"] == "agent@tiangong.dev"
+    assert body["name"] == "代理人"
+    assert body["role"] == "reviewer"
+    assert body["project_id"] == project_id
+
+
+def test_list_members_endpoint_owner(db_session, client):
+    """owner GET 成员列表。"""
+    owner, project_id = _seed_and_login_owner(client, db_session)
+    agent = _make_user(db_session, email="agent@tiangong.dev", name="代理人")
+    db_session.add(ProjectMember(project_id=uuid.UUID(project_id), user_id=agent.id))
+    db_session.commit()
+
+    res = client.get(f"/api/v1/projects/{project_id}/members")
+    assert res.status_code == 200
+    body = res.json()
+    assert len(body) == 1
+    assert body[0]["email"] == "agent@tiangong.dev"
+
+
+def test_remove_member_endpoint_owner(db_session, client):
+    """owner DELETE 成员 → 204。"""
+    owner, project_id = _seed_and_login_owner(client, db_session)
+    agent = _make_user(db_session, email="agent@tiangong.dev", name="代理人")
+    member = ProjectMember(project_id=uuid.UUID(project_id), user_id=agent.id)
+    db_session.add(member)
+    db_session.commit()
+    db_session.refresh(member)
+
+    res = client.delete(f"/api/v1/projects/{project_id}/members/{member.id}")
+    assert res.status_code == 204
+    assert db_session.get(ProjectMember, member.id) is None
+
+
+def test_add_member_unregistered_returns_422(db_session, client):
+    """邀请未注册邮箱 → 422 用户未注册。"""
+    owner, project_id = _seed_and_login_owner(client, db_session)
+    res = client.post(f"/api/v1/projects/{project_id}/members", json={"email": "ghost@tiangong.dev"})
+    assert res.status_code == 422
+    assert "用户未注册" in res.json()["message"]
+
+
+def test_add_member_duplicate_returns_409(db_session, client):
+    """重复邀请 → 409。"""
+    owner, project_id = _seed_and_login_owner(client, db_session)
+    _make_user(db_session, email="agent@tiangong.dev", name="代理人")
+    client.post(f"/api/v1/projects/{project_id}/members", json={"email": "agent@tiangong.dev"})
+    res = client.post(f"/api/v1/projects/{project_id}/members", json={"email": "agent@tiangong.dev"})
+    assert res.status_code == 409
+
+
+def test_member_endpoints_non_owner_returns_404(db_session, client):
+    """非项目 owner 访问成员端点 → 404（防探测，不是 403）。"""
+    owner, project_id = _seed_and_login_owner(client, db_session)
+    # 另一个用户登录
+    _make_user(db_session, email="stranger@tiangong.dev", name="陌生人")
+    _login(client, "stranger@tiangong.dev")
+
+    res_get = client.get(f"/api/v1/projects/{project_id}/members")
+    res_post = client.post(f"/api/v1/projects/{project_id}/members", json={"email": "x@tiangong.dev"})
+    assert res_get.status_code == 404
+    assert res_post.status_code == 404
+
+
+def test_member_endpoints_unauthenticated_returns_401(db_session, client):
+    """未登录访问成员端点 → 401。"""
+    owner = _make_user(db_session, email="owner@tiangong.dev", name="所有者")
+    project = _make_project(db_session, owner)
+    client.cookies.clear()
+    res = client.get(f"/api/v1/projects/{project.id}/members")
+    assert res.status_code == 401
+
+
+def test_member_endpoints_nonexistent_project_returns_404(db_session, client):
+    """不存在的项目 → 404。"""
+    owner, project_id = _seed_and_login_owner(client, db_session)
+    res = client.get(f"/api/v1/projects/{uuid.uuid4()}/members")
+    assert res.status_code == 404
