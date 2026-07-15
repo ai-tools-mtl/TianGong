@@ -59,12 +59,28 @@ def get_project(db: Session, *, user: User, project_id: str) -> Project:
     return project
 
 
-def list_projects(db: Session, *, user: User) -> list[Project]:
-    return list(db.scalars(
-        select(Project)
-        .where(Project.user_id == user.id)
-        .order_by(Project.updated_at.desc())
-    ))
+def list_projects(
+    db: Session, *, user: User,
+    status: str | None = None,
+    q: str | None = None,
+    tag_id: str | None = None,
+) -> list[Project]:
+    stmt = select(Project).where(Project.user_id == user.id)
+    if status is not None:
+        stmt = stmt.where(Project.status == status)
+    else:
+        stmt = stmt.where(Project.status != "archived")  # 默认排除归档
+    if q:
+        stmt = stmt.where(Project.title.ilike(f"%{q}%"))
+    if tag_id:
+        from app.models import ProjectTag
+        try:
+            tid = uuid.UUID(tag_id)
+        except ValueError:
+            return []
+        stmt = stmt.join(ProjectTag, ProjectTag.project_id == Project.id).where(ProjectTag.tag_id == tid)
+    stmt = stmt.order_by(Project.updated_at.desc())
+    return list(db.scalars(stmt))
 
 
 def update_project(

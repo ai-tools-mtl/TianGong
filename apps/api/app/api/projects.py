@@ -31,8 +31,16 @@ def create(payload: ProjectCreate, current_user: User = Depends(get_current_user
 
 
 @router.get("", response_model=list[ProjectOut])
-def list_all(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    projects = project_service.list_projects(db, user=current_user)
+def list_all(
+    status: str | None = None,
+    q: str | None = None,
+    tag_id: str | None = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    projects = project_service.list_projects(
+        db, user=current_user, status=status, q=q, tag_id=tag_id,
+    )
     return [_to_out(p) for p in projects]
 
 
