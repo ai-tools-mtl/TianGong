@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from app.api import (
-    admin, ai, attachments, auth, export, health, knowledge, projects, review, sections, tags, templates, versions,
+    admin, ai, attachments, auth, export, health, knowledge, projects, review, sections, share, tags, templates, versions,
 )
 
 api_router = APIRouter(prefix="/api/v1")
@@ -16,5 +16,6 @@ api_router.include_router(versions.router)
 api_router.include_router(export.router)
 api_router.include_router(knowledge.router)
 api_router.include_router(review.router)
+api_router.include_router(share.router)
 api_router.include_router(admin.router)
 api_router.include_router(health.router)
