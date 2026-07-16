@@ -18,6 +18,7 @@ def test_run_parse_job_standalone_opens_own_session(
     """run_parse_job_standalone 自开 session 完成解析，不依赖请求 db。"""
     # standalone 内部 `from app.core.database import SessionLocal` —— patch 模块属性
     from app.core import database as db_module
+    from app.core.storage import get_storage
 
     TestingSession = sessionmaker(bind=engine)
     monkeypatch.setattr(db_module, "SessionLocal", TestingSession)
@@ -41,15 +42,15 @@ def test_run_parse_job_standalone_opens_own_session(
 
     job = parse_service.create_parse_job(
         db_session,
+        storage=get_storage(),
         user_id=uuid.UUID(registered_user["id"]),
         filename="x.docx",
         file_bytes=file_bytes,
-        upload_dir="uploads",
     )
     job_id = str(job.id)
 
-    # 调用 standalone：不传 db，函数自己开 session
-    parse_service.run_parse_job_standalone(job_id, "uploads")
+    # 调用 standalone：不传 db，函数自己开 session（storage 用全局 mock 单例）
+    parse_service.run_parse_job_standalone(job_id)
 
     # 用全新 session 验证持久化
     from app.models import ParseJob
@@ -85,14 +86,14 @@ def test_recover_pending_jobs_reenqueues_processing_and_stale_pending(
 
     now = datetime.now(timezone.utc)
     j_processing = ParseJob(
-        user_id=u.id, source_path="uploads/x.docx", status="processing"
+        user_id=u.id, source_path="templates/u/x.docx", status="processing"
     )
     j_stale = ParseJob(
-        user_id=u.id, source_path="uploads/y.docx", status="pending"
+        user_id=u.id, source_path="templates/u/y.docx", status="pending"
     )
     j_stale.created_at = now - timedelta(minutes=20)  # 超时 pending
     j_fresh = ParseJob(
-        user_id=u.id, source_path="uploads/z.docx", status="pending"
+        user_id=u.id, source_path="templates/u/z.docx", status="pending"
     )
     # j_fresh.created_at 用 server 默认 now，未超时
     for j in (j_processing, j_stale, j_fresh):
@@ -102,7 +103,7 @@ def test_recover_pending_jobs_reenqueues_processing_and_stale_pending(
     # 用 fake_run 标记被调度的 job_id，避免真去解析不存在的 docx
     reloaded: list[str] = []
 
-    def fake_run(db, job_id, upload_dir):
+    def fake_run(db, *, storage, job_id):
         reloaded.append(str(job_id))
         j = db.get(ParseJob, uuid.UUID(job_id))
         if j and j.status != "completed":
@@ -111,7 +112,7 @@ def test_recover_pending_jobs_reenqueues_processing_and_stale_pending(
 
     monkeypatch.setattr(parse_service, "run_parse_job", fake_run)
 
-    n = parse_service.recover_pending_jobs("uploads")
+    n = parse_service.recover_pending_jobs()
     assert n == 2  # processing + stale pending 被重入队
     assert str(j_processing.id) in reloaded
     assert str(j_stale.id) in reloaded
@@ -172,7 +173,7 @@ def test_on_startup_calls_recovery_without_crashing(monkeypatch):
     """on_startup 调用 recover_pending_jobs，即使抛错也不阻塞。"""
     called = {"n": 0}
 
-    def fake_recover(upload_dir, stale_minutes=10):
+    def fake_recover(stale_minutes=10):
         called["n"] += 1
         return 0
 
@@ -190,7 +191,7 @@ def test_on_startup_calls_recovery_without_crashing(monkeypatch):
 def test_on_startup_swallows_recovery_error(monkeypatch):
     """恢复扫描抛错时 on_startup 仍正常返回（不阻塞启动）。"""
 
-    def boom(upload_dir, stale_minutes=10):
+    def boom(stale_minutes=10):
         raise RuntimeError("db down")
 
     from app.services import parse_service

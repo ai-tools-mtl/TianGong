@@ -7,7 +7,17 @@ import {
 } from '@tanstack/react-query'
 
 import { api } from '@/lib/api'
-import type { Project, ProjectCreate, Section, Tag, TagCreate, TagMerge, TemplateSummary } from '@/types/api'
+import type {
+  KnowledgeFile,
+  KnowledgeReview,
+  Project,
+  ProjectCreate,
+  Section,
+  Tag,
+  TagCreate,
+  TagMerge,
+  TemplateSummary,
+} from '@/types/api'
 
 export const queryKeys = {
   projects: ['projects'] as const,
@@ -18,6 +28,9 @@ export const queryKeys = {
   attachments: (projectId: string) => ['attachments', projectId] as const,
   skills: (id: string) => ['skills', id] as const,
   tags: ['tags'] as const,
+  knowledgePersonal: ['knowledge', 'personal'] as const,
+  knowledgeGlobal: ['knowledge', 'global'] as const,
+  reviews: ['reviews'] as const,
 }
 
 // ── 项目 ──
@@ -209,5 +222,72 @@ export function useDetachProjectTag() {
     mutationFn: ({ projectId, tagId }: { projectId: string; tagId: string }) =>
       api.detachProjectTag(projectId, tagId),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.projects }),
+  })
+}
+
+// ── 知识库(三域)──
+export function usePersonalKnowledge() {
+  return useQuery<KnowledgeFile[]>({
+    queryKey: queryKeys.knowledgePersonal,
+    queryFn: () => api.listPersonalKnowledge(),
+  })
+}
+
+export function useGlobalKnowledge() {
+  return useQuery<KnowledgeFile[]>({
+    queryKey: queryKeys.knowledgeGlobal,
+    queryFn: () => api.listGlobalKnowledge(),
+  })
+}
+
+export function useUploadKnowledgeFile() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (file: File) => api.uploadKnowledgeFile(file),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.knowledgePersonal }),
+  })
+}
+
+export function useAdminUploadGlobal() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (file: File) => api.adminUploadGlobal(file),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.knowledgeGlobal }),
+  })
+}
+
+export function useSubmitKnowledgeReview() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (fileId: string) => api.submitKnowledgeReview(fileId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.knowledgePersonal }),
+  })
+}
+
+// ── 知识库审核(admin)──
+export function usePendingReviews() {
+  return useQuery<KnowledgeReview[]>({
+    queryKey: queryKeys.reviews,
+    queryFn: () => api.listPendingReviews(),
+  })
+}
+
+export function useApproveReview() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (reviewId: string) => api.approveReview(reviewId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.reviews })
+      qc.invalidateQueries({ queryKey: queryKeys.knowledgeGlobal })
+    },
+  })
+}
+
+export function useRejectReview() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ reviewId, comment }: { reviewId: string; comment?: string }) =>
+      api.rejectReview(reviewId, comment),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.reviews }),
   })
 }

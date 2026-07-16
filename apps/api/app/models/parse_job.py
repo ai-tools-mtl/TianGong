@@ -17,6 +17,7 @@ class ParseJob(Base, IdMixin, TimestampMixin):
         ForeignKey("templates.id", ondelete="SET NULL"), nullable=True
     )
     source_path: Mapped[str] = mapped_column(String(512))
+    source_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="pending")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

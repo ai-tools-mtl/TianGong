@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
+import Link from 'next/link'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -82,6 +83,15 @@ export default function AdminPage() {
       <PageHeader title="管理后台" description="用户运营 · 监控 · 审计" />
 
       <div className="py-6 space-y-8">
+        {/* 知识库审核入口 */}
+        <section>
+          <Link
+            href="/admin/review"
+            className="inline-flex items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-sm hover:bg-accent"
+          >
+            知识库审核 →
+          </Link>
+        </section>
         {/* 用户列表 + 封禁/重置 */}
         <section className="space-y-3">
           <h2 className="text-[15px] font-semibold">
