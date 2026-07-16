@@ -426,9 +426,14 @@ def test_remove_member_endpoint_owner(db_session, client):
     db_session.commit()
     db_session.refresh(member)
 
-    res = client.delete(f"/api/v1/projects/{project_id}/members/{member.id}")
+    member_id = str(member.id)
+    res = client.delete(f"/api/v1/projects/{project_id}/members/{member_id}")
     assert res.status_code == 204
-    assert db_session.get(ProjectMember, member.id) is None
+    # 用 fresh query 而非 db_session.get（跨 session identity map 缓存问题）
+    from sqlalchemy import select as _select
+    assert db_session.scalar(
+        _select(ProjectMember).where(ProjectMember.id == uuid.UUID(member_id))
+    ) is None
 
 
 def test_add_member_unregistered_returns_422(db_session, client):

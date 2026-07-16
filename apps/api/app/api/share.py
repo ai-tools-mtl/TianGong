@@ -43,6 +43,19 @@ def _to_member_out(member, user: User) -> MemberOut:
     )
 
 
+def _to_link_out(link) -> ShareLinkOut:
+    """把 ShareLink ORM 对象转为 ShareLinkOut（UUID → str 显式转换）。"""
+    return ShareLinkOut(
+        id=str(link.id),
+        project_id=str(link.project_id),
+        token=link.token,
+        permissions=link.permissions,
+        expires_at=link.expires_at,
+        created_by=str(link.created_by),
+        created_at=link.created_at,
+    )
+
+
 # ── 成员管理（owner-only）──
 
 @router.post(
@@ -117,7 +130,7 @@ def create_share_link(
         db, project.id, created_by=current_user.id,
         permissions=payload.permissions, expires_days=payload.expires_days,
     )
-    return ShareLinkOut.model_validate(link, from_attributes=True)
+    return _to_link_out(link)
 
 
 @router.get("/projects/{project_id}/share-links", response_model=list[ShareLinkOut])
@@ -129,7 +142,7 @@ def list_share_links(
     """列出项目分享链接（owner-only）。"""
     project = project_service.get_project(db, user=current_user, project_id=project_id)
     links = share_service.list_share_links(db, project.id)
-    return [ShareLinkOut.model_validate(l, from_attributes=True) for l in links]
+    return [_to_link_out(l) for l in links]
 
 
 @router.delete(
