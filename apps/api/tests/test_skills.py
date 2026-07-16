@@ -243,6 +243,15 @@ def test_run_review_uses_one_run_when_consistency_check_disabled(db, monkeypatch
     from app.models import Section
 
     p = _make_project(db)
+    # 阶段 0 strict：run_review 现需生效 LLM 配置，否则抛 ValidationError
+    from app.core.security import encrypt_value
+    from app.models import UserLLMConfig
+    db.add(UserLLMConfig(
+        user_id=p.user_id, provider="custom",
+        base_url="https://test.example.com",
+        api_key_encrypted=encrypt_value("sk-test-key"),
+        model="test-model", embedding_model="test-embed", is_active=True,
+    ))
     # 禁用 consistency_check
     from app.models import AgentSkill
     db.add(AgentSkill(project_id=p.id, skill_key="consistency_check", enabled=False))
@@ -258,7 +267,7 @@ def test_run_review_uses_one_run_when_consistency_check_disabled(db, monkeypatch
     calls = {"n": 0}
 
     import app.services.review_service as rs
-    def counting_score(criterion, sections):
+    def counting_score(criterion, sections, llm_config):
         calls["n"] += 1
         return (80, "ev", "sug")
 

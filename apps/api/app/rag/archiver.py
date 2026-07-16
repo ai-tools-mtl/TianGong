@@ -8,10 +8,19 @@ from sqlalchemy.orm import Session
 from app.models import KnowledgeChunk, Project, Section
 from app.rag.chunker import chunk_sections
 from app.rag.embedding import embed_texts
+from app.services.llm_config_service import resolve_llm_config
 
 
 def archive_project(db: Session, *, project: Project, user_id) -> int:
-    """归档项目。返回写入的 chunk 数。幂等：先删旧 chunk 再重生成。"""
+    """归档项目。返回写入的 chunk 数。幂等：先删旧 chunk 再重生成。
+
+    向量化配置由 user_id 内部解析（断链修复：embed 真用 BYOK/全局配置）。
+    无可用配置时返回 0（无法向量化则无法归档）。
+    """
+    embed_config = resolve_llm_config(db, user_id=user_id)
+    if embed_config is None:
+        return 0
+
     sections = _get_section_texts(db, project)
     if not sections:
         return 0
@@ -31,7 +40,7 @@ def archive_project(db: Session, *, project: Project, user_id) -> int:
 
     # 批量向量化
     texts = [c.content for c in chunks]
-    vectors = embed_texts(texts)
+    vectors = embed_texts(texts, embed_config=embed_config)
 
     # 写入
     for chunk, vec in zip(chunks, vectors, strict=False):

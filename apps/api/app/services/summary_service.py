@@ -22,8 +22,19 @@ def generate_summary(db: Session, section: Section) -> str:
         from langchain_core.messages import HumanMessage
 
         from app.ai.llm_client import get_llm
+        from app.models import Project
+        from app.services.llm_config_service import resolve_llm_config
 
-        llm = get_llm()
+        # Section 无 user_id，经 project 取归属用户后解析生效配置（断链修复）。
+        # 无配置 → raise ValueError，被下方 except 捕获后走降级（阶段 0 可接受）。
+        project = db.get(Project, section.project_id)
+        if project is None:
+            raise ValueError("section has no project")
+        llm_config = resolve_llm_config(db, user_id=project.user_id)
+        if llm_config is None:
+            raise ValueError("no llm config")
+
+        llm = get_llm(llm_config)
         resp = llm.invoke([
             HumanMessage(content=(
                 f"请用 100-200 字概括以下专利交底书章节内容的核心要点：\n\n"

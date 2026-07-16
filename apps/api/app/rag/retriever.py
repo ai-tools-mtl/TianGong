@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.models import KnowledgeChunk
 from app.rag.embedding import embed_text
+from app.services.llm_config_service import resolve_llm_config
 
 SIMILARITY_THRESHOLD = 0.5
 
@@ -22,8 +23,15 @@ class RetrievalResult:
 def retrieve(
     db: Session, *, user_id, query: str, top_k: int = 3
 ) -> list[RetrievalResult]:
-    """检索用户知识库中与 query 最相似的 chunk。"""
-    query_vec = embed_text(query)
+    """检索用户知识库中与 query 最相似的 chunk。
+
+    向量化配置由 user_id 内部解析（断链修复：embed 真用 BYOK/全局配置）。
+    无可用配置时返回空结果（检索不可用，调用方按空结果处理）。
+    """
+    embed_config = resolve_llm_config(db, user_id=user_id)
+    if embed_config is None:
+        return []
+    query_vec = embed_text(query, embed_config=embed_config)
 
     stmt = (
         select(

@@ -15,6 +15,7 @@ from app.ai.llm_client import get_llm
 from app.ai.rubric_prompts import SCORE_SYSTEM_PROMPT, build_score_prompt
 from app.core.exceptions import NotFoundError, ValidationError
 from app.models import Project, ReviewRecord, Section
+from app.services.llm_config_service import ResolvedLLMConfig, resolve_llm_config
 from app.services.rubric_service import get_effective_rubric
 from app.services.skill_service import is_skill_enabled
 
@@ -45,6 +46,11 @@ def run_review(db: Session, *, user_id, project_id: str) -> ReviewRecord:
     sections = _get_section_texts(db, pid)
     last_review = _get_last_review(db, pid)
 
+    # 阶段 0：解析生效 LLM 配置（断链修复：审查调用真驱动 LLM）。无配置直接拒绝。
+    llm_config = resolve_llm_config(db, user_id=user_id)
+    if llm_config is None:
+        raise ValidationError("未配置 LLM，无法执行审查")
+
     # ② score（Rubric 驱动 + 自一致性）
     dimension_scores = []
     for criterion in rubric.criteria:
@@ -52,7 +58,7 @@ def run_review(db: Session, *, user_id, project_id: str) -> ReviewRecord:
         last_evidence = ""
         last_suggestion = ""
         for _ in range(runs):
-            score, evidence, suggestion = _score_dimension(criterion, sections)
+            score, evidence, suggestion = _score_dimension(criterion, sections, llm_config)
             scores.append(score)
             last_evidence = evidence
             last_suggestion = suggestion
@@ -105,8 +111,10 @@ def _get_last_review(db: Session, project_id) -> ReviewRecord | None:
     )
 
 
-def _score_dimension(criterion: dict, sections: dict[str, str]) -> tuple[int, str, str]:
-    llm = get_llm()
+def _score_dimension(
+    criterion: dict, sections: dict[str, str], llm_config: ResolvedLLMConfig
+) -> tuple[int, str, str]:
+    llm = get_llm(llm_config)
     prompt = build_score_prompt(criterion, sections)
     try:
         resp = llm.invoke([

@@ -134,9 +134,20 @@ async def chat(
         start = time.monotonic()
         status = "success"
         err = None
+        # 阶段 0：解析生效 LLM 配置（用户 BYOK > 全局），无配置则报错（断链修复：真驱动 LLM）
+        llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id)
+        if llm_config is None:
+            yield _sse_event("error", {"code": "no_llm_config", "message": "未配置 LLM，请先在设置中配置"})
+            _log_llm_call(
+                db, user_id=current_user.id, project_id=section.project_id, action="chat",
+                model=_resolve_model(db, current_user.id), provider=_resolve_provider(db, current_user.id),
+                status="failed", duration_ms=int((time.monotonic() - start) * 1000),
+                error="no_llm_config",
+            )
+            return
         try:
             async for kind, text in _yield_with_heartbeat(
-                astream_chat(db, section, history, payload.message)
+                astream_chat(db, section, history, payload.message, llm_config=llm_config)
             ):
                 if kind == "heartbeat":
                     yield _sse_event("heartbeat", {})
@@ -188,9 +199,19 @@ async def generate_draft(
         start = time.monotonic()
         status = "success"
         err = None
+        llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id)
+        if llm_config is None:
+            yield _sse_event("error", {"code": "no_llm_config", "message": "未配置 LLM，请先在设置中配置"})
+            _log_llm_call(
+                db, user_id=current_user.id, project_id=section.project_id, action="generate",
+                model=_resolve_model(db, current_user.id), provider=_resolve_provider(db, current_user.id),
+                status="failed", duration_ms=int((time.monotonic() - start) * 1000),
+                error="no_llm_config",
+            )
+            return
         try:
             async for kind, text in _yield_with_heartbeat(
-                astream_generate(db, section, history)
+                astream_generate(db, section, history, llm_config=llm_config)
             ):
                 if kind == "heartbeat":
                     yield _sse_event("heartbeat", {})
@@ -246,9 +267,19 @@ async def rewrite(
         start = time.monotonic()
         status = "success"
         err = None
+        llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id)
+        if llm_config is None:
+            yield _sse_event("error", {"code": "no_llm_config", "message": "未配置 LLM，请先在设置中配置"})
+            _log_llm_call(
+                db, user_id=current_user.id, project_id=section.project_id, action="rewrite",
+                model=_resolve_model(db, current_user.id), provider=_resolve_provider(db, current_user.id),
+                status="failed", duration_ms=int((time.monotonic() - start) * 1000),
+                error="no_llm_config",
+            )
+            return
         try:
             async for kind, text in _yield_with_heartbeat(
-                astream_rewrite(section, payload.selected_text, payload.instruction)
+                astream_rewrite(section, payload.selected_text, payload.instruction, llm_config=llm_config)
             ):
                 if kind == "heartbeat":
                     yield _sse_event("heartbeat", {})
@@ -332,9 +363,14 @@ async def caption_figures(
         HumanMessage(content=f"以下是各图的文字描述，请生成规范图注：\n{descs}"),
     ]
 
+    llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id)
+
     async def generate():
+        if llm_config is None:
+            yield _sse_event("error", {"code": "no_llm_config", "message": "未配置 LLM，请先在设置中配置"})
+            return
         try:
-            async for token in astream_llm(messages):
+            async for token in astream_llm(messages, llm_config=llm_config):
                 yield _sse_event("token", {"text": token})
             yield _sse_event("done", {})
         except asyncio.CancelledError:
