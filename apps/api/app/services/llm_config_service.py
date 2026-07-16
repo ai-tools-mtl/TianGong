@@ -1,6 +1,6 @@
-"""LLM 配置服务：三级 Provider 解析 + 用户/全局配置管理（设计 8.4）。
+"""LLM 配置服务：四级 Provider 解析 + 用户/全局配置管理（设计 8.4 + P2 env 兜底）。
 
-优先级：用户自配(is_active=True) > 全局(SystemSetting) > 报错
+优先级：用户自配(is_active=True) > 全局(SystemSetting) > env 兜底(glm_api_key 非空) > 返回 None
 """
 
 from dataclasses import dataclass

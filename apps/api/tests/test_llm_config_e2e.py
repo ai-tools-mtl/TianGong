@@ -10,13 +10,27 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 from sqlalchemy import select
 
+from app.core.config import get_settings
 from app.core.security import encrypt_value, hash_password
 from app.models import User, UserLLMConfig
 from app.services.project_service import create_project
 from app.services.section_service import list_sections
 from app.services.seed_service import ensure_default_template
+
+
+@pytest.fixture(autouse=True)
+def _no_env_llm_fallback(monkeypatch):
+    """默认锁定 env 兜底不触发（glm_api_key=""）。
+
+    防止 no-config 测试因 OS 环境变量（如开发者本地 export GLM_API_KEY=xxx）
+    假失败——pydantic-settings 会读 os.environ，否则 resolve 会返回 env 兜底
+    配置而非 None，导致 no_llm_config 错误不再触发。
+    本文件内所有「无配置」断言因此稳定；本文件 BYOK 测试不受影响（分支①优先）。
+    """
+    monkeypatch.setattr(get_settings(), "glm_api_key", "")
 
 BYOK_BASE_URL = "https://byok-fake.example.com"
 BYOK_API_KEY = "sk-byok-fake-key-12345"
