@@ -18,7 +18,8 @@ class ResolvedLLMConfig:
     base_url: str
     api_key: str
     model: str
-    source: str  # "user" / "global"
+    embedding_model: str | None = None  # 新增（断链 A2 修复）
+    source: str = "user"  # "user" / "global" / "admin"
 
 
 def resolve_llm_config(db: Session, *, user_id) -> ResolvedLLMConfig | None:
@@ -34,6 +35,7 @@ def resolve_llm_config(db: Session, *, user_id) -> ResolvedLLMConfig | None:
             base_url=user_cfg.base_url,
             api_key=decrypt_value(user_cfg.api_key_encrypted),
             model=user_cfg.model,
+            embedding_model=user_cfg.embedding_model,
             source="user",
         )
 
@@ -51,6 +53,7 @@ def resolve_llm_config(db: Session, *, user_id) -> ResolvedLLMConfig | None:
                 base_url=v.get("base_url", ""),
                 api_key=decrypt_value(v["api_key_encrypted"]) if v.get("api_key_encrypted") else "",
                 model=v.get("model", ""),
+                embedding_model=v.get("embedding_model"),
                 source="global",
             )
 
