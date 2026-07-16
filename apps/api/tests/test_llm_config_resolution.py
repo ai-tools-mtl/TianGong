@@ -57,3 +57,40 @@ def test_get_embedder_uses_resolved_config():
         assert kwargs["base_url"] == "https://byok.example.com"
         assert kwargs["api_key"] == "sk-byok-xxx"
         assert kwargs["model"] == "byok-embed"
+
+
+def test_resolve_llm_config_falls_back_to_env(monkeypatch, db_session):
+    """无 BYOK + 无全局配置 + env 有 glm_api_key → 返回 env 兜底配置（阶段 0 Task 0.6）。"""
+    import uuid
+
+    from app.core.config import get_settings
+    from app.services.llm_config_service import resolve_llm_config
+
+    s = get_settings()
+    monkeypatch.setattr(s, "glm_api_key", "env-fake-key")
+    monkeypatch.setattr(s, "glm_base_url", "https://env.example.com")
+    monkeypatch.setattr(s, "glm_model", "env-model")
+    monkeypatch.setattr(s, "glm_embedding_model", "env-embed")
+
+    # resolve 只按 user_id 查 UserLLMConfig；查不到就继续走全局→env 兜底。
+    cfg = resolve_llm_config(db_session, user_id=uuid.uuid4())
+    assert cfg is not None
+    assert cfg.source == "env"
+    assert cfg.api_key == "env-fake-key"
+    assert cfg.base_url == "https://env.example.com"
+    assert cfg.model == "env-model"
+    assert cfg.embedding_model == "env-embed"
+
+
+def test_resolve_llm_config_returns_none_when_no_env_key(monkeypatch, db_session):
+    """无 BYOK + 无全局 + env glm_api_key 为空 → 仍返回 None（调用方报 no_llm_config）。"""
+    import uuid
+
+    from app.core.config import get_settings
+    from app.services.llm_config_service import resolve_llm_config
+
+    s = get_settings()
+    monkeypatch.setattr(s, "glm_api_key", "")  # 显式置空，与测试 .env 默认一致
+
+    cfg = resolve_llm_config(db_session, user_id=uuid.uuid4())
+    assert cfg is None

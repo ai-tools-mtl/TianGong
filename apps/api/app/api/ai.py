@@ -40,27 +40,25 @@ def _get_section_with_history(
     return section, history
 
 
-def _resolve_provider(db: Session, user_id) -> str:
-    """判断本次 LLM 调用走用户自配还是全局配置（用于日志 provider 字段）。"""
-    try:
-        cfg = llm_config_service.resolve_llm_config(db, user_id=user_id)
-        if cfg is not None:
-            return cfg.source  # "user" / "global"
-    except Exception:
-        pass
-    return "global"
+def _resolve_provider(llm_config) -> str:
+    """从已解析配置取 provider（用于日志 provider 字段）。无配置返回 'none'。
+
+    复用上游已 resolve 的 config（I1：避免日志侧二次/三次 resolve 浪费 DB 查询）；
+    无配置时返回 'none' 而非 'global'（I2：如实标注失败路径）。
+    """
+    if llm_config is None:
+        return "none"
+    return llm_config.source  # "user" / "global" / "env"
 
 
-def _resolve_model(db: Session, user_id) -> str:
-    """取生效 model 名（用于日志 model 字段）。失败回退 settings.glm_model。"""
-    try:
-        cfg = llm_config_service.resolve_llm_config(db, user_id=user_id)
-        if cfg is not None and cfg.model:
-            return cfg.model
-    except Exception:
-        pass
-    from app.core.config import get_settings
-    return get_settings().glm_model
+def _resolve_model(llm_config) -> str:
+    """从已解析配置取 model（用于日志 model 字段）。无配置返回空串。
+
+    复用上游已 resolve 的 config（I1），无配置时返回空串（I2）。
+    """
+    if llm_config is None:
+        return ""
+    return llm_config.model or ""
 
 
 def _log_llm_call(
@@ -140,7 +138,7 @@ async def chat(
             yield _sse_event("error", {"code": "no_llm_config", "message": "未配置 LLM，请先在设置中配置"})
             _log_llm_call(
                 db, user_id=current_user.id, project_id=section.project_id, action="chat",
-                model=_resolve_model(db, current_user.id), provider=_resolve_provider(db, current_user.id),
+                model=_resolve_model(llm_config), provider=_resolve_provider(llm_config),
                 status="failed", duration_ms=int((time.monotonic() - start) * 1000),
                 error="no_llm_config",
             )
@@ -176,8 +174,8 @@ async def chat(
                 user_id=current_user.id,
                 project_id=section.project_id,
                 action="chat",
-                model=_resolve_model(db, current_user.id),
-                provider=_resolve_provider(db, current_user.id),
+                model=_resolve_model(llm_config),
+                provider=_resolve_provider(llm_config),
                 status=status,
                 duration_ms=int((time.monotonic() - start) * 1000),
                 error=err,
@@ -204,7 +202,7 @@ async def generate_draft(
             yield _sse_event("error", {"code": "no_llm_config", "message": "未配置 LLM，请先在设置中配置"})
             _log_llm_call(
                 db, user_id=current_user.id, project_id=section.project_id, action="generate",
-                model=_resolve_model(db, current_user.id), provider=_resolve_provider(db, current_user.id),
+                model=_resolve_model(llm_config), provider=_resolve_provider(llm_config),
                 status="failed", duration_ms=int((time.monotonic() - start) * 1000),
                 error="no_llm_config",
             )
@@ -244,8 +242,8 @@ async def generate_draft(
                 user_id=current_user.id,
                 project_id=section.project_id,
                 action="generate",
-                model=_resolve_model(db, current_user.id),
-                provider=_resolve_provider(db, current_user.id),
+                model=_resolve_model(llm_config),
+                provider=_resolve_provider(llm_config),
                 status=status,
                 duration_ms=int((time.monotonic() - start) * 1000),
                 error=err,
@@ -272,7 +270,7 @@ async def rewrite(
             yield _sse_event("error", {"code": "no_llm_config", "message": "未配置 LLM，请先在设置中配置"})
             _log_llm_call(
                 db, user_id=current_user.id, project_id=section.project_id, action="rewrite",
-                model=_resolve_model(db, current_user.id), provider=_resolve_provider(db, current_user.id),
+                model=_resolve_model(llm_config), provider=_resolve_provider(llm_config),
                 status="failed", duration_ms=int((time.monotonic() - start) * 1000),
                 error="no_llm_config",
             )
@@ -300,8 +298,8 @@ async def rewrite(
                 user_id=current_user.id,
                 project_id=section.project_id,
                 action="rewrite",
-                model=_resolve_model(db, current_user.id),
-                provider=_resolve_provider(db, current_user.id),
+                model=_resolve_model(llm_config),
+                provider=_resolve_provider(llm_config),
                 status=status,
                 duration_ms=int((time.monotonic() - start) * 1000),
                 error=err,

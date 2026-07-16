@@ -19,11 +19,15 @@ class ResolvedLLMConfig:
     api_key: str
     model: str
     embedding_model: str | None = None  # 新增（断链 A2 修复）
-    source: str = "user"  # "user" / "global" / "admin"
+    source: str = "user"  # "user" / "global" / "env" / "admin"（admin 留待阶段 2）
 
 
 def resolve_llm_config(db: Session, *, user_id) -> ResolvedLLMConfig | None:
-    """三级优先级解析 LLM 配置。无可用配置返回 None。"""
+    """三级优先级解析 LLM 配置：用户自配 > 全局 > env 兜底。
+
+    env 兜底确保首次部署（admin 未配任何 Key）仍可用 AI。
+    仅当 glm_api_key 非空时才兜底；否则返回 None（调用方报 no_llm_config）。
+    """
     # ① 用户自配
     user_cfg = db.scalar(
         select(UserLLMConfig).where(
@@ -57,7 +61,20 @@ def resolve_llm_config(db: Session, *, user_id) -> ResolvedLLMConfig | None:
                 source="global",
             )
 
-    # ③ 都没有
+    # ③ env 兜底（新增）：glm_api_key 非空时用 env 配置，
+    #    保证首次部署（admin 尚未配置任何 Key）仍可使用 AI。
+    from app.core.config import get_settings
+    s = get_settings()
+    if s.glm_api_key:
+        return ResolvedLLMConfig(
+            base_url=s.glm_base_url,
+            api_key=s.glm_api_key,
+            model=s.glm_model,
+            embedding_model=s.glm_embedding_model or None,
+            source="env",
+        )
+
+    # ④ 都没有
     return None
 
 
