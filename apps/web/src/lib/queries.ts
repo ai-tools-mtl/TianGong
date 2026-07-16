@@ -18,6 +18,8 @@ export const queryKeys = {
   attachments: (projectId: string) => ['attachments', projectId] as const,
   skills: (id: string) => ['skills', id] as const,
   tags: ['tags'] as const,
+  members: (projectId: string) => ['members', projectId] as const,
+  shareLinks: (projectId: string) => ['share-links', projectId] as const,
 }
 
 // ── 项目 ──
@@ -209,5 +211,83 @@ export function useDetachProjectTag() {
     mutationFn: ({ projectId, tagId }: { projectId: string; tagId: string }) =>
       api.detachProjectTag(projectId, tagId),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.projects }),
+  })
+}
+
+// ── Diff（计划 16）──
+
+/**
+ * 计算差异：传入 AI 生成的 markdown 文本，返回 hunks。
+ * 纯计算接口，不在 onSuccess 里做任何 UI 副作用——
+ * onSuccess 回调里拿到 hunks 后由调用方决定如何展示。
+ */
+export function useComputeDiff(sectionId: string) {
+  return useMutation({
+    mutationFn: (aiText: string) => api.computeDiff(sectionId, aiText),
+  })
+}
+
+/**
+ * 应用 diff。成功后失效 sections 缓存（apply-diff 改写了章节内容，版本号变化）。
+ */
+export function useApplyDiff(sectionId: string, projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: { ai_text: string; accepted_hunk_ids: string[]; expected_version: number }) =>
+      api.applyDiff(sectionId, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.sections(projectId) })
+    },
+  })
+}
+
+// ── 协作（计划 17）──
+
+export function useMembers(projectId: string) {
+  return useQuery({
+    queryKey: queryKeys.members(projectId),
+    queryFn: () => api.listMembers(projectId),
+    enabled: !!projectId,
+  })
+}
+
+export function useAddMember(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (email: string) => api.addMember(projectId, email),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.members(projectId) }),
+  })
+}
+
+export function useRemoveMember(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (memberId: string) => api.removeMember(projectId, memberId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.members(projectId) }),
+  })
+}
+
+export function useShareLinks(projectId: string) {
+  return useQuery({
+    queryKey: queryKeys.shareLinks(projectId),
+    queryFn: () => api.listShareLinks(projectId),
+    enabled: !!projectId,
+  })
+}
+
+export function useCreateShareLink(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: { permissions: 'comment' | 'readonly'; expires_days?: number | null }) =>
+      api.createShareLink(projectId, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.shareLinks(projectId) }),
+  })
+}
+
+export function useRevokeShareLink(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (linkId: string) => api.revokeShareLink(projectId, linkId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.shareLinks(projectId) }),
   })
 }

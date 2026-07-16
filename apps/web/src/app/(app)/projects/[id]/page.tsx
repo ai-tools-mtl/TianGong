@@ -1,6 +1,6 @@
 'use client'
 
-import { Archive, CheckCircle2, Eye, History, PanelLeft, PanelRight, Search, Sparkles } from 'lucide-react'
+import { Archive, CheckCircle2, Eye, History, PanelLeft, PanelRight, Search, Share2, Sparkles } from 'lucide-react'
 import { useParams } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
@@ -12,6 +12,7 @@ import { FigureUpload } from '@/components/editor/figure-upload'
 import { TiptapEditor } from '@/components/editor/tiptap-editor'
 import type { TiptapEditorRef } from '@/components/editor/tiptap-editor'
 import { VersionDrawer } from '@/components/version-drawer'
+import { ShareDialog } from '@/components/share-dialog'
 import { SkillsDialog } from '@/components/skills-dialog'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
@@ -33,6 +34,7 @@ export default function ProjectDetailPage() {
   const [current, setCurrent] = useState<Section | null>(null)
   const [versionOpen, setVersionOpen] = useState(false)
   const [skillsOpen, setSkillsOpen] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const editorRef = useRef<TiptapEditorRef>(null)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle')
@@ -213,6 +215,15 @@ export default function ProjectDetailPage() {
                 <Sparkles className="size-3.5" />
                 技能
               </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 gap-1.5"
+                onClick={() => setShareOpen(true)}
+              >
+                <Share2 className="size-3.5" />
+                分享
+              </Button>
               <Button variant="ghost" size="sm" className="h-8 gap-1.5" asChild>
                 <a
                   href={api.exportDocxUrl(projectId)}
@@ -253,8 +264,8 @@ export default function ProjectDetailPage() {
             </div>
           )}
         </div>
-        <div className="flex-1 overflow-y-auto px-6 py-6">
-          <div className="mx-auto max-w-5xl">
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          <div className="h-full">
             {current && current.key === 'drawings' && (
               <div className="mb-3">
                 <FigureUpload
@@ -280,7 +291,7 @@ export default function ProjectDetailPage() {
       {current && !rightCollapsed && (
         <aside className="flex min-w-0 flex-col border-l bg-background">
           <div className="flex-1 overflow-hidden">
-            <AIChatPanel sectionId={current.id} projectId={projectId} />
+            <AIChatPanel sectionId={current.id} section={current} projectId={projectId} />
           </div>
         </aside>
       )}
@@ -310,6 +321,12 @@ export default function ProjectDetailPage() {
         projectId={projectId}
         open={skillsOpen}
         onOpenChange={setSkillsOpen}
+      />
+
+      <ShareDialog
+        projectId={projectId}
+        open={shareOpen}
+        onOpenChange={setShareOpen}
       />
     </div>
   )

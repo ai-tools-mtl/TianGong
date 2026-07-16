@@ -4,8 +4,9 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.deps import get_current_user
 from app.models import User
+from app.schemas.diff import ApplyDiffRequest, DiffRequest, DiffResponse
 from app.schemas.section import SectionOut, SectionUpdate
-from app.services import section_service
+from app.services import diff_service, section_service
 
 router = APIRouter(tags=["sections"])
 
@@ -53,3 +54,34 @@ def update_section(
         expected_version=payload.expected_version,
     )
     return _to_out(s)
+
+
+@router.post("/sections/{section_id}/diff", response_model=DiffResponse)
+def compute_diff(
+    section_id: str,
+    payload: DiffRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """计算 AI 草稿与当前章节内容的 diff。"""
+    from app.services.export_service import _tiptap_to_markdown
+    section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
+    original_text = _tiptap_to_markdown(section.content) if section.content else ""
+    hunks = diff_service.compute_section_diff(original_text, payload.ai_text)
+    return DiffResponse(hunks=hunks)
+
+
+@router.post("/sections/{section_id}/apply-diff", response_model=SectionOut)
+def apply_diff(
+    section_id: str,
+    payload: ApplyDiffRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """应用用户接受的 diff hunks 到章节内容。"""
+    section = diff_service.apply_diff_to_section(
+        db, user_id=current_user.id, section_id=section_id,
+        ai_text=payload.ai_text, accepted_hunk_ids=payload.accepted_hunk_ids,
+        expected_version=payload.expected_version,
+    )
+    return _to_out(section)

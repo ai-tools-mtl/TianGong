@@ -1,11 +1,17 @@
 import type {
   ApiError,
+  DiffResponse,
   LoginRequest,
+  Member,
   Project,
   ProjectCreate,
   ProjectTag,
   ProjectUpdate,
   RegisterRequest,
+  Section,
+  ShareLink,
+  ShareLinkCreate,
+  SharedInfo,
   Tag,
   TagCreate,
   TagMerge,
@@ -258,6 +264,47 @@ export const api = {
   deleteMyLLM: () => request<{ message: string }>(`/settings/llm`, { method: 'DELETE' }),
   testMyLLM: (data: { base_url: string; api_key: string; model: string }) =>
     request<{ ok: boolean; response?: string; error?: string }>(`/settings/llm/test`, { method: 'POST', body: JSON.stringify(data) }),
+
+  // ── Diff（计划 16）──
+  computeDiff: (sectionId: string, aiText: string) =>
+    request<DiffResponse>(`/sections/${sectionId}/diff`, {
+      method: 'POST',
+      body: JSON.stringify({ ai_text: aiText }),
+    }),
+
+  applyDiff: (sectionId: string, data: { ai_text: string; accepted_hunk_ids: string[]; expected_version: number }) =>
+    request<Section>(`/sections/${sectionId}/apply-diff`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  // ── 协作（计划 17）──
+  listMembers: (projectId: string) =>
+    request<Member[]>(`/projects/${projectId}/members`),
+
+  addMember: (projectId: string, email: string) =>
+    request<Member>(`/projects/${projectId}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }),
+
+  removeMember: (projectId: string, memberId: string) =>
+    request<void>(`/projects/${projectId}/members/${memberId}`, { method: 'DELETE' }),
+
+  listShareLinks: (projectId: string) =>
+    request<ShareLink[]>(`/projects/${projectId}/share-links`),
+
+  createShareLink: (projectId: string, data: ShareLinkCreate) =>
+    request<ShareLink>(`/projects/${projectId}/share-links`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  revokeShareLink: (projectId: string, linkId: string) =>
+    request<void>(`/projects/${projectId}/share-links/${linkId}`, { method: 'DELETE' }),
+
+  getSharedInfo: (token: string) =>
+    request<SharedInfo>(`/shared/${token}`),
 }
 
 async function _consumeSSE(res: Response, onToken: (t: string) => void): Promise<void> {
