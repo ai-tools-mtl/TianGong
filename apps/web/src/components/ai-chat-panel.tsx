@@ -9,7 +9,7 @@ import ReactMarkdown from 'react-markdown'
 import { Button } from '@/components/ui/button'
 import { DiffReviewPanel } from '@/components/diff-review-panel'
 import { api } from '@/lib/api'
-import { queryKeys, useApplyDiff, useComputeDiff } from '@/lib/queries'
+import { queryKeys, useApplyDiff, useComputeDiff, useMessages } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import { useUIStore } from '@/stores/ui'
 import type { Hunk, Section } from '@/types/api'
@@ -41,9 +41,25 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const loadedRef = useRef(false)
 
   const computeDiff = useComputeDiff(sectionId)
   const applyDiff = useApplyDiff(sectionId, projectId)
+  const { data: history } = useMessages(sectionId)
+
+  // 加载历史对话记录（切换 section 时重新加载）
+  useEffect(() => {
+    if (history && !loadedRef.current) {
+      loadedRef.current = true
+      setMessages(history.map((m: { role: string; content: string }) => ({ role: m.role as 'user' | 'assistant', content: m.content })))
+    }
+  }, [history])
+
+  // section 变化时重置加载标记
+  useEffect(() => {
+    loadedRef.current = false
+    setMessages([])
+  }, [sectionId])
 
   // 自动滚到底部
   useEffect(() => {
@@ -103,6 +119,9 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
   function handleClearChat() {
     setMessages([])
     setPhase('idle')
+    // 后端消息无法批量删除（无 DELETE 端点），仅清前端展示
+    // 下次切回此 section 会重新加载历史，如需彻底清空后续加后端端点
+    toast.info('已清空当前对话显示')
   }
 
   async function handleGenerate() {

@@ -182,6 +182,11 @@ export const api = {
     return _consumeSSE(res, onToken)
   },
 
+  listMessages: (sectionId: string) =>
+    request<{ id: string; role: string; content: string; created_at: string }[]>(
+      `/sections/${sectionId}/messages`,
+    ),
+
   // ── 版本 ──
   listVersions: (sectionId: string) =>
     request<import('@/types/api').Version[]>(`/sections/${sectionId}/versions`),

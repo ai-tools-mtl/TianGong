@@ -20,6 +20,7 @@ export const queryKeys = {
   tags: ['tags'] as const,
   members: (projectId: string) => ['members', projectId] as const,
   shareLinks: (projectId: string) => ['share-links', projectId] as const,
+  messages: (sectionId: string) => ['messages', sectionId] as const,
 }
 
 // ── 项目 ──
@@ -289,5 +290,14 @@ export function useRevokeShareLink(projectId: string) {
   return useMutation({
     mutationFn: (linkId: string) => api.revokeShareLink(projectId, linkId),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.shareLinks(projectId) }),
+  })
+}
+
+// ── AI 对话记录 ──
+
+export function useMessages(sectionId: string) {
+  return useQuery({
+    queryKey: queryKeys.messages(sectionId),
+    queryFn: () => api.listMessages(sectionId),
   })
 }
