@@ -71,7 +71,7 @@ export function ProjectCard({ project }: { project: Project }) {
                 <Button
                   variant="ghost"
                   size="icon-xs"
-                  className="opacity-0 group-hover:opacity-100"
+                  className="opacity-40 hover:opacity-100"
                   onClick={(e) => e.stopPropagation()}
                 >
                   <MoreHorizontal className="size-4" />
