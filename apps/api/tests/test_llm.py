@@ -1,12 +1,25 @@
+from app.services.llm_config_service import ResolvedLLMConfig
+
+
+def _cfg():
+    return ResolvedLLMConfig(
+        base_url="https://x.example.com",
+        api_key="sk-test",
+        model="glm-4-flash",
+        embedding_model="embedding-3",
+        source="user",
+    )
+
+
 def test_get_llm_returns_chat_model():
     from app.ai.llm_client import get_llm
-    llm = get_llm()
+    llm = get_llm(_cfg())
     assert llm.model_name == "glm-4-flash"
 
 
 def test_get_llm_streaming_flag():
     from app.ai.llm_client import get_llm
-    llm = get_llm(streaming=True)
+    llm = get_llm(_cfg(), streaming=True)
     assert llm.streaming is True
 
 
@@ -16,7 +29,7 @@ def test_astream_llm_is_async_generator():
     from app.ai.llm_client import astream_llm
     from langchain_core.messages import HumanMessage
 
-    gen = astream_llm([HumanMessage(content="hi")])
+    gen = astream_llm([HumanMessage(content="hi")], llm_config=_cfg())
     assert inspect.isasyncgen(gen)
 
 
