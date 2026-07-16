@@ -281,6 +281,7 @@ export default function ProjectDetailPage() {
                 ref={editorRef}
                 content={current.content}
                 onChange={handleSave}
+                sectionId={current.id}
               />
             )}
           </div>
