@@ -35,6 +35,14 @@ class Settings(BaseSettings):
     upload_dir: str = "uploads"
     max_image_size_mb: int = 10
 
+    # 对象存储（minio，S3 兼容；一刀切，不留 local 分支，见计划关键约束 5）
+    minio_endpoint: str = "localhost:9000"
+    minio_access_key: str = "tiangong"
+    minio_secret_key: str = "tiangong12345"
+    minio_bucket_personal: str = "tiangong-personal"
+    minio_bucket_global: str = "tiangong-global"
+    minio_secure: bool = False
+
     # CORS（环境变量中以逗号分隔，按 CSV 解析）
     # NoDecode 阻止 pydantic-settings 把字符串当 JSON 解析，交给下面的 validator 切分
     cors_origins: Annotated[List[str], NoDecode] = ["http://localhost:3000"]
