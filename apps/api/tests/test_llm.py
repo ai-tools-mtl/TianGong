@@ -37,3 +37,18 @@ def test_stream_llm_still_exists():
     """同步 stream_llm 保留（审查引擎仍用）。"""
     from app.ai.llm_client import stream_llm
     assert callable(stream_llm)
+
+
+def test_get_embedder_raises_when_embedding_model_none():
+    """embedding_model=None 时 get_embedder 抛清晰错误（而非 pydantic 晦涩报错）。"""
+    import pytest
+    from app.rag.embedding import get_embedder
+    cfg = ResolvedLLMConfig(
+        base_url="https://x.example.com",
+        api_key="sk-test",
+        model="glm-4-flash",
+        embedding_model=None,
+        source="user",
+    )
+    with pytest.raises(ValueError, match="embedding"):
+        get_embedder(cfg)
