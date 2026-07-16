@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.exceptions import NotFoundError, ValidationError
+from app.core.storage import get_storage
 from app.deps import get_current_user
 from app.models import User
 from app.schemas.template import ParseJobOut, TemplateOut, TemplateSummary
@@ -38,12 +39,12 @@ async def upload(
         raise ValidationError("仅支持 .docx 文件")
     content = await file.read()
     job = parse_service.create_parse_job(
-        db, user_id=current_user.id, filename=file.filename,
-        file_bytes=content, upload_dir="uploads",
+        db, storage=get_storage(), user_id=current_user.id,
+        filename=file.filename, file_bytes=content,
     )
     # 真异步：BackgroundTasks 在响应返回后才执行，用 standalone 自开 session
     background_tasks.add_task(
-        parse_service.run_parse_job_standalone, str(job.id), "uploads"
+        parse_service.run_parse_job_standalone, str(job.id)
     )
     return {"parse_job_id": str(job.id), "status": "processing"}
 

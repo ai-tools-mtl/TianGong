@@ -5,9 +5,52 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.config import get_settings
+from app.core import storage as _storage_mod  # 测试启动即注入 fake storage 单例
 from app.core.database import get_db
 from app.core.security import hash_password
 from app.models import Base, User
+
+
+class _FakeStorage:
+    """内存 dict 模拟 minio(关键约束 5:测试也走 storage 接口,不恢复 local)。
+
+    模块级单例:BackgroundTask 在响应返回后执行(monkeypatch 已还原),
+    必须用永久注入的单例才能让后台任务读到请求存的对象。
+    """
+
+    def __init__(self):
+        self._data: dict[tuple[str, str], bytes] = {}
+
+    def put(self, bucket: str, key: str, content: bytes, content_type: str) -> None:
+        self._data[(bucket, key)] = content
+
+    def get(self, bucket: str, key: str) -> bytes:
+        return self._data.get((bucket, key), b"")
+
+    def delete(self, bucket: str, key: str) -> None:
+        self._data.pop((bucket, key), None)
+
+    def stat(self, bucket: str, key: str) -> bool:
+        return (bucket, key) in self._data
+
+    def copy(self, src_bucket: str, src_key: str, dst_bucket: str, dst_key: str) -> None:
+        self._data[(dst_bucket, dst_key)] = self._data.get((src_bucket, src_key), b"")
+
+    def reset(self) -> None:
+        self._data.clear()
+
+
+# 永久注入(非 monkeypatch):conftest 加载即替换工厂,
+# BackgroundTask 跨边界执行时仍拿到同一个 fake 实例。
+_FAKE_STORAGE = _FakeStorage()
+_storage_mod._storage_singleton = _FAKE_STORAGE
+_storage_mod.get_storage = lambda: _FAKE_STORAGE  # type: ignore[assignment]
+
+
+@pytest.fixture(autouse=True)
+def _reset_storage():
+    """每测试清空 fake storage 数据,保证测试间隔离。"""
+    _FAKE_STORAGE.reset()
 
 
 @pytest.fixture(autouse=True)
