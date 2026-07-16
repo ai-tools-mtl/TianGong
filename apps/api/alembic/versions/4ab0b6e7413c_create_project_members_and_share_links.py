@@ -1,7 +1,7 @@
 """create project_members and share_links
 
 Revision ID: 4ab0b6e7413c
-Revises: 8b3f9c2e7a14
+Revises: d08c8546464c
 Create Date: 2026-07-15 15:16:21.775607
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '4ab0b6e7413c'
-down_revision: Union[str, Sequence[str], None] = '8b3f9c2e7a14'
+down_revision: Union[str, Sequence[str], None] = 'd08c8546464c'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

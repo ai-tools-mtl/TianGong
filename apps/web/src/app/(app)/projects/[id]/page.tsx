@@ -264,8 +264,8 @@ export default function ProjectDetailPage() {
             </div>
           )}
         </div>
-        <div className="flex-1 overflow-y-auto px-6 py-6">
-          <div className="mx-auto max-w-5xl">
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          <div className="h-full">
             {current && current.key === 'drawings' && (
               <div className="mb-3">
                 <FigureUpload
