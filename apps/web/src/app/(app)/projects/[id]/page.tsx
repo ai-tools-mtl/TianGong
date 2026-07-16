@@ -1,9 +1,9 @@
 'use client'
 
-import { Archive, CheckCircle2, Eye, History, PanelLeft, PanelRight, Search, Sparkles } from 'lucide-react'
+import { Archive, CheckCircle2, Eye, History, PanelLeft, PanelRight, Search, Send, Sparkles } from 'lucide-react'
 import { useParams } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import { AIChatPanel } from '@/components/ai-chat-panel'
@@ -28,6 +28,11 @@ export default function ProjectDetailPage() {
   const updateSection = useUpdateSection()
   const { data: project } = useProject(projectId)
   const archiveMutation = useArchiveProject()
+  const submitDisclosure = useMutation({
+    mutationFn: () => api.submitDisclosureReview(projectId),
+    onSuccess: () => toast.success('已上报,等待管理员审核进入全局库'),
+    onError: (err: { message?: string }) => toast.error(err?.message ?? '上报失败'),
+  })
   const qc = useQueryClient()
   const [currentId, setCurrentId] = useState<string | null>(null)
   const [current, setCurrent] = useState<Section | null>(null)
@@ -250,6 +255,18 @@ export default function ProjectDetailPage() {
                 <Archive className="size-3.5" />
                 {project?.status === 'archived' ? '更新知识库' : '归档到知识库'}
               </Button>
+              {project?.status === 'archived' && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 gap-1.5"
+                  onClick={() => submitDisclosure.mutate()}
+                  disabled={submitDisclosure.isPending}
+                >
+                  <Send className="size-3.5" />
+                  {submitDisclosure.isPending ? '上报中...' : '上报到全局库'}
+                </Button>
+              )}
             </div>
           )}
         </div>

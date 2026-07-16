@@ -130,6 +130,44 @@ def list_global_files(db: Session) -> list[KnowledgeFile]:
     ))
 
 
+def submit_disclosure_for_review(
+    db: Session, *, storage: Storage, submitter, project,
+) -> KnowledgeReview:
+    """归档交底书上报进全局(审核流 A)。
+
+    关键约束 4:归档交底书无源文件,上报时生成导出 docx 存 minio。
+    流程:export_docx → 存 global bucket → 建 KnowledgeFile(scope=global,
+    待审核期间文件已在 global 但 chunk scope=personal,审核通过才升 global chunk)。
+    """
+    from app.services.export_service import export_docx
+
+    docx_bytes = export_docx(db, project=project)
+    object_key = f"global/{uuid.uuid4()}.docx"
+    mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    storage.put("global", object_key, docx_bytes, mime)
+
+    kf = KnowledgeFile(
+        uploader_id=submitter.id,
+        scope="global",  # 文件已在 global bucket(归档流特点)
+        bucket="global",
+        object_key=object_key,
+        filename=f"{project.title}.docx",
+        mime_type=mime, size=len(docx_bytes),
+        source_type="disclosure_export",
+    )
+    db.add(kf)
+    db.flush()
+
+    review = KnowledgeReview(
+        submitter_id=submitter.id, file_id=kf.id,
+        source_type="disclosure_export", status="pending",
+    )
+    db.add(review)
+    db.commit()
+    db.refresh(review)
+    return review
+
+
 # ────────────────────────── 内部辅助 ──────────────────────────
 
 

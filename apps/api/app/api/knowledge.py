@@ -113,6 +113,25 @@ def submit_review(
     return {"review_id": str(review.id), "status": review.status}
 
 
+@router.post("/projects/{project_id}/submit-disclosure-review")
+def submit_disclosure_review(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """归档交底书上报进全局审核(流 A)。生成导出 docx 存 minio + 建工单。"""
+    from app.models import Project
+    from app.services.project_service import get_project
+
+    project = get_project(db, user=current_user, project_id=project_id)
+    if project.status != "archived":
+        raise ValidationError("仅已归档项目可上报")
+    review = knowledge_service.submit_disclosure_for_review(
+        db, storage=get_storage(), submitter=current_user, project=project,
+    )
+    return {"review_id": str(review.id), "status": review.status}
+
+
 @router.get("/knowledge/files/{file_id}/download")
 def download_file(
     file_id: str,

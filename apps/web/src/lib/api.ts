@@ -291,6 +291,11 @@ export const api = {
       `/knowledge/files/${fileId}/submit-review`, { method: 'POST' },
     ),
 
+  submitDisclosureReview: (projectId: string) =>
+    request<{ review_id: string; status: string }>(
+      `/projects/${projectId}/submit-disclosure-review`, { method: 'POST' },
+    ),
+
   listPersonalKnowledge: () =>
     request<import('@/types/api').KnowledgeFile[]>('/knowledge/files/personal'),
   listGlobalKnowledge: () =>
