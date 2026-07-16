@@ -7,6 +7,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import { AIChatPanel } from '@/components/ai-chat-panel'
+import { ResizeHandle } from '@/components/resize-handle'
 import { SectionOutline } from '@/components/section-outline'
 import { FigureUpload } from '@/components/editor/figure-upload'
 import { TiptapEditor } from '@/components/editor/tiptap-editor'
@@ -41,6 +42,8 @@ export default function ProjectDetailPage() {
 
   const leftCollapsed = useUIStore((s) => s.leftCollapsed)
   const rightCollapsed = useUIStore((s) => s.rightCollapsed)
+  const rightWidth = useUIStore((s) => s.rightWidth)
+  const setRightWidth = useUIStore((s) => s.setRightWidth)
   const toggleLeft = useUIStore((s) => s.toggleLeft)
   const toggleRight = useUIStore((s) => s.toggleRight)
 
@@ -135,9 +138,9 @@ export default function ProjectDetailPage() {
     })
   }
 
-  // 三栏宽度按折叠态切换：左栏 240 / 收起 56；右栏 360 / 收起 0
+  // 三栏宽度按折叠态切换：左栏 240 / 收起 56；右栏 rightWidth / 收起 0
   const leftCol = leftCollapsed ? '56px' : '240px'
-  const rightCol = rightCollapsed ? '0px' : '360px'
+  const rightCol = rightCollapsed ? '0px' : `${rightWidth}px`
 
   return (
     <div
@@ -302,13 +305,19 @@ export default function ProjectDetailPage() {
         </div>
       </section>
 
-      {/* 右栏：AI 对话（面板自带标题栏 + 折叠按钮） */}
+      {/* 拖拽分隔条 + 右栏：AI 对话 */}
       {current && !rightCollapsed && (
-        <aside className="flex min-w-0 flex-col border-l bg-background">
-          <div className="flex-1 overflow-hidden">
-            <AIChatPanel sectionId={current.id} section={current} projectId={projectId} />
-          </div>
-        </aside>
+        <>
+          <ResizeHandle
+            side="left"
+            onResize={(delta) => setRightWidth(rightWidth + delta)}
+          />
+          <aside className="flex min-w-0 flex-col bg-background">
+            <div className="flex-1 overflow-hidden">
+              <AIChatPanel sectionId={current.id} section={current} projectId={projectId} />
+            </div>
+          </aside>
+        </>
       )}
 
       {current && (
