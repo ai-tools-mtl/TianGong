@@ -1,14 +1,13 @@
 'use client'
 
-import { GitCompare, Loader2, PanelRight, Sparkles } from 'lucide-react'
+import { GitCompare, Loader2, PanelRight, Sparkles, Trash2 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
 
 import { Button } from '@/components/ui/button'
 import { DiffReviewPanel } from '@/components/diff-review-panel'
-import { Input } from '@/components/ui/input'
 import { api } from '@/lib/api'
 import { queryKeys, useApplyDiff, useComputeDiff } from '@/lib/queries'
 import { cn } from '@/lib/utils'
@@ -40,9 +39,26 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
   const [aiDraft, setAiDraft] = useState('')
   const [hunks, setHunks] = useState<Hunk[]>([])
   const abortRef = useRef<AbortController | null>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const computeDiff = useComputeDiff(sectionId)
   const applyDiff = useApplyDiff(sectionId, projectId)
+
+  // 自动滚到底部
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+  }, [messages, phase, aiDraft])
+
+  // Textarea 自动高度
+  useEffect(() => {
+    const ta = textareaRef.current
+    if (!ta) return
+    ta.style.height = 'auto'
+    ta.style.height = `${Math.min(ta.scrollHeight, 120)}px`
+  }, [input])
 
   async function handleSend() {
     if (!input.trim() || phase === 'chatting' || phase === 'generating') return
@@ -84,10 +100,14 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
     })
   }
 
+  function handleClearChat() {
+    setMessages([])
+    setPhase('idle')
+  }
+
   async function handleGenerate() {
     setPhase('generating')
     setAiDraft('')
-    toast.info('正在生成草稿...')
     abortRef.current = new AbortController()
     try {
       let md = ''
@@ -95,12 +115,9 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
         md += token
         setAiDraft(md)
       }, abortRef.current.signal)
-      toast.success('草稿已生成，点击「审查差异」预览变更')
       setPhase('done')
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') {
-        toast.info('已停止，已生成内容已保留')
-        // 中断后仍有部分内容，进入 done 态供用户审查已生成部分
         setPhase('done')
       } else {
         toast.error('生成失败')
@@ -140,11 +157,9 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
         expected_version: section.version,
       })
       toast.success(`已应用 ${acceptedHunkIds.length} 项更改`)
-      // 应用成功：关闭审查面板，回到 idle，清空草稿
       setPhase('idle')
       setAiDraft('')
       setHunks([])
-      // apply-diff 改写了章节内容与版本号，刷新章节缓存，编辑器自动拿到新内容
       await qc.invalidateQueries({ queryKey: queryKeys.sections(projectId) })
     } catch (err: unknown) {
       const e = err as { code?: string; message?: string }
@@ -181,12 +196,23 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
   return (
     <div className={cn('flex h-full flex-col', phase === 'generating' && 'ai-generating')}>
       {/* 标题栏 */}
-      <div className="flex items-center justify-between gap-1 border-b px-2 py-1.5">
+      <div className="flex h-10 shrink-0 items-center justify-between gap-1 border-b px-2">
         <h3 className="flex items-center gap-1.5 px-1 text-[13px] font-semibold">
           <Sparkles className="size-3.5 text-ai" />
           AI 助手
         </h3>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-0.5">
+          {messages.length > 0 && phase !== 'generating' && phase !== 'done' && (
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={handleClearChat}
+              aria-label="清空对话"
+              title="清空对话"
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
+          )}
           {phase === 'generating' ? (
             <Button size="xs" variant="destructive" onClick={handleStop}>
               停止
@@ -200,24 +226,28 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
             variant="ghost"
             size="icon-xs"
             onClick={toggleRight}
-            aria-label="收起 AI 面板"
-            title="收起 AI 面板"
+            aria-label="收起"
+            title="收起"
           >
             <PanelRight className="size-3.5" />
           </Button>
         </div>
       </div>
 
-      {/* 内容区：生成阶段显示 markdown 预览，否则显示对话 */}
-      <div className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
+      {/* 内容区 */}
+      <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto px-3 py-3">
         {phase === 'generating' || phase === 'done' ? (
           // 生成草稿的 markdown 预览
-          <div className="space-y-2">
-            <div className="rounded-md border-l-2 border-ai bg-ai-muted px-3 py-2">
+          <div className="space-y-3">
+            <div className="rounded-lg border border-ai/20 bg-ai-muted/50 px-3 py-2.5">
               {phase === 'generating' && (
                 <div className="mb-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                  <Loader2 className="size-3 animate-spin" />
-                  生成中...
+                  <span className="flex gap-0.5">
+                    <span className="size-1.5 animate-bounce rounded-full bg-ai [animation-delay:0ms]" />
+                    <span className="size-1.5 animate-bounce rounded-full bg-ai [animation-delay:150ms]" />
+                    <span className="size-1.5 animate-bounce rounded-full bg-ai [animation-delay:300ms]" />
+                  </span>
+                  AI 正在生成...
                 </div>
               )}
               <div className="prose prose-sm max-w-none dark:prose-invert">
@@ -240,23 +270,34 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
           // 对话模式
           <>
             {messages.length === 0 && (
-              <div className="rounded-md bg-ai-muted px-3 py-3 text-[13px] text-ai-muted-foreground">
-                向 AI 描述你的想法，或直接点「生成草稿」
+              <div className="flex flex-col items-center gap-2 py-8 text-center">
+                <Sparkles className="size-6 text-ai/50" />
+                <p className="text-[13px] text-muted-foreground">
+                  向 AI 描述你的想法<br />或直接点「生成草稿」
+                </p>
               </div>
             )}
             {messages.map((m, i) =>
               m.role === 'user' ? (
                 <div key={i} className="flex justify-end">
-                  <div className="inline-block max-w-[90%] rounded-md bg-primary px-3 py-2 text-[13px] text-primary-foreground">
+                  <div className="max-w-[85%] whitespace-pre-wrap rounded-2xl rounded-br-sm bg-primary px-3 py-2 text-[13px] leading-relaxed text-primary-foreground">
                     {m.content}
                   </div>
                 </div>
               ) : (
                 <div key={i} className="flex justify-start">
-                  <div className="inline-block max-w-[90%] rounded-md border-l-2 border-ai bg-ai-muted px-3 py-2 text-[13px] text-foreground">
-                    <div className="prose prose-sm max-w-none dark:prose-invert">
-                      <ReactMarkdown>{m.content || '...'}</ReactMarkdown>
-                    </div>
+                  <div className="max-w-[85%] rounded-2xl rounded-bl-sm border border-ai/20 bg-ai-muted/40 px-3 py-2 text-[13px] leading-relaxed text-foreground">
+                    {m.content ? (
+                      <div className="prose prose-sm max-w-none dark:prose-invert">
+                        <ReactMarkdown>{m.content}</ReactMarkdown>
+                      </div>
+                    ) : (
+                      <span className="flex items-center gap-1 text-muted-foreground">
+                        <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:0ms]" />
+                        <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:150ms]" />
+                        <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:300ms]" />
+                      </span>
+                    )}
                   </div>
                 </div>
               ),
@@ -267,20 +308,28 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
 
       {/* 输入栏（生成阶段隐藏） */}
       {phase !== 'generating' && phase !== 'done' && (
-        <div className="flex gap-2 border-t p-3">
-          <Input
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={(e) =>
-              e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), handleSend())
-            }
-            placeholder="问 AI..."
-            disabled={busy}
-            className="h-8 text-[13px]"
-          />
-          <Button size="sm" onClick={handleSend} disabled={busy || !input.trim()}>
-            发送
-          </Button>
+        <div className="shrink-0 border-t p-2.5">
+          <div className="flex items-end gap-2">
+            <textarea
+              ref={textareaRef}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault()
+                  handleSend()
+                }
+              }}
+              placeholder="问 AI...（Shift+Enter 换行）"
+              disabled={busy}
+              rows={1}
+              className="flex-1 resize-none rounded-lg border bg-background px-3 py-2 text-[13px] leading-relaxed outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+              style={{ minHeight: '36px', maxHeight: '120px' }}
+            />
+            <Button size="sm" onClick={handleSend} disabled={busy || !input.trim()} className="shrink-0">
+              发送
+            </Button>
+          </div>
         </div>
       )}
     </div>
