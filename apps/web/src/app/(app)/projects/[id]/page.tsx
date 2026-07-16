@@ -154,7 +154,7 @@ export default function ProjectDetailPage() {
           leftCollapsed ? 'items-center' : '',
         )}
       >
-        <div className="flex h-9 items-center justify-between border-b px-2">
+        <div className="flex h-10 items-center justify-between border-b px-2">
           {!leftCollapsed && (
             <span className="px-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
               章节大纲
@@ -183,7 +183,7 @@ export default function ProjectDetailPage() {
 
       {/* 中栏：编辑器 */}
       <section className="flex min-w-0 flex-col overflow-hidden">
-        <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b px-4">
+        <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b px-4">
           <div className="flex items-center gap-2">
             <h1 className="truncate text-[15px] font-semibold">
               {current?.title ?? '未选择章节'}
