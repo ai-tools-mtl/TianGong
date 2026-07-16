@@ -79,7 +79,7 @@ def test_recover_pending_jobs_reenqueues_processing_and_stale_pending(
     monkeypatch.setattr(db_module, "SessionLocal", TestingSession)
 
     # 造一个真实用户（ParseJob.user_id 外键约束）
-    u = User(email="rec@example.com", password_hash=hash_password("Pass1234!"), name="R")
+    u = User(username="rec", email="rec@example.com", password_hash=hash_password("Pass1234!"), name="R")
     db_session.add(u)
     db_session.commit()
 

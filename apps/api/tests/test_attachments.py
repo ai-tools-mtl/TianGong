@@ -67,7 +67,7 @@ def test_upload_other_user_section_404(client, registered_user, db_session):
     from app.models import User
 
     # 建第二个用户的项目
-    other = User(email="other@example.com", password_hash="x", name="other")
+    other = User(username="other", email="other@example.com", password_hash="x", name="other")
     db_session.add(other)
     db_session.commit()
 

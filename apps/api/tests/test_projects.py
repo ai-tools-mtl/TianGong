@@ -22,7 +22,8 @@ def db():
 
 
 def _make_user(db, email="u@b.com", role="user"):
-    u = User(email=email, password_hash=hash_password("Pass1234!"), name="U", role=role)
+    username = email.split("@")[0]
+    u = User(username=username, email=email, password_hash=hash_password("Pass1234!"), name="U", role=role)
     db.add(u)
     db.commit()
     return u
@@ -89,7 +90,7 @@ def test_api_create_and_list(client, registered_user):
 
 
 def test_api_access_other_users_project_returns_404(client, registered_user, db_session):
-    other = User(email="o@b.com", password_hash=hash_password("Pass1234!"), name="O")
+    other = User(username="o", email="o@b.com", password_hash=hash_password("Pass1234!"), name="O")
     db_session.add(other)
     db_session.commit()
     other_project = ps.create_project(db_session, user=other, title="别人的")
@@ -191,7 +192,7 @@ def test_api_archive_other_user_404(client, registered_user, db_session):
 
     from app.core.security import hash_password
     from app.models import User
-    other = User(email="other@b.com", password_hash=hash_password("Pass1234!"), name="Other")
+    other = User(username="other", email="other@b.com", password_hash=hash_password("Pass1234!"), name="Other")
     db_session.add(other)
     db_session.commit()
     client.post("/api/v1/auth/login", json={"email": "other@b.com", "password": "Pass1234!"})

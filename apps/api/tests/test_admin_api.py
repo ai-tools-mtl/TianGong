@@ -12,6 +12,7 @@ from app.models import User
 def admin_and_login(client, db_session):
     """创建管理员并登录，返回 admin user。"""
     admin = User(
+        username="admin",
         email="admin@example.com",
         password_hash=hash_password("Admin1234!"),
         name="管理员",
@@ -30,6 +31,7 @@ def admin_and_login(client, db_session):
 @pytest.fixture
 def target_user(db_session):
     u = User(
+        username="target",
         email="target@example.com",
         password_hash=hash_password("OldPass1!"),
         name="目标用户",
@@ -87,6 +89,7 @@ def test_cannot_reset_self_returns_403(client, admin_and_login):
 
 def test_cannot_ban_superuser_returns_403(client, admin_and_login, db_session):
     superadmin = User(
+        username="root",
         email="root@example.com",
         password_hash="x",
         name="超管",
@@ -102,6 +105,7 @@ def test_cannot_ban_superuser_returns_403(client, admin_and_login, db_session):
 
 def test_cannot_ban_other_admin_returns_403(client, admin_and_login, db_session):
     other_admin = User(
+        username="admin2",
         email="admin2@example.com",
         password_hash="x",
         name="管理员2",

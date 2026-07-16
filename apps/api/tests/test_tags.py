@@ -29,7 +29,8 @@ def db():
 
 
 def _make_user(db, email="u@b.com"):
-    u = User(email=email, password_hash=hash_password("Pass1234!"), name="U")
+    username = email.split("@")[0]
+    u = User(username=username, email=email, password_hash=hash_password("Pass1234!"), name="U")
     db.add(u)
     db.commit()
     return u

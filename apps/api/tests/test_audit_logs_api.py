@@ -10,6 +10,7 @@ from app.models import AuditLog, User
 @pytest.fixture
 def admin_and_login(client, db_session):
     admin = User(
+        username="admin",
         email="admin@example.com", password_hash=hash_password("Admin1234!"),
         name="管理员", role="admin", status="active",
     )

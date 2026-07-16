@@ -25,7 +25,7 @@ def test_agent_skill_model_basic_fields(db):
     from app.core.security import hash_password
     from app.models import AgentSkill, Project, User
 
-    u = User(email="s@b.com", password_hash=hash_password("Pass1234!"), name="S")
+    u = User(username="s", email="s@b.com", password_hash=hash_password("Pass1234!"), name="S")
     db.add(u)
     db.commit()
     p = Project(user_id=u.id, title="项目")
@@ -59,7 +59,7 @@ def test_agent_skill_importable_from_models():
 def _make_project(db):
     from app.core.security import hash_password
     from app.models import Project, User
-    u = User(email="s2@b.com", password_hash=hash_password("Pass1234!"), name="S2")
+    u = User(username="s2", email="s2@b.com", password_hash=hash_password("Pass1234!"), name="S2")
     db.add(u)
     db.commit()
     p = Project(user_id=u.id, title="P")
@@ -344,7 +344,7 @@ def test_api_list_skills_other_users_project_returns_404(client, registered_user
     from app.models import User
     from app.services import project_service as ps
 
-    other = User(email="other@b.com", password_hash=hash_password("Pass1234!"), name="O")
+    other = User(username="other", email="other@b.com", password_hash=hash_password("Pass1234!"), name="O")
     db_session.add(other)
     db_session.commit()
     other_project = ps.create_project(db_session, user=other, title="别人的")

@@ -198,7 +198,7 @@ def test_review_raises_when_no_llm_config(db_session):
     from app.services import review_service
 
     # 建一个无 BYOK 的用户 + 项目
-    u = User(email="noreview@test.com", password_hash=hash_password("Pass1234!"), name="t")
+    u = User(username="noreview", email="noreview@test.com", password_hash=hash_password("Pass1234!"), name="t")
     db_session.add(u)
     db_session.commit()
     p = Project(user_id=u.id, title="审查测试")

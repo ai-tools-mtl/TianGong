@@ -11,6 +11,7 @@ from app.services import stats_service
 @pytest.fixture
 def admin_user(db_session):
     u = User(
+        username="admin",
         email="admin@example.com", password_hash="x", name="管理员",
         role="admin", status="active",
     )

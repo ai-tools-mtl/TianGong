@@ -15,7 +15,7 @@ def _session():
 
 def test_user_defaults():
     db = _session()
-    u = User(email="a@b.com", password_hash="x", name="A")
+    u = User(username="a", email="a@b.com", password_hash="x", name="A")
     db.add(u)
     db.flush()  # 触发 DB 层默认值
     assert u.role == "user"
@@ -26,7 +26,7 @@ def test_user_defaults():
 
 def test_project_stage_defaults_to_disclosure():
     db = _session()
-    u = User(email="a@b.com", password_hash="x", name="A")
+    u = User(username="a", email="a@b.com", password_hash="x", name="A")
     db.add(u)
     db.flush()
     p = Project(user_id=u.id, title="我的发明", template_id=None)
@@ -59,7 +59,7 @@ def test_template_defaults():
 def test_section_defaults():
     from app.models import Section
     db = _session()
-    u = User(email="s@b.com", password_hash="x", name="S")
+    u = User(username="s", email="s@b.com", password_hash="x", name="S")
     db.add(u)
     db.flush()
     p = Project(user_id=u.id, title="P")
@@ -75,7 +75,7 @@ def test_section_defaults():
 def test_parse_job_defaults():
     from app.models import ParseJob
     db = _session()
-    u = User(email="pj@b.com", password_hash="x", name="PJ")
+    u = User(username="pj", email="pj@b.com", password_hash="x", name="PJ")
     db.add(u)
     db.flush()
     job = ParseJob(user_id=u.id, source_path="/tmp/test.docx")
@@ -95,7 +95,7 @@ def test_section_has_version_field_default_1(db_session):
     )
     assert hasattr(s, "version")
     # Python 端 default 在 flush/INSERT 时生效：需父级 project 以满足外键约束
-    u = User(email="v@b.com", password_hash="x", name="V")
+    u = User(username="v", email="v@b.com", password_hash="x", name="V")
     db_session.add(u)
     db_session.flush()
     p = Project(user_id=u.id, title="P")
