@@ -305,19 +305,19 @@ export default function ProjectDetailPage() {
         </div>
       </section>
 
-      {/* 拖拽分隔条 + 右栏：AI 对话 */}
+      {/* 拖拽分隔条 + 右栏：AI 对话（作为一个 grid 子元素） */}
       {current && !rightCollapsed && (
-        <>
+        <div className="flex min-w-0">
           <ResizeHandle
             side="left"
             onResize={(delta) => setRightWidth(rightWidth + delta)}
           />
-          <aside className="flex min-w-0 flex-col bg-background">
+          <aside className="flex min-w-0 flex-1 flex-col bg-background">
             <div className="flex-1 overflow-hidden">
               <AIChatPanel sectionId={current.id} section={current} projectId={projectId} />
             </div>
           </aside>
-        </>
+        </div>
       )}
 
       {current && (
