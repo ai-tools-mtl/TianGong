@@ -20,7 +20,7 @@ def _make_logged_in_section(client, registered_user, db_session):
     p = create_project(db_session, user=user, title="测试发明")
     sections = list_sections(db_session, user_id=user.id, project_id=str(p.id))
     client.post("/api/v1/auth/login", json={
-        "email": registered_user["email"], "password": registered_user["password"],
+        "username": registered_user["username"], "password": registered_user["password"],
     })
     return sections[0]
 

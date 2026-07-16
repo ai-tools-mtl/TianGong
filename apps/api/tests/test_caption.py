@@ -20,7 +20,7 @@ def _setup_and_login(client, registered_user, db_session):
     db_session.commit()
     p = create_project(db_session, user=user, title="测试发明")
     sections = list_sections(db_session, user_id=user.id, project_id=str(p.id))
-    client.post("/api/v1/auth/login", json={"email": registered_user["email"], "password": registered_user["password"]})
+    client.post("/api/v1/auth/login", json={"username": registered_user["username"], "password": registered_user["password"]})
     return sections
 
 

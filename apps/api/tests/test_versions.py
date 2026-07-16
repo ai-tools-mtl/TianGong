@@ -1,6 +1,6 @@
 def _login(client, registered_user):
     client.post("/api/v1/auth/login", json={
-        "email": registered_user["email"], "password": registered_user["password"],
+        "username": registered_user["username"], "password": registered_user["password"],
     })
 
 

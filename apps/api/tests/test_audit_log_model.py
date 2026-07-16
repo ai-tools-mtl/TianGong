@@ -12,7 +12,7 @@ def test_audit_log_create_row(db_session):
     """可插入审计记录，detail 为 JSON dict。"""
     log = AuditLog(
         actor_id=None,  # 测试中先不绑用户，验证字段可空写入
-        actor_email="admin@example.com",
+        actor_username="admin",
         action="set_global_llm",
         target_type="system_setting",
         target_id="llm_global_config",

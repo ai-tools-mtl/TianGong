@@ -77,7 +77,7 @@ def test_delete_project(db):
 
 def test_api_create_and_list(client, registered_user):
     client.post("/api/v1/auth/login", json={
-        "email": registered_user["email"],
+        "username": registered_user["username"],
         "password": registered_user["password"],
     })
     res = client.post("/api/v1/projects", json={"title": "API发明"})
@@ -96,7 +96,7 @@ def test_api_access_other_users_project_returns_404(client, registered_user, db_
     other_project = ps.create_project(db_session, user=other, title="别人的")
 
     client.post("/api/v1/auth/login", json={
-        "email": registered_user["email"],
+        "username": registered_user["username"],
         "password": registered_user["password"],
     })
     res = client.get(f"/api/v1/projects/{other_project.id}")
@@ -113,7 +113,7 @@ def test_api_get_project_returns_status_and_archived_at(client, registered_user,
     from app.services.seed_service import ensure_default_template
     ensure_default_template(db_session)
     client.post("/api/v1/auth/login", json={
-        "email": registered_user["email"], "password": registered_user["password"],
+        "username": registered_user["username"], "password": registered_user["password"],
     })
     res = client.post("/api/v1/projects", json={"title": "测试发明"})
     project_id = res.json()["id"]
@@ -130,7 +130,7 @@ def test_api_get_project_returns_status_and_archived_at(client, registered_user,
 
 def _login(client, registered_user):
     client.post("/api/v1/auth/login", json={
-        "email": registered_user["email"], "password": registered_user["password"],
+        "username": registered_user["username"], "password": registered_user["password"],
     })
 
 
@@ -195,7 +195,7 @@ def test_api_archive_other_user_404(client, registered_user, db_session):
     other = User(username="other", email="other@b.com", password_hash=hash_password("Pass1234!"), name="Other")
     db_session.add(other)
     db_session.commit()
-    client.post("/api/v1/auth/login", json={"email": "other@b.com", "password": "Pass1234!"})
+    client.post("/api/v1/auth/login", json={"username": "other", "password": "Pass1234!"})
 
     res = client.post(f"/api/v1/projects/{p.id}/archive")
     assert res.status_code == 404

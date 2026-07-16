@@ -27,7 +27,7 @@ def test_run_parse_job_standalone_opens_own_session(
     client.post(
         "/api/v1/auth/login",
         json={
-            "email": registered_user["email"],
+            "username": registered_user["username"],
             "password": registered_user["password"],
         },
     )
@@ -136,7 +136,7 @@ def test_upload_returns_202_processing_and_background_completes(
     client.post(
         "/api/v1/auth/login",
         json={
-            "email": registered_user["email"],
+            "username": registered_user["username"],
             "password": registered_user["password"],
         },
     )
@@ -219,7 +219,7 @@ def test_get_parse_job_status_completed(
     client.post(
         "/api/v1/auth/login",
         json={
-            "email": registered_user["email"],
+            "username": registered_user["username"],
             "password": registered_user["password"],
         },
     )
@@ -255,7 +255,7 @@ def test_get_parse_job_not_found(client, registered_user):
     client.post(
         "/api/v1/auth/login",
         json={
-            "email": registered_user["email"],
+            "username": registered_user["username"],
             "password": registered_user["password"],
         },
     )

@@ -33,15 +33,24 @@ def _set_auth_cookies(response: Response, access: str, refresh: str) -> None:
 
 @router.post("/register", response_model=UserRead)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
-    user = register_user(db, email=payload.email, password=payload.password, name=payload.name)
-    return UserRead(id=str(user.id), email=user.email, name=user.name, role=user.role)
+    user = register_user(
+        db,
+        username=payload.username,
+        password=payload.password,
+        name=payload.name,
+        email=payload.email,
+    )
+    return UserRead(
+        id=str(user.id), username=user.username,
+        email=user.email, name=user.name, role=user.role,
+    )
 
 
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, response: Response, db: Session = Depends(get_db)):
-    user = authenticate_user(db, email=payload.email, password=payload.password)
+    user = authenticate_user(db, username=payload.username, password=payload.password)
     if user is None:
-        raise UnauthorizedError("邮箱或密码错误")
+        raise UnauthorizedError("用户名或密码错误")
     update_last_login(db, user)
     access = create_access_token({"sub": str(user.id), "role": user.role})
     refresh = create_refresh_token({"sub": str(user.id)})
@@ -60,6 +69,6 @@ def logout(response: Response):
 @router.get("/me", response_model=UserRead)
 def me(current_user: User = Depends(get_current_user)):
     return UserRead(
-        id=str(current_user.id), email=current_user.email,
-        name=current_user.name, role=current_user.role,
+        id=str(current_user.id), username=current_user.username,
+        email=current_user.email, name=current_user.name, role=current_user.role,
     )

@@ -99,7 +99,7 @@ def _audit(
     """写审计日志。detail 必须已脱敏（调用方负责，绝不传 api_key 明文）。"""
     log = AuditLog(
         actor_id=actor.id,
-        actor_email=actor.email,  # 冗余，防用户删除后查不到
+        actor_username=actor.username,  # 冗余，防用户删除后查不到
         action=action,
         target_type=target_type,
         target_id=target_id,

@@ -127,7 +127,7 @@ def list_audit_logs(
             {
                 "id": str(r.id),
                 "actor_id": str(r.actor_id) if r.actor_id else None,
-                "actor_email": r.actor_email,
+                "actor_username": r.actor_username,
                 "action": r.action,
                 "target_type": r.target_type,
                 "target_id": r.target_id,

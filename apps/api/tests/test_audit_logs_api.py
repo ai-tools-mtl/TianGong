@@ -17,7 +17,7 @@ def admin_and_login(client, db_session):
     db_session.add(admin)
     db_session.commit()
     client.post("/api/v1/auth/login", json={
-        "email": "admin@example.com", "password": "Admin1234!",
+        "username": "admin", "password": "Admin1234!",
     })
     return admin
 
@@ -28,7 +28,7 @@ def _seed_logs(db_session, admin, n=5):
     base = datetime.now(timezone.utc) - timedelta(minutes=n)
     for i in range(n):
         db_session.add(AuditLog(
-            actor_id=admin.id, actor_email=admin.email,
+            actor_id=admin.id, actor_username=admin.username,
             action="ban_user", target_type="user", target_id=f"user-{i}",
             detail={"status": "disabled"},
         ))
@@ -77,7 +77,7 @@ def test_audit_logs_default_pagination(client, admin_and_login, db_session):
 
 def test_audit_logs_normal_user_forbidden(client, registered_user):
     client.post("/api/v1/auth/login", json={
-        "email": registered_user["email"], "password": registered_user["password"],
+        "username": registered_user["username"], "password": registered_user["password"],
     })
     res = client.get("/api/v1/admin/audit-logs")
     assert res.status_code == 403
@@ -86,7 +86,7 @@ def test_audit_logs_normal_user_forbidden(client, registered_user):
 def test_audit_logs_redacted_detail_no_api_key(client, admin_and_login, db_session):
     """审计响应的 detail 绝不含 api_key（即便历史数据混入也应过滤）。"""
     db_session.add(AuditLog(
-        actor_id=admin_and_login.id, actor_email=admin_and_login.email,
+        actor_id=admin_and_login.id, actor_username=admin_and_login.username,
         action="set_global_llm", target_type="system_setting", target_id="llm_global_config",
         detail={"model": "glm-4-flash", "base_url": "https://x", "enabled": True},
     ))

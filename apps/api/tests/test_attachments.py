@@ -25,7 +25,7 @@ def _setup_project(client, registered_user, db_session):
 
     ensure_default_template(db_session)
     client.post("/api/v1/auth/login", json={
-        "email": registered_user["email"], "password": registered_user["password"],
+        "username": registered_user["username"], "password": registered_user["password"],
     })
     res = client.post("/api/v1/projects", json={"title": "测试发明"})
     project_id = res.json()["id"]

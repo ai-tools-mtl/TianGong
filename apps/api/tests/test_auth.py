@@ -18,22 +18,22 @@ def db():
 
 
 def test_authenticate_user_success(db):
-    register_user(db, email="a@b.com", password="Pass1234!", name="A")
-    user = authenticate_user(db, email="a@b.com", password="Pass1234!")
+    register_user(db, username="alice", password="Pass1234!", name="A")
+    user = authenticate_user(db, username="alice", password="Pass1234!")
     assert user is not None
-    assert user.email == "a@b.com"
+    assert user.username == "alice"
 
 
 def test_authenticate_user_wrong_password(db):
-    register_user(db, email="a@b.com", password="Pass1234!", name="A")
-    assert authenticate_user(db, email="a@b.com", password="wrong") is None
+    register_user(db, username="alice", password="Pass1234!", name="A")
+    assert authenticate_user(db, username="alice", password="wrong") is None
 
 
 def test_authenticate_user_not_found(db):
-    assert authenticate_user(db, email="none@b.com", password="x") is None
+    assert authenticate_user(db, username="nobody", password="x") is None
 
 
-def test_register_duplicate_email_raises(db):
-    register_user(db, email="a@b.com", password="Pass1234!", name="A")
+def test_register_duplicate_username_raises(db):
+    register_user(db, username="alice", password="Pass1234!", name="A")
     with pytest.raises(ConflictError):
-        register_user(db, email="a@b.com", password="Pass1234!", name="B")
+        register_user(db, username="alice", password="Pass1234!", name="B")

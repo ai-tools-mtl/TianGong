@@ -213,4 +213,4 @@ def test_audit_log_redacts_api_key(db_session, admin_user):
     assert log is not None
     assert "api_key" not in (log.detail or {})
     assert log.detail["model"] == "glm-4-flash"
-    assert log.actor_email == admin_user.email
+    assert log.actor_username == admin_user.username

@@ -56,7 +56,7 @@ def _setup_byok_user(client, registered_user, db_session):
     p = create_project(db_session, user=user, title="BYOK 测试发明")
     sections = list_sections(db_session, user_id=user.id, project_id=str(p.id))
     client.post("/api/v1/auth/login", json={
-        "email": registered_user["email"], "password": registered_user["password"],
+        "username": registered_user["username"], "password": registered_user["password"],
     })
     return sections
 
@@ -173,7 +173,7 @@ def test_chat_emits_no_llm_config_error_when_unconfigured(client, registered_use
     p = create_project(db_session, user=user, title="无配置发明")
     sections = list_sections(db_session, user_id=user.id, project_id=str(p.id))
     client.post("/api/v1/auth/login", json={
-        "email": registered_user["email"], "password": registered_user["password"],
+        "username": registered_user["username"], "password": registered_user["password"],
     })
 
     # 确认此用户确实无配置（registered_user 不带 BYOK）
