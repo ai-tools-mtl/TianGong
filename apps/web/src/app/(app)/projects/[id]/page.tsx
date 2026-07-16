@@ -261,6 +261,20 @@ export default function ProjectDetailPage() {
                 <Archive className="size-3.5" />
                 {project?.status === 'archived' ? '更新知识库' : '归档到知识库'}
               </Button>
+              {rightCollapsed && (
+                <>
+                  <span className="mx-1 h-4 w-px bg-border" />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 gap-1.5"
+                    onClick={toggleRight}
+                  >
+                    <PanelRight className="size-3.5" />
+                    AI
+                  </Button>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -295,19 +309,6 @@ export default function ProjectDetailPage() {
             <AIChatPanel sectionId={current.id} section={current} projectId={projectId} />
           </div>
         </aside>
-      )}
-
-      {/* 右栏折叠时：浮动展开按钮 */}
-      {current && rightCollapsed && (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={toggleRight}
-          className="fixed right-4 top-16 z-30 h-8 gap-1.5 shadow-sm"
-        >
-          <PanelRight className="size-3.5" />
-          AI
-        </Button>
       )}
 
       {current && (
