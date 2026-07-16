@@ -29,3 +29,6 @@ storage/
 
 # 上传文件（MVP 本地存储）
 apps/api/uploads/
+
+# Git worktrees（隔离工作区，skill: using-git-worktrees）
+.worktrees/
