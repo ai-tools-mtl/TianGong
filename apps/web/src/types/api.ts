@@ -2,7 +2,8 @@
 
 export interface User {
   id: string
-  email: string
+  username: string
+  email?: string | null
   name: string
   role: string
 }
@@ -37,13 +38,14 @@ export interface ApiError {
 }
 
 export interface RegisterRequest {
-  email: string
+  username: string
+  email?: string
   password: string
   name: string
 }
 
 export interface LoginRequest {
-  email: string
+  username: string
   password: string
 }
 
@@ -171,7 +173,8 @@ export interface Attachment {
 
 export interface AdminUser {
   id: string
-  email: string
+  username: string
+  email?: string | null
   name: string
   role: string
   status: string
@@ -218,7 +221,7 @@ export interface LLMStats {
 export interface AuditLogItem {
   id: string
   actor_id: string | null
-  actor_email: string
+  actor_username: string
   action: string
   target_type: string
   target_id: string | null
