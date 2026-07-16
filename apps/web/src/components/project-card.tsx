@@ -25,6 +25,12 @@ const STATUS_LABEL: Record<string, string> = {
   archived: '已归档',
 }
 
+// 生命周期阶段：默认 disclosure（交底书阶段）不显示，避免死值噪音；
+// 进入答复等后续阶段时才显示中文标签
+const STAGE_LABEL: Record<string, string> = {
+  response: '审查答复',
+}
+
 const STATUS_TONE: Record<string, string> = {
   draft: 'bg-muted text-muted-foreground',
   in_progress: 'bg-info/10 text-info',
@@ -103,7 +109,7 @@ export function ProjectCard({ project }: { project: Project }) {
         <CardContent className="space-y-3">
           <div className="space-y-1.5">
             <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-              <span>{project.stage}</span>
+              <span>{STAGE_LABEL[project.stage]}</span>
               <span className="tabular-nums">{project.progress_pct}%</span>
             </div>
             <div className="h-1 overflow-hidden rounded-full bg-muted">
