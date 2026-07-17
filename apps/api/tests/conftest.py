@@ -62,20 +62,52 @@ def _clear_cookie_domain(monkeypatch):
 
 @pytest.fixture(scope="function")
 def engine():
-    """每测试用独立 sqlite 内存库。knowledge_chunks 用 pgvector，sqlite 不支持，跳过。"""
+    """每测试用独立 sqlite 内存库。
+
+    knowledge_chunks 用 pgvector Vector 类型,sqlite 不支持。
+    解法:跳过原表,手动建一个「兼容版」(去掉 embedding 列,其余列齐全),
+    让 service 层测试能真正写/改 chunk 的 scope/file_id/review_status——
+    否则审核流等核心数据流只能被桩掉,测不到真实行为。
+    """
+    import sqlalchemy as sa
+
     eng = create_engine(
         "sqlite+pysqlite:///:memory:",
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    # 排除 knowledge_chunks（Vector 类型 sqlite 不支持）
+    # 排除原 knowledge_chunks(含 Vector 列,sqlite 建不了)
     tables = {
         name: t for name, t in Base.metadata.tables.items()
         if name != "knowledge_chunks"
     }
     for t in tables.values():
         t.create(eng, checkfirst=True)
+
+    # knowledge_chunks 兼容版:与生产同名列。
+    # embedding 用 JSON 替代 pgvector.Vector(SQLite 不支持)——测试不关心向量内容。
+    kc_compat = sa.Table(
+        "knowledge_chunks", sa.MetaData(),
+        sa.Column("id", sa.String(36), primary_key=True),
+        sa.Column("user_id", sa.String(36), nullable=False, index=True),
+        sa.Column("scope", sa.String(20), nullable=False),
+        sa.Column("source_type", sa.String(30), nullable=False),
+        sa.Column("source_id", sa.String(36), nullable=False, index=True),
+        sa.Column("source_section_key", sa.String(50)),
+        sa.Column("chunk_index", sa.Integer, default=0),
+        sa.Column("content", sa.Text),
+        sa.Column("embedding", sa.JSON),
+        sa.Column("metadata", sa.JSON),
+        sa.Column("file_id", sa.String(36), index=True),
+        sa.Column("review_status", sa.String(20)),
+        sa.Column("created_at", sa.DateTime(timezone=True)),
+        sa.Column("updated_at", sa.DateTime(timezone=True)),
+    )
+    kc_compat.create(eng, checkfirst=True)
+
     yield eng
+
+    kc_compat.drop(eng, checkfirst=True)
     for t in reversed(list(tables.values())):
         t.drop(eng, checkfirst=True)
     eng.dispose()

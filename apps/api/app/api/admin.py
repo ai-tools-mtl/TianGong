@@ -254,13 +254,14 @@ class RejectComment(BaseModel):
     comment: str | None = None
 
 
-def _review_out(r) -> dict:
+def _review_out(r, filename: str | None = None) -> dict:
     return {
         "id": str(r.id),
         "submitter_id": str(r.submitter_id),
         "reviewer_id": str(r.reviewer_id) if r.reviewer_id else None,
         "source_type": r.source_type,
         "file_id": str(r.file_id),
+        "filename": filename,  # 联查 KnowledgeFile 得到,供审核工作台展示
         "status": r.status,
         "review_comment": r.review_comment,
         "created_at": r.created_at.isoformat(),
@@ -273,10 +274,20 @@ def list_pending_reviews(
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """待审核工单列表(时间倒序)。"""
+    """待审核工单列表(时间倒序,带文件名便于审核)。"""
+    from app.models import KnowledgeFile
     from app.services import knowledge_review_service
 
-    return [_review_out(r) for r in knowledge_review_service.list_pending(db)]
+    reviews = knowledge_review_service.list_pending(db)
+    # 批量联查 file_id → filename,避免 N+1
+    file_ids = [r.file_id for r in reviews]
+    files_map: dict = {}
+    if file_ids:
+        from sqlalchemy import select
+
+        files = db.scalars(select(KnowledgeFile).where(KnowledgeFile.id.in_(file_ids)))
+        files_map = {f.id: f.filename for f in files}
+    return [_review_out(r, files_map.get(r.file_id)) for r in reviews]
 
 
 @router.post("/admin/knowledge/reviews/{review_id}/approve")

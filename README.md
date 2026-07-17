@@ -66,11 +66,15 @@ TianGong/
 - Node.js 18+ / pnpm
 - Docker（用于 PostgreSQL）
 
-### 1. 启动数据库
+### 1. 启动数据库 + 对象存储
 
 ```bash
-docker compose up -d postgres
+docker compose up -d postgres minio
 ```
+
+> minio 控制台:http://localhost:9001(默认 tiangong/tiangong12345)。文件存储(附件/模板/知识库)统一走 minio,必须先启动,否则后端首次访问存储会报错。
+
+> 注:docker-compose 用 `quay.io/minio/minio` 镜像(国内可达性优于 docker.io)。如 quay.io 不可达,可改回 `minio/minio`。
 
 ### 2. 启动后端
 

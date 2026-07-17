@@ -28,8 +28,26 @@ def upload_to_global(
     db: Session, *, storage: Storage, uploader, filename: str,
     content: bytes, mime: str, text: str,
 ) -> KnowledgeFile:
-    """admin 直传全局库。生成 file + chunk(scope=global),全员可检索。"""
+    """admin 直传全局库。生成 file + chunk(scope=global),全员可检索。
+
+    全局库去重:按 content_hash(SHA256)查重,已存在则返回已有记录,
+    不重复存储/向量化(防 admin 反复上传同一文件导致检索结果重复)。
+    """
+    import hashlib
+
     source_type = _source_type_for(filename)
+    content_hash = hashlib.sha256(content).hexdigest()
+
+    # 去重:全局库已有同内容文件 → 直接返回
+    existing = db.scalar(
+        select(KnowledgeFile).where(
+            (KnowledgeFile.scope == "global")
+            & (KnowledgeFile.content_hash == content_hash)
+        )
+    )
+    if existing is not None:
+        return existing
+
     object_key = f"global/{uuid.uuid4()}.{_ext(filename)}"
     storage.put("global", object_key, content, mime)
 
@@ -37,6 +55,7 @@ def upload_to_global(
         uploader_id=uploader.id, scope="global", bucket="global",
         object_key=object_key, filename=filename, mime_type=mime,
         size=len(content), source_type=source_type,
+        content_hash=content_hash,
     )
     db.add(kf)
     db.flush()  # 让 kf.id 就位
@@ -58,10 +77,13 @@ def upload_external(
     object_key = f"personal/{user.id}/{uuid.uuid4()}.{_ext(filename)}"
     storage.put("personal", object_key, content, mime)
 
+    import hashlib
+
     kf = KnowledgeFile(
         uploader_id=user.id, scope="personal", bucket="personal",
         object_key=object_key, filename=filename, mime_type=mime,
         size=len(content), source_type=source_type,
+        content_hash=hashlib.sha256(content).hexdigest(),
     )
     db.add(kf)
     db.flush()
@@ -136,15 +158,47 @@ def submit_disclosure_for_review(
     """归档交底书上报进全局(审核流 A)。
 
     关键约束 4:归档交底书无源文件,上报时生成导出 docx 存 minio。
-    流程:export_docx → 存 global bucket → 建 KnowledgeFile(scope=global,
-    待审核期间文件已在 global 但 chunk scope=personal,审核通过才升 global chunk)。
+    断链修复:建 KnowledgeFile 后,把该项目的 disclosure chunk 的 file_id
+    关联到它——这样 approve 的 _update_chunks_scope(file_id=kf.id) 才能命中
+    归档 chunk 并把它们升 global。否则归档 chunk file_id 永远为 NULL,审核通过也升不了。
+
+    幂等:该 project 已有 pending 工单(disclosure_export)则返回旧的,不重复生成 docx。
     """
+    from sqlalchemy import update
+
+    from app.models import KnowledgeChunk as KC
     from app.services.export_service import export_docx
+
+    # 幂等:已有 pending 的 disclosure_export 工单(关联此 project 的 chunk)→ 返回旧的
+    existing = db.scalar(
+        select(KnowledgeReview).where(
+            (KnowledgeReview.source_type == "disclosure_export")
+            & (KnowledgeReview.status == "pending")
+            & (KnowledgeReview.submitter_id == submitter.id)
+        )
+    )
+    # 进一步确认工单的 file 是否关联本 project(通过 chunk 的 source_id == project.id)
+    if existing is not None:
+        linked = db.scalar(
+            select(KnowledgeFile).where(KnowledgeFile.id == existing.file_id)
+        )
+        if linked is not None:
+            cnt = db.scalar(
+                select(KC).where(
+                    (KC.file_id == linked.id)
+                    & (KC.source_id == project.id)
+                    & (KC.source_type == "disclosure")
+                )
+            )
+            if cnt is not None:
+                return existing
 
     docx_bytes = export_docx(db, project=project)
     object_key = f"global/{uuid.uuid4()}.docx"
     mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     storage.put("global", object_key, docx_bytes, mime)
+
+    import hashlib
 
     kf = KnowledgeFile(
         uploader_id=submitter.id,
@@ -154,9 +208,20 @@ def submit_disclosure_for_review(
         filename=f"{project.title}.docx",
         mime_type=mime, size=len(docx_bytes),
         source_type="disclosure_export",
+        content_hash=hashlib.sha256(docx_bytes).hexdigest(),
     )
     db.add(kf)
     db.flush()
+
+    # ★ 断链修复:把该 project 的归档 chunk 关联到新建的 kf
+    # (之前 file_id 为 NULL,approve 按 file_id 改 scope 改不到它们)
+    db.execute(
+        update(KC).where(
+            (KC.source_id == project.id)
+            & (KC.source_type == "disclosure")
+            & (KC.user_id == submitter.id)
+        ).values(file_id=kf.id)
+    )
 
     review = KnowledgeReview(
         submitter_id=submitter.id, file_id=kf.id,

@@ -26,7 +26,7 @@ def approve(
 ) -> KnowledgeReview:
     """审核通过。
 
-    流 B(personal 文件):copy 到 global bucket + 改 kf.bucket/object_key/scope。
+    流 B(personal 文件):copy 到 global bucket + 删旧 personal 对象 + 改 kf.bucket/key/scope。
     流 A(文件已在 global):仅改 scope。
     chunk 批量 scope→global, review_status→approved。
     """
@@ -34,14 +34,16 @@ def approve(
     kf = db.get_one(KnowledgeFile, review.file_id)
 
     if kf.bucket == "personal":
-        # 流 B:复制文件 personal → global
+        # 流 B:复制文件 personal → global,再删旧 personal 对象(防存储泄漏)
+        old_key = kf.object_key
         new_key = _to_global_key(kf.object_key, kf.uploader_id)
-        storage.copy("personal", kf.object_key, "global", new_key)
+        storage.copy("personal", old_key, "global", new_key)
+        storage.delete("personal", old_key)  # 清理旧对象
         kf.bucket = "global"
         kf.object_key = new_key
 
     kf.scope = "global"
-    # chunk 批量升 global(抽成边界,便于测试 mock——SQLite 无 pgvector 表)
+    # chunk 批量升 global(ORM 查询改,SQLite 兼容版表也能跑)
     _update_chunks_scope(db, file_id=kf.id, scope="global", review_status="approved")
 
     review.status = "approved"
@@ -76,16 +78,17 @@ def _update_chunks_scope(
 ) -> None:
     """批量更新某 file 的 chunk 的 scope/review_status。
 
+    用 ORM 查询逐条改(而非 __table__.update 裸 SQL),
+    兼容 SQLite 测试库的 knowledge_chunks 兼容版表。
     scope=None 时只改 review_status(拒绝流:scope 不变)。
     """
-    values: dict = {"review_status": review_status}
-    if scope is not None:
-        values["scope"] = scope
-    db.execute(
-        KnowledgeChunk.__table__.update()
-        .where(KnowledgeChunk.file_id == file_id)
-        .values(**values)
-    )
+    chunks = list(db.scalars(
+        select(KnowledgeChunk).where(KnowledgeChunk.file_id == file_id)
+    ))
+    for c in chunks:
+        c.review_status = review_status
+        if scope is not None:
+            c.scope = scope
 
 
 def list_pending(db: Session) -> list[KnowledgeReview]:
