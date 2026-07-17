@@ -28,13 +28,14 @@ type NavItem = {
   label: string
   icon: React.ComponentType<{ className?: string }>
   adminOnly?: boolean
+  userOnly?: boolean
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { href: '/dashboard', label: '工作台', icon: LayoutDashboard },
-  { href: '/templates', label: '模板', icon: FileText },
-  { href: '/knowledge', label: '知识库', icon: BookOpen },
-  { href: '/tags', label: '标签', icon: Tags },
+  { href: '/dashboard', label: '工作台', icon: LayoutDashboard, userOnly: true },
+  { href: '/templates', label: '模板', icon: FileText, userOnly: true },
+  { href: '/knowledge', label: '知识库', icon: BookOpen, userOnly: true },
+  { href: '/tags', label: '标签', icon: Tags, userOnly: true },
   { href: '/admin', label: '管理', icon: Shield, adminOnly: true },
   { href: '/settings', label: '设置', icon: Settings },
 ]
@@ -56,7 +57,9 @@ export function Navbar() {
     }
   }
 
-  const items = NAV_ITEMS.filter((i) => !i.adminOnly || user?.role === 'admin')
+  const items = NAV_ITEMS.filter(
+    (i) => (!i.adminOnly || user?.role === 'admin') && (!i.userOnly || user?.role !== 'admin'),
+  )
 
   return (
     <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/75">

@@ -38,7 +38,7 @@ export function AuthForm({ mode }: AuthFormProps) {
       const user = await api.me()
       setUser(user)
       toast.success('登录成功')
-      router.push('/dashboard')
+      router.push(user.role === 'admin' ? '/admin' : '/dashboard')
     } catch (err) {
       const msg = (err as { message?: string })?.message
       // 后端认证错误的常见提示优化
