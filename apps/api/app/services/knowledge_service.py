@@ -28,8 +28,26 @@ def upload_to_global(
     db: Session, *, storage: Storage, uploader, filename: str,
     content: bytes, mime: str, text: str,
 ) -> KnowledgeFile:
-    """admin 直传全局库。生成 file + chunk(scope=global),全员可检索。"""
+    """admin 直传全局库。生成 file + chunk(scope=global),全员可检索。
+
+    全局库去重:按 content_hash(SHA256)查重,已存在则返回已有记录,
+    不重复存储/向量化(防 admin 反复上传同一文件导致检索结果重复)。
+    """
+    import hashlib
+
     source_type = _source_type_for(filename)
+    content_hash = hashlib.sha256(content).hexdigest()
+
+    # 去重:全局库已有同内容文件 → 直接返回
+    existing = db.scalar(
+        select(KnowledgeFile).where(
+            (KnowledgeFile.scope == "global")
+            & (KnowledgeFile.content_hash == content_hash)
+        )
+    )
+    if existing is not None:
+        return existing
+
     object_key = f"global/{uuid.uuid4()}.{_ext(filename)}"
     storage.put("global", object_key, content, mime)
 
@@ -37,6 +55,7 @@ def upload_to_global(
         uploader_id=uploader.id, scope="global", bucket="global",
         object_key=object_key, filename=filename, mime_type=mime,
         size=len(content), source_type=source_type,
+        content_hash=content_hash,
     )
     db.add(kf)
     db.flush()  # 让 kf.id 就位
@@ -58,10 +77,13 @@ def upload_external(
     object_key = f"personal/{user.id}/{uuid.uuid4()}.{_ext(filename)}"
     storage.put("personal", object_key, content, mime)
 
+    import hashlib
+
     kf = KnowledgeFile(
         uploader_id=user.id, scope="personal", bucket="personal",
         object_key=object_key, filename=filename, mime_type=mime,
         size=len(content), source_type=source_type,
+        content_hash=hashlib.sha256(content).hexdigest(),
     )
     db.add(kf)
     db.flush()
@@ -176,6 +198,8 @@ def submit_disclosure_for_review(
     mime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
     storage.put("global", object_key, docx_bytes, mime)
 
+    import hashlib
+
     kf = KnowledgeFile(
         uploader_id=submitter.id,
         scope="global",  # 文件已在 global bucket(归档流特点)
@@ -184,6 +208,7 @@ def submit_disclosure_for_review(
         filename=f"{project.title}.docx",
         mime_type=mime, size=len(docx_bytes),
         source_type="disclosure_export",
+        content_hash=hashlib.sha256(docx_bytes).hexdigest(),
     )
     db.add(kf)
     db.flush()

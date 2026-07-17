@@ -205,3 +205,79 @@ def test_flow_b_approve_promotes_chunks_to_global(
     chunks_after = list(db_session.scalars(select(KnowledgeChunk).where(KnowledgeChunk.file_id == kf.id)))
     assert all(c.scope == "global" for c in chunks_after)
     assert all(c.review_status == "approved" for c in chunks_after)
+
+
+# ── P1-2 全局库去重 ──────────────────────────────────────────
+
+
+def test_global_upload_dedup_by_content_hash(
+    db_session, admin_user, fake_embed, _reset_storage
+):
+    """全局库去重:同内容文件第二次上传返回已有记录,不重复存储/向量化。"""
+    from app.core.storage import get_storage
+
+    storage = get_storage()
+    content = b"same content bytes"
+
+    kf1 = ks.upload_to_global(
+        db_session, storage=storage, uploader=admin_user,
+        filename="a.pdf", content=content,
+        mime="application/pdf", text="某内容",
+    )
+    kf2 = ks.upload_to_global(
+        db_session, storage=storage, uploader=admin_user,
+        filename="b.pdf",  # 不同文件名,同内容
+        content=content, mime="application/pdf", text="某内容",
+    )
+
+    assert kf1.id == kf2.id, "同内容应去重,返回同一 KnowledgeFile"
+    # 全局库只有一条记录
+    global_files = list(db_session.scalars(
+        select(KnowledgeFile).where(KnowledgeFile.scope == "global")
+    ))
+    assert len(global_files) == 1
+    assert kf1.content_hash is not None
+    assert len(kf1.content_hash) == 64  # SHA256 hex
+
+
+def test_personal_upload_not_dedup(
+    db_session, normal_user, fake_embed, _reset_storage
+):
+    """个人库不去重:用户重复上传是允许的(personal scope)。"""
+    from app.core.storage import get_storage
+
+    storage = get_storage()
+    content = b"same"
+
+    kf1 = ks.upload_external(
+        db_session, storage=storage, user=normal_user,
+        filename="a.docx", content=content,
+        mime="application/docx", text="x",
+    )
+    kf2 = ks.upload_external(
+        db_session, storage=storage, user=normal_user,
+        filename="b.docx", content=content,
+        mime="application/docx", text="x",
+    )
+    assert kf1.id != kf2.id, "个人库不去重"
+    assert kf1.content_hash == kf2.content_hash  # hash 仍记录,只是不用于查重
+
+
+def test_global_upload_different_content_not_dedup(
+    db_session, admin_user, fake_embed, _reset_storage
+):
+    """不同内容不去重。"""
+    from app.core.storage import get_storage
+
+    storage = get_storage()
+    kf1 = ks.upload_to_global(
+        db_session, storage=storage, uploader=admin_user,
+        filename="a.pdf", content=b"AAA",
+        mime="application/pdf", text="a",
+    )
+    kf2 = ks.upload_to_global(
+        db_session, storage=storage, uploader=admin_user,
+        filename="b.pdf", content=b"BBB",
+        mime="application/pdf", text="b",
+    )
+    assert kf1.id != kf2.id
