@@ -375,9 +375,34 @@ export function useRevokeShareLink(projectId: string) {
 
 // ── AI 对话记录 ──
 
-export function useMessages(sectionId: string) {
+export function useMessages(sectionId: string, conversationId?: string) {
   return useQuery({
     queryKey: queryKeys.messages(sectionId),
-    queryFn: () => api.listMessages(sectionId),
+    queryFn: () => api.listMessages(sectionId, conversationId),
+  })
+}
+
+// ── AI 会话 ──
+
+export function useConversations(sectionId: string) {
+  return useQuery({
+    queryKey: ['conversations', sectionId] as const,
+    queryFn: () => api.listConversations(sectionId),
+  })
+}
+
+export function useCreateConversation(sectionId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (title?: string) => api.createConversation(sectionId, title),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['conversations', sectionId] }),
+  })
+}
+
+export function useDeleteConversation(sectionId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (conversationId: string) => api.deleteConversation(sectionId, conversationId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['conversations', sectionId] }),
   })
 }

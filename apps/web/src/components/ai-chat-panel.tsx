@@ -1,6 +1,6 @@
 'use client'
 
-import { GitCompare, Loader2, PanelRight, Sparkles, Trash2 } from 'lucide-react'
+import { GitCompare, Loader2, PanelRight, Plus, Sparkles, Trash2 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -9,10 +9,18 @@ import ReactMarkdown from 'react-markdown'
 import { Button } from '@/components/ui/button'
 import { DiffReviewPanel } from '@/components/diff-review-panel'
 import { api } from '@/lib/api'
-import { queryKeys, useApplyDiff, useComputeDiff, useMessages } from '@/lib/queries'
+import {
+  queryKeys,
+  useApplyDiff,
+  useComputeDiff,
+  useConversations,
+  useCreateConversation,
+  useDeleteConversation,
+  useMessages,
+} from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import { useUIStore } from '@/stores/ui'
-import type { Hunk, Section } from '@/types/api'
+import type { Conversation, Hunk, Section } from '@/types/api'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -35,30 +43,48 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [phase, setPhase] = useState<AIPhase>('idle')
-  /** 最近一次 generate 累积的 markdown 文本（用于 diff 计算） */
   const [aiDraft, setAiDraft] = useState('')
   const [hunks, setHunks] = useState<Hunk[]>([])
+  const [currentConvId, setCurrentConvId] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const loadedRef = useRef(false)
+  const msgLoadedForConv = useRef<string | null>(null)
 
   const computeDiff = useComputeDiff(sectionId)
   const applyDiff = useApplyDiff(sectionId, projectId)
-  const { data: history } = useMessages(sectionId)
+  const { data: conversations, isLoading: convsLoading } = useConversations(sectionId)
+  const createConv = useCreateConversation(sectionId)
+  const deleteConv = useDeleteConversation(sectionId)
+  const { data: history } = useMessages(sectionId, currentConvId ?? undefined)
 
-  // 加载历史对话记录（切换 section 时重新加载）
+  // 首次加载会话列表：自动选中最新（第一个）
   useEffect(() => {
-    if (history && !loadedRef.current) {
-      loadedRef.current = true
-      setMessages(history.map((m: { role: string; content: string }) => ({ role: m.role as 'user' | 'assistant', content: m.content })))
+    if (conversations && conversations.length > 0 && !currentConvId) {
+      setCurrentConvId(conversations[0].id)
     }
-  }, [history])
+  }, [conversations, currentConvId])
 
-  // section 变化时重置加载标记
+  // 会话或 section 变化时加载历史消息
   useEffect(() => {
-    loadedRef.current = false
+    const loadKey = currentConvId ?? '__null__'
+    if (history && msgLoadedForConv.current !== loadKey) {
+      msgLoadedForConv.current = loadKey
+      setMessages(
+        history.map((m: { role: string; content: string }) => ({
+          role: m.role as 'user' | 'assistant',
+          content: m.content,
+        })),
+      )
+    }
+  }, [history, currentConvId])
+
+  // section 变化时重置
+  useEffect(() => {
+    setCurrentConvId(null)
+    msgLoadedForConv.current = null
     setMessages([])
+    setPhase('idle')
   }, [sectionId])
 
   // 自动滚到底部
@@ -75,6 +101,42 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
     ta.style.height = 'auto'
     ta.style.height = `${Math.min(ta.scrollHeight, 120)}px`
   }, [input])
+
+  // 切换会话时重置消息加载标记
+  function handleSelectConversation(convId: string) {
+    if (convId === currentConvId) return
+    msgLoadedForConv.current = null
+    setCurrentConvId(convId)
+    setMessages([])
+    setPhase('idle')
+  }
+
+  function handleNewConversation() {
+    msgLoadedForConv.current = null
+    setCurrentConvId(null)
+    setMessages([])
+    setPhase('idle')
+    // 创建会话后由 conversations query 自动刷新
+    createConv.mutate('新对话', {
+      onSuccess: (conv: Conversation) => {
+        setCurrentConvId(conv.id)
+      },
+    })
+  }
+
+  function handleDeleteConversation() {
+    if (!currentConvId) return
+    const convId = currentConvId
+    deleteConv.mutate(convId, {
+      onSuccess: () => {
+        msgLoadedForConv.current = null
+        setCurrentConvId(null)
+        setMessages([])
+        setPhase('idle')
+        toast.success('会话已删除')
+      },
+    })
+  }
 
   async function handleSend() {
     if (!input.trim() || phase === 'chatting' || phase === 'generating') return
@@ -93,7 +155,9 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
           copy[copy.length - 1] = { role: 'assistant', content: aiText }
           return copy
         })
-      }, abortRef.current.signal)
+      }, abortRef.current.signal, currentConvId ?? undefined)
+      // chat 后刷新会话列表（标题可能更新）
+      qc.invalidateQueries({ queryKey: ['conversations', sectionId] })
     } catch (err: unknown) {
       if (!(err instanceof DOMException && err.name === 'AbortError')) {
         toast.error('AI 回复失败')
@@ -119,9 +183,8 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
   function handleClearChat() {
     setMessages([])
     setPhase('idle')
-    // 后端消息无法批量删除（无 DELETE 端点），仅清前端展示
-    // 下次切回此 section 会重新加载历史，如需彻底清空后续加后端端点
-    toast.info('已清空当前对话显示')
+    msgLoadedForConv.current = '__force__'
+    toast.info('已清空当前显示')
   }
 
   async function handleGenerate() {
@@ -252,6 +315,47 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
           </Button>
         </div>
       </div>
+
+      {/* 会话选择栏 */}
+      {phase !== 'generating' && phase !== 'done' && (
+        <div className="flex h-8 shrink-0 items-center gap-1 border-b bg-muted/30 px-2">
+          <select
+            value={currentConvId ?? ''}
+            onChange={(e) => handleSelectConversation(e.target.value)}
+            className="h-6 flex-1 truncate rounded border-none bg-transparent text-[12px] outline-none cursor-pointer hover:bg-muted"
+            disabled={convsLoading || createConv.isPending}
+          >
+            {convsLoading && <option>加载中...</option>}
+            {!convsLoading && (conversations?.length ?? 0) === 0 && <option value="">新对话</option>}
+            {conversations?.map((c: Conversation) => (
+              <option key={c.id} value={c.id}>
+                {c.title}
+              </option>
+            ))}
+          </select>
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            onClick={handleNewConversation}
+            disabled={createConv.isPending}
+            title="新建会话"
+          >
+            <Plus className="size-3.5" />
+          </Button>
+          {currentConvId && (conversations?.length ?? 0) > 1 && (
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={handleDeleteConversation}
+              disabled={deleteConv.isPending}
+              title="删除当前会话"
+              className="text-muted-foreground hover:text-destructive"
+            >
+              <Trash2 className="size-3.5" />
+            </Button>
+          )}
+        </div>
+      )}
 
       {/* 内容区 */}
       <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto px-3 py-3">

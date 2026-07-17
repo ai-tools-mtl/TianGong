@@ -158,12 +158,13 @@ export const api = {
     message: string,
     onToken: (t: string) => void,
     signal?: AbortSignal,
+    conversationId?: string,
   ) => {
     const res = await fetch(`${BASE}/api/v1/sections/${sectionId}/chat`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, conversation_id: conversationId ?? null }),
       signal,
     })
     return _consumeSSE(res, onToken)
@@ -182,10 +183,29 @@ export const api = {
     return _consumeSSE(res, onToken)
   },
 
-  listMessages: (sectionId: string) =>
+  listMessages: (sectionId: string, conversationId?: string) =>
     request<{ id: string; role: string; content: string; created_at: string }[]>(
-      `/sections/${sectionId}/messages`,
+      `/sections/${sectionId}/messages${conversationId ? `?conversation_id=${conversationId}` : ''}`,
     ),
+
+  // ── AI 会话 ──
+  listConversations: (sectionId: string) =>
+    request<import('@/types/api').Conversation[]>(`/sections/${sectionId}/conversations`),
+
+  createConversation: (sectionId: string, title?: string) =>
+    request<import('@/types/api').Conversation>(`/sections/${sectionId}/conversations`, {
+      method: 'POST',
+      body: JSON.stringify({ title: title ?? null }),
+    }),
+
+  updateConversation: (sectionId: string, conversationId: string, title: string) =>
+    request<import('@/types/api').Conversation>(
+      `/sections/${sectionId}/conversations/${conversationId}`,
+      { method: 'PATCH', body: JSON.stringify({ title }) },
+    ),
+
+  deleteConversation: (sectionId: string, conversationId: string) =>
+    request<void>(`/sections/${sectionId}/conversations/${conversationId}`, { method: 'DELETE' }),
 
   // ── 版本 ──
   listVersions: (sectionId: string) =>
