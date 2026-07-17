@@ -16,5 +16,24 @@ services:
       timeout: 5s
       retries: 5
 
+  minio:
+    image: quay.io/minio/minio:latest
+    container_name: tiangong-minio
+    environment:
+      MINIO_ROOT_USER: tiangong
+      MINIO_ROOT_PASSWORD: tiangong12345
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: server /data --console-address ":9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
 volumes:
   pgdata:
+  miniodata:

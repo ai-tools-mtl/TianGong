@@ -270,6 +270,64 @@ export const api = {
   testMyLLM: (data: { base_url: string; api_key: string; model: string }) =>
     request<{ ok: boolean; response?: string; error?: string }>(`/settings/llm/test`, { method: 'POST', body: JSON.stringify(data) }),
 
+  // ── 知识库(三域 + 审核流)──
+  uploadKnowledgeFile: async (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(`${BASE}/api/v1/knowledge/upload`, {
+      method: 'POST', credentials: 'include', body: form,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: `HTTP ${res.status}` }))
+      throw err
+    }
+    return res.json() as Promise<import('@/types/api').KnowledgeFile>
+  },
+
+  adminUploadGlobal: async (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(`${BASE}/api/v1/admin/knowledge/upload`, {
+      method: 'POST', credentials: 'include', body: form,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: `HTTP ${res.status}` }))
+      throw err
+    }
+    return res.json() as Promise<{ file_id: string; scope: string; source_type: string }>
+  },
+
+  submitKnowledgeReview: (fileId: string) =>
+    request<{ review_id: string; status: string }>(
+      `/knowledge/files/${fileId}/submit-review`, { method: 'POST' },
+    ),
+
+  submitDisclosureReview: (projectId: string) =>
+    request<{ review_id: string; status: string }>(
+      `/projects/${projectId}/submit-disclosure-review`, { method: 'POST' },
+    ),
+
+  listPersonalKnowledge: () =>
+    request<import('@/types/api').KnowledgeFile[]>('/knowledge/files/personal'),
+  listGlobalKnowledge: () =>
+    request<import('@/types/api').KnowledgeFile[]>('/knowledge/files/global'),
+
+  knowledgeFileUrl: (fileId: string) =>
+    `${BASE}/api/v1/knowledge/files/${fileId}/download`,
+
+  // ── 知识库审核(admin)──
+  listPendingReviews: () =>
+    request<import('@/types/api').KnowledgeReview[]>('/admin/knowledge/reviews'),
+  approveReview: (reviewId: string) =>
+    request<import('@/types/api').KnowledgeReview>(
+      `/admin/knowledge/reviews/${reviewId}/approve`, { method: 'POST' },
+    ),
+  rejectReview: (reviewId: string, comment?: string) =>
+    request<import('@/types/api').KnowledgeReview>(
+      `/admin/knowledge/reviews/${reviewId}/reject`,
+      { method: 'POST', body: JSON.stringify({ comment: comment ?? null }) },
+    ),
+
   // ── Diff（计划 16）──
   computeDiff: (sectionId: string, aiText: string) =>
     request<DiffResponse>(`/sections/${sectionId}/diff`, {

@@ -29,3 +29,10 @@ storage/
 
 # 上传文件（MVP 本地存储）
 apps/api/uploads/
+
+# 测试产物（sqlite 本地文件库）
+apps/api/test.db
+apps/api/*.db
+
+# Git worktrees（隔离工作区，skill: using-git-worktrees）
+.worktrees/

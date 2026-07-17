@@ -37,7 +37,7 @@ def on_startup():
     try:
         from app.services.parse_service import recover_pending_jobs
 
-        n = recover_pending_jobs("uploads")
+        n = recover_pending_jobs()
         if n:
             loguru.logger.info(f"恢复扫描：重新入队 {n} 个解析任务")
     except Exception as e:

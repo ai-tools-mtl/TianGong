@@ -288,6 +288,31 @@ export interface ProjectTag {
   name: string
 }
 
+// ── 知识库(三域 + 审核流)──
+
+export interface KnowledgeFile {
+  id: string
+  uploader_id: string
+  scope: 'personal' | 'global'
+  filename: string
+  mime_type: string
+  size: number
+  source_type: string // external_pdf / external_docx / disclosure_export
+  created_at: string
+}
+
+export interface KnowledgeReview {
+  id: string
+  submitter_id: string
+  reviewer_id: string | null
+  source_type: string // external / disclosure_export
+  file_id: string
+  status: 'pending' | 'approved' | 'rejected'
+  review_comment: string | null
+  created_at: string
+  reviewed_at: string | null
+}
+
 // ── Diff（计划 16）──
 
 /** diff-match-patch 操作：-1=删除 / 0=相等 / 1=插入（元组，可解构为 [op, text]） */

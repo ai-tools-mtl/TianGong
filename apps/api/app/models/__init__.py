@@ -3,6 +3,8 @@ from app.models.attachment import Attachment
 from app.models.audit_log import AuditLog
 from app.models.base import Base, JSONType
 from app.models.knowledge_chunk import KnowledgeChunk
+from app.models.knowledge_file import KnowledgeFile
+from app.models.knowledge_review import KnowledgeReview
 from app.models.llm_call_log import LLMCallLog
 from app.models.message import Message
 from app.models.parse_job import ParseJob
@@ -24,6 +26,10 @@ __all__ = [
     "Base", "JSONType",
     "User", "Attachment", "Project", "ProjectMember", "ProjectTag", "Tag",
     "SystemSetting", "Template", "ParseJob", "Section", "SectionVersion",
-    "ShareLink", "Message", "KnowledgeChunk", "ReviewRubric", "ReviewRecord",
-    "UserLLMConfig", "AgentSkill", "LLMCallLog", "AuditLog",
+    "ShareLink", "Message",
+    "KnowledgeChunk", "KnowledgeFile", "KnowledgeReview",
+    "ReviewRubric", "ReviewRecord", "UserLLMConfig",
+    "AgentSkill",
+    "LLMCallLog",
+    "AuditLog",
 ]
