@@ -103,10 +103,13 @@ def test_allowed_models_empty_list_clears(db_session, admin_user_for_svc):
 
 
 def test_get_global_no_config_returns_empty(db_session, admin_user_for_svc):
-    """无配置时 get 返回 global_config=None。"""
+    """无配置时 get 返回 global_config=None。
+
+    enabled 默认 True：与 _build_global_config 对齐（记录不存在视为开启，I-1）。
+    """
     res = llm_config_service.get_global_llm_settings(db_session)
     assert res["global_config"] is None
-    assert res["llm_global_enabled"] is False
+    assert res["llm_global_enabled"] is True
 
 
 def test_embedding_model_flows_into_resolve(db_session, admin_user_for_svc):
