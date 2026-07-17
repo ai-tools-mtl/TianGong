@@ -1,6 +1,6 @@
 'use client'
 
-import { GitCompare, Loader2, PanelRight, Sparkles, Trash2 } from 'lucide-react'
+import { GitCompare, Loader2, PanelRight, Sparkles, Square, Trash2 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -335,7 +335,7 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
               <Trash2 className="size-3.5" />
             </Button>
           )}
-          {phase === 'generating' || phase === 'chatting' ? (
+          {phase === 'generating' ? (
             <Button size="xs" variant="destructive" onClick={handleStop}>
               停止
             </Button>
@@ -462,9 +462,27 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
               className="flex-1 resize-none rounded-lg border bg-background px-3 py-2 text-[13px] leading-relaxed outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
               style={{ minHeight: '36px', maxHeight: '120px' }}
             />
-            <Button size="sm" onClick={handleSend} disabled={busy || !input.trim()} className="shrink-0">
-              发送
-            </Button>
+            {phase === 'chatting' ? (
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={handleStop}
+                className="shrink-0 gap-1.5"
+                title="停止生成"
+              >
+                <Square className="size-3 fill-current" />
+                停止
+              </Button>
+            ) : (
+              <Button
+                size="sm"
+                onClick={handleSend}
+                disabled={busy || !input.trim()}
+                className="shrink-0"
+              >
+                发送
+              </Button>
+            )}
           </div>
         </div>
       )}
