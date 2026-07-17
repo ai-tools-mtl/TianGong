@@ -93,7 +93,7 @@ export function Navbar() {
         {/* 右：主题 + 用户 */}
         <div className="flex items-center gap-2">
           <ThemeToggle />
-          {user && <UserMenu email={user.email} onLogout={handleLogout} />}
+          {user && <UserMenu username={user.username} email={user.email} onLogout={handleLogout} />}
         </div>
       </div>
     </header>
@@ -101,10 +101,12 @@ export function Navbar() {
 }
 
 function UserMenu({
+  username,
   email,
   onLogout,
 }: {
-  email: string
+  username: string
+  email?: string | null
   onLogout: () => void
 }) {
   const [open, setOpen] = useState(false)
@@ -130,10 +132,10 @@ function UserMenu({
         className="flex items-center gap-2 rounded-md py-1.5 pl-2 pr-1.5 text-[13px] hover:bg-accent/60 transition-colors"
       >
         <span className="grid size-6 place-items-center rounded-full bg-primary text-[11px] font-medium text-primary-foreground">
-          {email[0]?.toUpperCase()}
+          {username[0]?.toUpperCase()}
         </span>
         <span className="hidden text-muted-foreground sm:inline max-w-[180px] truncate">
-          {email}
+          {username}
         </span>
         <ChevronDown className="size-3.5 text-muted-foreground" />
       </button>
@@ -141,7 +143,8 @@ function UserMenu({
         <div className="absolute right-0 top-full mt-1 w-56 overflow-hidden rounded-md border bg-popover p-1 text-popover-foreground shadow-md">
           <div className="px-2.5 py-1.5">
             <p className="text-[11px] text-muted-foreground">已登录</p>
-            <p className="truncate text-[13px]">{email}</p>
+            <p className="truncate text-[13px] font-medium">{username}</p>
+            {email && <p className="truncate text-[12px] text-muted-foreground">{email}</p>}
           </div>
           <div className="my-1 h-px bg-border" />
           {/* 主题快切 */}

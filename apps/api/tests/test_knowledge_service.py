@@ -44,6 +44,7 @@ def fake_embed(monkeypatch):
 @pytest.fixture
 def admin_user(db_session):
     u = User(
+        username="admin",
         email="admin@tiangong.dev",
         password_hash=hash_password("P1!"),
         name="admin",
@@ -156,7 +157,7 @@ def test_submit_for_review_rejects_not_owner(
         filename="ref.pdf", content=b"x", mime="application/pdf", text="案例",
     )
     # 造另一个用户
-    other = User(email="other@test.com", password_hash=hash_password("P1!"), name="O")
+    other = User(username="other", email="other@test.com", password_hash=hash_password("P1!"), name="O")
     db_session.add(other)
     db_session.commit()
 

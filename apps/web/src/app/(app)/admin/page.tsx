@@ -104,12 +104,12 @@ export default function AdminPage() {
                   <div className="space-y-0.5">
                     <div className="flex items-center gap-2">
                       <span className="text-[14px] font-medium">{u.name}</span>
-                      <span className="text-[13px] text-muted-foreground">{u.email}</span>
+                      <span className="text-[13px] text-muted-foreground">@{u.username}</span>
                       {u.role === 'admin' && <Badge>管理员</Badge>}
                       {u.status === 'disabled' && <Badge variant="destructive">已封禁</Badge>}
                     </div>
                     <p className="text-[12px] text-muted-foreground">
-                      {u.project_count} 个项目 · {u.has_own_llm_key ? '自配 Key' : '用全局 Key'} · {u.status}
+                      {u.email || '—'} · {u.project_count} 个项目 · {u.has_own_llm_key ? '自配 Key' : '用全局 Key'} · {u.status}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
@@ -296,7 +296,7 @@ export default function AdminPage() {
                 <div key={a.id} className="px-4 py-3 space-y-0.5">
                   <div className="flex items-center gap-2">
                     <span className="font-medium">{a.action}</span>
-                    <span className="text-muted-foreground">{a.actor_email}</span>
+                    <span className="text-muted-foreground">@{a.actor_username}</span>
                     <span className="text-muted-foreground">
                       → {a.target_type}
                       {a.target_id ? `:${a.target_id}` : ''}

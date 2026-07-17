@@ -43,6 +43,7 @@ def normal_user(db_session, registered_user):
 @pytest.fixture
 def admin_user(db_session):
     u = User(
+        username="admin",
         email="admin@tiangong.dev",
         password_hash=hash_password("P1!"),
         name="admin", role="admin",

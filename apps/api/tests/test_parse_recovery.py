@@ -28,7 +28,7 @@ def test_run_parse_job_standalone_opens_own_session(
     client.post(
         "/api/v1/auth/login",
         json={
-            "email": registered_user["email"],
+            "username": registered_user["username"],
             "password": registered_user["password"],
         },
     )
@@ -80,7 +80,7 @@ def test_recover_pending_jobs_reenqueues_processing_and_stale_pending(
     monkeypatch.setattr(db_module, "SessionLocal", TestingSession)
 
     # 造一个真实用户（ParseJob.user_id 外键约束）
-    u = User(email="rec@example.com", password_hash=hash_password("Pass1234!"), name="R")
+    u = User(username="rec", email="rec@example.com", password_hash=hash_password("Pass1234!"), name="R")
     db_session.add(u)
     db_session.commit()
 
@@ -137,7 +137,7 @@ def test_upload_returns_202_processing_and_background_completes(
     client.post(
         "/api/v1/auth/login",
         json={
-            "email": registered_user["email"],
+            "username": registered_user["username"],
             "password": registered_user["password"],
         },
     )
@@ -220,7 +220,7 @@ def test_get_parse_job_status_completed(
     client.post(
         "/api/v1/auth/login",
         json={
-            "email": registered_user["email"],
+            "username": registered_user["username"],
             "password": registered_user["password"],
         },
     )
@@ -256,7 +256,7 @@ def test_get_parse_job_not_found(client, registered_user):
     client.post(
         "/api/v1/auth/login",
         json={
-            "email": registered_user["email"],
+            "username": registered_user["username"],
             "password": registered_user["password"],
         },
     )

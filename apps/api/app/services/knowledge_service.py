@@ -22,6 +22,7 @@ from app.core.storage import Storage
 from app.models import KnowledgeChunk, KnowledgeFile, KnowledgeReview
 from app.rag.chunker import chunk_sections
 from app.rag.embedding import embed_texts
+from app.services.llm_config_service import resolve_llm_config
 
 
 def upload_to_global(
@@ -240,11 +241,20 @@ def _ingest_chunks(
     db: Session, *, scope: str, user_id, file_id, source_type: str,
     text: str, title: str,
 ) -> None:
-    """分块 + 向量化 + 写 chunk(关联 file)。"""
+    """分块 + 向量化 + 写 chunk(关联 file)。
+
+    向量化配置由 user_id 内部解析（断链修复：embed 真用 BYOK/全局/env 配置）。
+    无可用配置时跳过向量化但 chunk 仍写入（embedding=None），检索时该 chunk 不命中。
+    """
     chunks = chunk_sections([{"key": None, "title": title, "content": text}])
     if not chunks:
         return
-    vectors = embed_texts([c.content for c in chunks])
+    embed_config = resolve_llm_config(db, user_id=user_id)
+    if embed_config is None:
+        # 无 LLM 配置：chunk 仍入库（embedding=None），该 chunk 不参与向量检索
+        vectors: list[list[float] | None] = [None] * len(chunks)
+    else:
+        vectors = embed_texts([c.content for c in chunks], embed_config=embed_config)
     for c, vec in zip(chunks, vectors, strict=False):
         db.add(KnowledgeChunk(
             user_id=user_id, scope=scope, file_id=file_id,

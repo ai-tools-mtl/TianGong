@@ -23,6 +23,7 @@ def _make_admin_app():
 
 def test_admin_can_access(client, db_session):
     admin = User(
+        username="admin",
         email="admin@example.com",
         password_hash=hash_password("Pass1234!"),
         name="管理员",

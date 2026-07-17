@@ -20,6 +20,7 @@ from app.models.system_setting import SystemSetting
 from app.models.tag import Tag
 from app.models.template import Template
 from app.models.user import User
+from app.models.user_global_llm_grant import UserGlobalLLMGrant
 from app.models.user_llm_config import UserLLMConfig
 
 __all__ = [
@@ -29,6 +30,7 @@ __all__ = [
     "ShareLink", "Message",
     "KnowledgeChunk", "KnowledgeFile", "KnowledgeReview",
     "ReviewRubric", "ReviewRecord", "UserLLMConfig",
+    "UserGlobalLLMGrant",
     "AgentSkill",
     "LLMCallLog",
     "AuditLog",

@@ -28,6 +28,7 @@ def fake_embed(monkeypatch):
 @pytest.fixture
 def admin_user(db_session):
     u = User(
+        username="admin",
         email="admin@tiangong.dev",
         password_hash=hash_password("P1!"),
         name="admin",

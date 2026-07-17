@@ -10,7 +10,8 @@ from app.models.base import Base, IdMixin, TimestampMixin
 class User(Base, IdMixin, TimestampMixin):
     __tablename__ = "users"
 
-    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    username: Mapped[str] = mapped_column(String(50), unique=True, index=True)  # 登录标识
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)  # 可选联系方式
     password_hash: Mapped[str] = mapped_column(String(255))
     name: Mapped[str] = mapped_column(String(100))
 

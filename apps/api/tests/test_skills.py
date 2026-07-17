@@ -25,7 +25,7 @@ def test_agent_skill_model_basic_fields(db):
     from app.core.security import hash_password
     from app.models import AgentSkill, Project, User
 
-    u = User(email="s@b.com", password_hash=hash_password("Pass1234!"), name="S")
+    u = User(username="s", email="s@b.com", password_hash=hash_password("Pass1234!"), name="S")
     db.add(u)
     db.commit()
     p = Project(user_id=u.id, title="项目")
@@ -59,7 +59,7 @@ def test_agent_skill_importable_from_models():
 def _make_project(db):
     from app.core.security import hash_password
     from app.models import Project, User
-    u = User(email="s2@b.com", password_hash=hash_password("Pass1234!"), name="S2")
+    u = User(username="s2", email="s2@b.com", password_hash=hash_password("Pass1234!"), name="S2")
     db.add(u)
     db.commit()
     p = Project(user_id=u.id, title="P")
@@ -243,6 +243,15 @@ def test_run_review_uses_one_run_when_consistency_check_disabled(db, monkeypatch
     from app.models import Section
 
     p = _make_project(db)
+    # 阶段 0 strict：run_review 现需生效 LLM 配置，否则抛 ValidationError
+    from app.core.security import encrypt_value
+    from app.models import UserLLMConfig
+    db.add(UserLLMConfig(
+        user_id=p.user_id, name="test", provider="custom",
+        base_url="https://test.example.com",
+        api_key_encrypted=encrypt_value("sk-test-key"),
+        model="test-model", embedding_model="test-embed",
+    ))
     # 禁用 consistency_check
     from app.models import AgentSkill
     db.add(AgentSkill(project_id=p.id, skill_key="consistency_check", enabled=False))
@@ -258,7 +267,7 @@ def test_run_review_uses_one_run_when_consistency_check_disabled(db, monkeypatch
     calls = {"n": 0}
 
     import app.services.review_service as rs
-    def counting_score(criterion, sections):
+    def counting_score(criterion, sections, llm_config):
         calls["n"] += 1
         return (80, "ev", "sug")
 
@@ -278,7 +287,7 @@ def test_run_review_uses_one_run_when_consistency_check_disabled(db, monkeypatch
 
 def _login(client, registered_user):
     client.post("/api/v1/auth/login", json={
-        "email": registered_user["email"], "password": registered_user["password"],
+        "username": registered_user["username"], "password": registered_user["password"],
     })
 
 
@@ -335,7 +344,7 @@ def test_api_list_skills_other_users_project_returns_404(client, registered_user
     from app.models import User
     from app.services import project_service as ps
 
-    other = User(email="other@b.com", password_hash=hash_password("Pass1234!"), name="O")
+    other = User(username="other", email="other@b.com", password_hash=hash_password("Pass1234!"), name="O")
     db_session.add(other)
     db_session.commit()
     other_project = ps.create_project(db_session, user=other, title="别人的")

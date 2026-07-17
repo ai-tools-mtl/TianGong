@@ -1,17 +1,26 @@
 def _make_logged_in_section(client, registered_user, db_session):
-    """登录 + 建项目 + 返回第一个 section 对象（含真实 id）。"""
+    """登录 + 建项目 + 给用户配 BYOK（阶段 0 strict：端点要求生效 LLM 配置）+ 返回第一个 section。"""
     from app.services.seed_service import ensure_default_template
     from app.services.project_service import create_project
     from app.services.section_service import list_sections
-    from app.models import User
+    from app.models import User, UserLLMConfig
+    from app.core.security import encrypt_value
     from sqlalchemy import select
 
     ensure_default_template(db_session)
     user = db_session.scalar(select(User).where(User.email == registered_user["email"]))
+    # 配 BYOK（阶段 0 strict：无配置则端点发 no_llm_config 错误）
+    db_session.add(UserLLMConfig(
+        user_id=user.id, name="test", provider="custom",
+        base_url="https://test.example.com",
+        api_key_encrypted=encrypt_value("sk-test-key"),
+        model="test-model", embedding_model="test-embed",
+    ))
+    db_session.commit()
     p = create_project(db_session, user=user, title="测试发明")
     sections = list_sections(db_session, user_id=user.id, project_id=str(p.id))
     client.post("/api/v1/auth/login", json={
-        "email": registered_user["email"], "password": registered_user["password"],
+        "username": registered_user["username"], "password": registered_user["password"],
     })
     return sections[0]
 
@@ -37,7 +46,7 @@ def test_chat_endpoint_emits_done_event_with_heartbeat_support(client, registere
     section = _make_logged_in_section(client, registered_user, db_session)
 
     # mock astream_chat 返回固定 token
-    async def fake_astream_chat(db, section, history, msg):
+    async def fake_astream_chat(db, section, history, msg, **kwargs):
         yield "hello"
 
     monkeypatch.setattr("app.api.ai.astream_chat", fake_astream_chat)
@@ -55,7 +64,7 @@ def test_generate_saves_draft_on_completion(client, registered_user, db_session,
     section = _make_logged_in_section(client, registered_user, db_session)
     assert section.content is None  # 初始为空
 
-    async def fake_astream_generate(db, sec, history):
+    async def fake_astream_generate(db, sec, history, **kwargs):
         yield "# 标题"
 
     monkeypatch.setattr("app.api.ai.astream_generate", fake_astream_generate)
@@ -87,7 +96,7 @@ def test_heartbeat_does_not_kill_slow_stream(client, registered_user, db_session
     # 把心跳间隔改小，让测试跑得快
     monkeypatch.setattr(ai_module, "HEARTBEAT_INTERVAL", 0.3)
 
-    async def slow_astream_chat(db, sec, history, msg):
+    async def slow_astream_chat(db, sec, history, msg, **kwargs):
         yield "first"
         await asyncio.sleep(0.6)  # > 心跳间隔，触发心跳
         yield "second"  # 心跳后这个 token 必须仍能到达（原 bug 会丢失）
@@ -108,7 +117,7 @@ def test_chat_writes_llm_call_log_on_success(client, registered_user, db_session
     """chat 端点成功完成时写一条 LLMCallLog（status=success）。"""
     section = _make_logged_in_section(client, registered_user, db_session)
 
-    async def fake_astream_chat(db, sec, history, msg):
+    async def fake_astream_chat(db, sec, history, msg, **kwargs):
         yield "hello"
 
     monkeypatch.setattr("app.api.ai.astream_chat", fake_astream_chat)
@@ -137,7 +146,7 @@ def test_generate_writes_llm_call_log_on_success(client, registered_user, db_ses
     """generate 端点成功完成时写一条 LLMCallLog。"""
     section = _make_logged_in_section(client, registered_user, db_session)
 
-    async def fake_astream_generate(db, sec, history):
+    async def fake_astream_generate(db, sec, history, **kwargs):
         yield "# 标题"
 
     monkeypatch.setattr("app.api.ai.astream_generate", fake_astream_generate)
@@ -157,7 +166,7 @@ def test_chat_writes_llm_call_log_on_failure(client, registered_user, db_session
     """chat 端点 LLM 异常时写一条 LLMCallLog（status=failed, error 记原因）。"""
     section = _make_logged_in_section(client, registered_user, db_session)
 
-    async def fake_astream_chat(db, sec, history, msg):
+    async def fake_astream_chat(db, sec, history, msg, **kwargs):
         raise RuntimeError("boom")
         yield  # 让它成为 async generator
 

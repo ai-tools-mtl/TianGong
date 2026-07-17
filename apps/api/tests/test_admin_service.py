@@ -15,6 +15,7 @@ from app.services import admin_service
 def admin_user(db_session):
     """普通管理员（role=admin, is_superuser=False）。"""
     u = User(
+        username="admin",
         email="admin@example.com",
         password_hash="x",
         name="管理员",
@@ -30,6 +31,7 @@ def admin_user(db_session):
 @pytest.fixture
 def normal_user(db_session):
     u = User(
+        username="user",
         email="user@example.com",
         password_hash="oldhash",
         name="普通用户",
@@ -45,6 +47,7 @@ def normal_user(db_session):
 def superadmin(db_session):
     """命令行创建的超管（is_superuser=True）。"""
     u = User(
+        username="root",
         email="root@example.com",
         password_hash="x",
         name="超管",
@@ -60,6 +63,7 @@ def superadmin(db_session):
 @pytest.fixture
 def another_admin(db_session):
     u = User(
+        username="admin2",
         email="admin2@example.com",
         password_hash="x",
         name="管理员2",
@@ -209,4 +213,4 @@ def test_audit_log_redacts_api_key(db_session, admin_user):
     assert log is not None
     assert "api_key" not in (log.detail or {})
     assert log.detail["model"] == "glm-4-flash"
-    assert log.actor_email == admin_user.email
+    assert log.actor_username == admin_user.username
