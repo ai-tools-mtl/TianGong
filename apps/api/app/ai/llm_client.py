@@ -51,8 +51,9 @@ async def astream_llm(
     async for chunk in llm.astream(messages):
         if chunk.content:
             yield chunk.content
-        # 捕获 token 用量：每块都尝试读（最后一块才真正带 usage_metadata，
-        # 但在最后一块前/取消时也能拿到最近一次的累计值）
+        # 捕获 token 用量：usage_metadata 仅出现在最后一块（trailing chunk），
+        # 中间块不带；故每块都尝试读（last-wins，实际只有末块命中）。
+        # 异常/客户端取消未到末块时 sink 为空，token 落 None（正确：未完成调用）。
         usage = getattr(chunk, "usage_metadata", None)
         if usage and usage_sink is not None:
             usage_sink["prompt"] = usage.get("input_tokens")
