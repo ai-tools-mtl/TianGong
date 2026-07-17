@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.deps import get_current_user, require_admin
-from app.models import AuditLog, Project, User, UserLLMConfig
+from app.models import AuditLog, Project, User, UserGlobalLLMGrant, UserLLMConfig
 from app.services import admin_service, llm_config_service, stats_service
 
 router = APIRouter(tags=["admin"])
@@ -22,8 +22,12 @@ def list_users(
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """用户列表（仅聚合信息：邮箱/角色/状态/项目数/是否自配key）。"""
+    """用户列表（仅聚合信息：邮箱/角色/状态/项目数/是否自配key/是否被全局授权）。"""
     users = list(db.scalars(select(User).order_by(User.created_at.desc())))
+    # 一次性取出所有有效授权（revoked_at is null）的 user_id，避免 N+1。
+    active_grant_ids = set(db.scalars(
+        select(UserGlobalLLMGrant.user_id).where(UserGlobalLLMGrant.revoked_at.is_(None))
+    ))
     result = []
     for u in users:
         project_count = db.scalar(
@@ -40,6 +44,7 @@ def list_users(
             "status": u.status,
             "project_count": project_count or 0,
             "has_own_llm_key": (has_own_key or 0) > 0,
+            "has_global_grant": u.id in active_grant_ids,
             "created_at": u.created_at.isoformat(),
         })
     return result
@@ -81,6 +86,40 @@ def reset_user_password(
         db, actor=admin, user_id=_uuid.UUID(user_id), new_password=payload.new_password,
     )
     return {"ok": True}
+
+
+# ── 管理员：全局 Key 授权（Task 2.2）──
+
+@router.get("/admin/users/{user_id}/global-llm-grant")
+def get_user_grant(
+    user_id: str,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """查用户的全局 Key 授权状态。无记录返回 {is_active: False}。"""
+    return admin_service.get_user_grant(db, user_id=_uuid.UUID(user_id)) or {"is_active": False}
+
+
+@router.post("/admin/users/{user_id}/global-llm-grant")
+def grant_global_llm(
+    user_id: str,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """授权用户使用全局 Key。幂等：已有则清 revoked_at 重新激活。自我保护在 service 层强制。"""
+    admin_service.grant_global_llm_access(db, actor=admin, user_id=_uuid.UUID(user_id))
+    return {"message": "已授权"}
+
+
+@router.delete("/admin/users/{user_id}/global-llm-grant")
+def revoke_global_llm(
+    user_id: str,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """撤销用户的全局 Key 授权。写 revoked_at（保留行审计）。无记录则 no-op。"""
+    admin_service.revoke_global_llm_access(db, actor=admin, user_id=_uuid.UUID(user_id))
+    return {"message": "已撤销"}
 
 
 # ── 管理员：LLM 调用统计（设计 8.2④，仅元数据聚合）──
@@ -146,6 +185,8 @@ class GlobalLLMSettings(BaseModel):
     base_url: str | None = None
     api_key: str | None = None
     model: str | None = None
+    embedding_model: str | None = None
+    allowed_models: list[str] | None = None
 
 
 @router.get("/admin/llm-config")
@@ -165,6 +206,7 @@ def set_global_llm(
     result = llm_config_service.set_global_llm_settings(
         db, enabled=payload.enabled,
         base_url=payload.base_url, api_key=payload.api_key, model=payload.model,
+        embedding_model=payload.embedding_model, allowed_models=payload.allowed_models,
     )
     # 审计：detail 只记非敏感字段，绝不传 api_key 明文（设计 8.3 脱敏）
     admin_service._audit(
@@ -177,6 +219,8 @@ def set_global_llm(
             "enabled": payload.enabled,
             "base_url": payload.base_url,
             "model": payload.model,
+            "embedding_model": payload.embedding_model,
+            "allowed_models": payload.allowed_models,
         },
     )
     return result

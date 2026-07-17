@@ -222,6 +222,8 @@ def get_global_llm_settings(db: Session) -> dict:
             "base_url": cfg.value.get("base_url", "") if cfg else "",
             "api_key_masked": _mask_key(decrypt_value(cfg.value["api_key_encrypted"])) if cfg and cfg.value.get("api_key_encrypted") else "",
             "model": cfg.value.get("model", "") if cfg else "",
+            "embedding_model": cfg.value.get("embedding_model") if cfg else None,
+            "allowed_models": cfg.value.get("allowed_models") if cfg else [],
         } if cfg else None,
     }
 
@@ -229,8 +231,15 @@ def get_global_llm_settings(db: Session) -> dict:
 def set_global_llm_settings(
     db: Session, *, enabled: bool, base_url: str | None = None,
     api_key: str | None = None, model: str | None = None,
+    embedding_model: str | None = None,
+    allowed_models: list[str] | None = None,
 ) -> dict:
-    """管理员设置全局 LLM。"""
+    """管理员设置全局 LLM。
+
+    - enabled: 开关（总是写入）。
+    - base_url/api_key/model/embedding_model: 提供才更新，不提供保留现有。
+    - allowed_models: 提供则覆盖（含空 list 清空），不提供保留现有。
+    """
     # 开关
     setting = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_enabled"))
     if setting:
@@ -238,14 +247,24 @@ def set_global_llm_settings(
     else:
         db.add(SystemSetting(key="llm_global_enabled", value={"enabled": enabled}))
 
-    # 配置（只在提供新值时更新）
-    if base_url or api_key or model:
+    # 配置：有任一字段提供则更新（含 allowed_models 显式提供空 list 的清空场景）
+    if base_url or api_key or model or embedding_model or allowed_models is not None:
         cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_config"))
         current = cfg.value if cfg else {}
         new_value = {
             "base_url": base_url or current.get("base_url", ""),
             "model": model or current.get("model", ""),
         }
+        # embedding_model: 提供则更新，否则保留现有（补断链 A2：get 分支读但 set 从不写）
+        if embedding_model:
+            new_value["embedding_model"] = embedding_model
+        elif current.get("embedding_model"):
+            new_value["embedding_model"] = current["embedding_model"]
+        # allowed_models: 提供则覆盖（含空 list），否则保留现有
+        if allowed_models is not None:
+            new_value["allowed_models"] = list(allowed_models)
+        elif current.get("allowed_models"):
+            new_value["allowed_models"] = current["allowed_models"]
         if api_key:
             new_value["api_key_encrypted"] = encrypt_value(api_key)
         elif current.get("api_key_encrypted"):
