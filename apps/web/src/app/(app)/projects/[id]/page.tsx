@@ -150,7 +150,7 @@ export default function ProjectDetailPage() {
   return (
     <div
       className="grid h-[calc(100vh-3.5rem)] overflow-hidden"
-      style={{ gridTemplateColumns: `${leftCol} 1fr ${rightCol}` }}
+      style={{ gridTemplateColumns: `${leftCol} 1fr ${rightCol}`, gridTemplateRows: 'minmax(0, 1fr)' }}
     >
       {/* 左栏：章节大纲 */}
       <aside
@@ -329,8 +329,8 @@ export default function ProjectDetailPage() {
             side="left"
             onResize={(delta) => setRightWidth(rightWidth + delta)}
           />
-          <aside className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
-            <div className="min-h-0 flex-1 overflow-hidden">
+          <aside className="flex min-h-0 min-w-0 flex-col overflow-hidden bg-background">
+            <div className="flex min-h-0 flex-1 overflow-hidden">
               <AIChatPanel sectionId={current.id} section={current} projectId={projectId} />
             </div>
           </aside>

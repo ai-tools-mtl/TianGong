@@ -316,7 +316,7 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
   const busy = phase === 'chatting' || phase === 'generating'
 
   return (
-    <div className={cn('flex h-full flex-col', phase === 'generating' && 'ai-generating')}>
+    <div className={cn('flex min-h-0 w-full flex-1 flex-col', phase === 'generating' && 'ai-generating')}>
       {/* 标题栏 */}
       <div className="flex h-10 shrink-0 items-center justify-between gap-1 border-b px-2">
         <h3 className="flex items-center gap-1.5 px-1 text-[13px] font-semibold">
