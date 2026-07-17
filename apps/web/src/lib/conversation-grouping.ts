@@ -72,3 +72,40 @@ export function groupConversations(conversations: Conversation[], now: Date = ne
     .filter((k) => buckets[k].length > 0)
     .map((k) => ({ key: k, label: GROUP_LABELS[k], items: buckets[k] }))
 }
+
+const timeFormatter = new Intl.DateTimeFormat('zh-CN', {
+  hour: '2-digit', minute: '2-digit', hour12: false,
+})
+const weekdayFormatter = new Intl.DateTimeFormat('zh-CN', { weekday: 'short' })
+
+/** 手写 MM-DD（零填充，连字符）。zh-CN locale 的 Intl 默认用斜杠 06/15，不符合 UI 紧凑需要。 */
+function formatMonthDay(d: Date): string {
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${m}-${day}`
+}
+
+/**
+ * 把 updated_at 格式化为相对时间字符串。
+ *   today  -> HH:MM (如 14:30)
+ *   yesterday -> 昨天
+ *   thisWeek -> 周几 (如 周二)
+ *   thisMonth / earlier -> MM-DD (如 07-10)
+ * 非法时间返回 '--'。
+ */
+export function formatConversationTime(updatedAt: string, now: Date = new Date()): string {
+  const d = new Date(updatedAt)
+  if (Number.isNaN(d.getTime())) return '--'
+  switch (getTimeBucket(d, now)) {
+    case 'today':
+      return timeFormatter.format(d)
+    case 'yesterday':
+      return '昨天'
+    case 'thisWeek':
+      return weekdayFormatter.format(d)
+    case 'thisMonth':
+    case 'earlier':
+    default:
+      return formatMonthDay(d)
+  }
+}

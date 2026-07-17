@@ -70,3 +70,34 @@ test('groupConversations 用 label 字段', () => {
   const grouped = groupConversations([conv('1', '2026-07-17T14:30:00')], FIXED_NOW)
   assert.equal(grouped[0].label, '今天')
 })
+
+import { formatConversationTime } from '../src/lib/conversation-grouping.ts'
+
+test('今天的会话显示 HH:MM', () => {
+  assert.equal(formatConversationTime('2026-07-17T14:30:00', FIXED_NOW), '14:30')
+  assert.equal(formatConversationTime('2026-07-17T09:05:00', FIXED_NOW), '09:05')
+})
+
+test('昨天显示 昨天', () => {
+  assert.equal(formatConversationTime('2026-07-16T18:00:00', FIXED_NOW), '昨天')
+})
+
+test('本周显示周几', () => {
+  // 2026-07-15 是周三，2 天前
+  assert.equal(formatConversationTime('2026-07-15T10:00:00', FIXED_NOW), '周三')
+  // 2026-07-13 是周一，4 天前
+  assert.equal(formatConversationTime('2026-07-13T10:00:00', FIXED_NOW), '周一')
+})
+
+test('本月显示 MM-DD', () => {
+  assert.equal(formatConversationTime('2026-07-09T10:00:00', FIXED_NOW), '07-09')
+})
+
+test('更早显示 MM-DD', () => {
+  assert.equal(formatConversationTime('2026-06-15T10:00:00', FIXED_NOW), '06-15')
+})
+
+test('非法时间显示 --', () => {
+  assert.equal(formatConversationTime('', FIXED_NOW), '--')
+  assert.equal(formatConversationTime('not-a-date', FIXED_NOW), '--')
+})
