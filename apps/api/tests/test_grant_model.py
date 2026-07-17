@@ -40,9 +40,9 @@ def test_user_can_have_multiple_llm_configs(db_session):
     db_session.add(u); db_session.commit(); db_session.refresh(u)
     db_session.add(UserLLMConfig(user_id=u.id, name="公司Key", provider="custom",
                                  base_url="https://a.com", api_key_encrypted="x",
-                                 model="m1", is_active=True))
+                                 model="m1"))
     db_session.add(UserLLMConfig(user_id=u.id, name="个人Key", provider="custom",
                                  base_url="https://b.com", api_key_encrypted="y",
-                                 model="m2", is_active=True))
+                                 model="m2"))
     db_session.commit()  # 不应抛 IntegrityError（去 unique）
     assert db_session.query(UserLLMConfig).filter_by(user_id=u.id).count() == 2

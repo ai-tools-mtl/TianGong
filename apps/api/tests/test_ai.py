@@ -14,7 +14,7 @@ def _make_logged_in_section(client, registered_user, db_session):
         user_id=user.id, name="test", provider="custom",
         base_url="https://test.example.com",
         api_key_encrypted=encrypt_value("sk-test-key"),
-        model="test-model", embedding_model="test-embed", is_active=True,
+        model="test-model", embedding_model="test-embed",
     ))
     db_session.commit()
     p = create_project(db_session, user=user, title="测试发明")

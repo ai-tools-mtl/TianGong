@@ -250,7 +250,7 @@ def test_run_review_uses_one_run_when_consistency_check_disabled(db, monkeypatch
         user_id=p.user_id, name="test", provider="custom",
         base_url="https://test.example.com",
         api_key_encrypted=encrypt_value("sk-test-key"),
-        model="test-model", embedding_model="test-embed", is_active=True,
+        model="test-model", embedding_model="test-embed",
     ))
     # 禁用 consistency_check
     from app.models import AgentSkill

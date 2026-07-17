@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import Boolean, ForeignKey, String
+from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, IdMixin, TimestampMixin
@@ -18,4 +18,3 @@ class UserLLMConfig(Base, IdMixin, TimestampMixin):
     api_key_encrypted: Mapped[str] = mapped_column(String(512))
     model: Mapped[str] = mapped_column(String(100))
     embedding_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)

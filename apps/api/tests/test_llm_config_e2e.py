@@ -51,7 +51,6 @@ def _setup_byok_user(client, registered_user, db_session):
         api_key_encrypted=encrypt_value(BYOK_API_KEY),
         model=BYOK_MODEL,
         embedding_model=BYOK_EMBED,
-        is_active=True,
     ))
     db_session.commit()
     p = create_project(db_session, user=user, title="BYOK 测试发明")
