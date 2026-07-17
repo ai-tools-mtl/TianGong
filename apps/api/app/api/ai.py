@@ -278,12 +278,15 @@ async def rewrite(
 ):
     section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
 
+    # 在 StreamingResponse 构造前解析，确保 ForbiddenError（如全局 Key 被撤销）能被
+    # 全局异常处理器转成真正的 HTTP 403，而非 SSE 流已发 200 头后才抛（Task 4.1 同款修复）。
+    llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id, source=payload.source)
+
     async def generate():
         usage = {}  # 断链 C3：astream_llm 把最后一块 usage_metadata 写入此 holder
         start = time.monotonic()
         status = "success"
         err = None
-        llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id, source=payload.source)
         if llm_config is None:
             yield _sse_event("error", {"code": "no_llm_config", "message": "未配置 LLM，请先在设置中配置"})
             _log_llm_call(

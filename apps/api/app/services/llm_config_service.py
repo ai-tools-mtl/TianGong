@@ -273,11 +273,15 @@ def config_to_dict(cfg: UserLLMConfig) -> dict:
 # ── 全局配置（管理员）──
 
 def get_global_llm_settings(db: Session) -> dict:
-    """获取全局 LLM 设置（掩码 key）。"""
+    """获取全局 LLM 设置（掩码 key）。
+
+    enabled 默认值与 _build_global_config 对齐：记录不存在时视为开启（True），
+    避免 admin UI 显示「关闭」但 resolve 实际当「开启」的不一致（I-1）。
+    """
     enabled = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_enabled"))
     cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_config"))
     return {
-        "llm_global_enabled": enabled.value.get("enabled", True) if enabled else False,
+        "llm_global_enabled": enabled.value.get("enabled", True) if enabled else True,
         "global_config": {
             "base_url": cfg.value.get("base_url", "") if cfg else "",
             "api_key_masked": _mask_key(decrypt_value(cfg.value["api_key_encrypted"])) if cfg and cfg.value.get("api_key_encrypted") else "",
