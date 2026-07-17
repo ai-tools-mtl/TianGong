@@ -28,3 +28,5 @@ class KnowledgeFile(Base, IdMixin, TimestampMixin):
     size: Mapped[int] = mapped_column(Integer)
     source_type: Mapped[str] = mapped_column(String(30))
     # disclosure_export(归档导出件) / external_docx / external_pdf
+    # 内容哈希(SHA256 hex,全局库去重用;personal 库不去重)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)

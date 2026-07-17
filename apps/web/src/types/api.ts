@@ -307,6 +307,7 @@ export interface KnowledgeReview {
   reviewer_id: string | null
   source_type: string // external / disclosure_export
   file_id: string
+  filename: string | null // 联查 KnowledgeFile 得到(审核工作台展示用)
   status: 'pending' | 'approved' | 'rejected'
   review_comment: string | null
   created_at: string

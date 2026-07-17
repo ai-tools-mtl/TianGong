@@ -16,8 +16,11 @@ class KnowledgeChunk(Base, IdMixin, TimestampMixin):
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
-    # 三域隔离(关键约束 1):global 时 user_id 记上传者但全员可检索;
-    # personal 时 user_id 是 owner 严格隔离。retriever 按 scope+user_id 过滤。
+    # 三域隔离(关键约束 1):
+    # - scope=personal:user_id 是 owner,严格隔离,仅本人可检索
+    # - scope=global:user_id 记「上传者/来源」,全员可检索(retriever 不按 user_id 过滤 global)
+    # 注意:personal 素材 approve 升 global 后,user_id 仍是原 owner——
+    # 该用户从 personal 角度不再单独命中它(已升 global,走 global 分支),语义一致。
     scope: Mapped[str] = mapped_column(String(20), default="personal")  # personal / global
     source_type: Mapped[str] = mapped_column(String(30), default="disclosure")
     source_id: Mapped[uuid.UUID] = mapped_column(index=True)

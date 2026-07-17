@@ -104,6 +104,7 @@ def get_storage() -> Storage:
     """模块级单例。所有 service 通过依赖注入拿到 storage 实例。
 
     测试在 conftest 里 monkeypatch 本函数返回内存假实现,不真实连 minio。
+    连接失败时给出明确错误提示(而非裸连接异常),便于部署排障。
     """
     global _storage_singleton
     if _storage_singleton is not None:
@@ -112,14 +113,21 @@ def get_storage() -> Storage:
     from app.core.config import get_settings
 
     s = get_settings()
-    _storage_singleton = MinioStorage(
-        endpoint=s.minio_endpoint,
-        access_key=s.minio_access_key,
-        secret_key=s.minio_secret_key,
-        secure=s.minio_secure,
-        buckets={
-            "personal": s.minio_bucket_personal,
-            "global": s.minio_bucket_global,
-        },
-    )
+    try:
+        _storage_singleton = MinioStorage(
+            endpoint=s.minio_endpoint,
+            access_key=s.minio_access_key,
+            secret_key=s.minio_secret_key,
+            secure=s.minio_secure,
+            buckets={
+                "personal": s.minio_bucket_personal,
+                "global": s.minio_bucket_global,
+            },
+        )
+    except Exception as e:
+        raise RuntimeError(
+            f"无法连接 minio 对象存储({s.minio_endpoint}):{e}。"
+            "请先启动 minio: docker compose up -d minio, "
+            "并检查 .env 的 MINIO_ENDPOINT/ACCESS_KEY/SECRET_KEY 配置。"
+        ) from e
     return _storage_singleton
