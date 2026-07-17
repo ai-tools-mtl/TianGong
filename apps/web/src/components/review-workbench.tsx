@@ -56,9 +56,11 @@ function ReviewCard({ review }: { review: KnowledgeReview }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="text-[12px] text-muted-foreground">
-          文件 ID:
-          <code className="ml-1 break-all text-[11px]">{review.file_id}</code>
+        <div className="text-[13px] font-medium truncate" title={review.filename ?? undefined}>
+          {review.filename ?? '未命名文件'}
+        </div>
+        <div className="text-[11px] text-muted-foreground">
+          file: <code className="break-all">{review.file_id.slice(0, 8)}…</code>
         </div>
         <div className="flex items-center gap-2">
           <Button variant="ghost" size="xs" asChild>
