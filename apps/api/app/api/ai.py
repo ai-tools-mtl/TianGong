@@ -16,9 +16,9 @@ from app.ai.orchestrator import astream_chat, astream_generate, astream_rewrite
 from app.core.database import get_db
 from app.core.exceptions import ValidationError
 from app.deps import get_current_user
-from app.models import Conversation, LLMCallLog, Message, Section, User
+from app.models import Conversation, ConversationStatus, LLMCallLog, Message, Section, User
 from app.schemas.ai import ChatRequest, ConversationCreate, ConversationUpdate, RewriteRequest
-from app.services import llm_config_service, section_service
+from app.services import conversation_service, llm_config_service, section_service
 
 router = APIRouter(tags=["ai"])
 
@@ -177,11 +177,6 @@ async def chat(
     db.add(user_msg)
     db.commit()
 
-    # 首次对话自动用用户消息截断做标题
-    if conv.title == "新对话":
-        conv.title = payload.message[:20] + ("..." if len(payload.message) > 20 else "")
-        db.commit()
-
     # 一次性解析 LLM 配置（用户 BYOK > 全局 > settings 默认）
     llm_config, provider, model = _resolve_llm(db, current_user.id)
 
@@ -202,7 +197,22 @@ async def chat(
             ai_msg = Message(section_id=section.id, conversation_id=conv.id, role="assistant", content=full_response)
             db.add(ai_msg)
             db.commit()
-            yield _sse_event("done", {"message_id": str(ai_msg.id)})
+
+            # 草稿会话首条对话完成：同步用 LLM 总结标题，转 active，通过 done 事件回传
+            new_title = None
+            if conv.status == ConversationStatus.draft.value:
+                new_title = conversation_service.summarize_conversation_title(
+                    db, conv, payload.message, full_response, llm_config=llm_config
+                )
+                conv.title = new_title
+                conv.status = ConversationStatus.active.value
+                db.commit()
+
+            yield _sse_event("done", {
+                "message_id": str(ai_msg.id),
+                "conversation_id": str(conv.id),
+                "title": new_title,  # None 表示会话已是 active，标题未变
+            })
         except asyncio.CancelledError:
             if full_response:
                 db.add(Message(section_id=section.id, conversation_id=conv.id, role="assistant", content=full_response))
@@ -380,20 +390,27 @@ def list_messages(
 @router.get("/sections/{section_id}/conversations")
 def list_conversations(
     section_id: str,
+    status: str | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """列出 section 下的所有会话（按最后更新倒序）。"""
+    """列出 section 下的所有会话（按最后更新倒序）。
+
+    status 可选过滤：draft / active / None(全部，默认)。
+    """
     section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
-    convs = list(db.scalars(
+    query = (
         select(Conversation)
         .where(Conversation.section_id == section.id)
-        .order_by(Conversation.updated_at.desc())
-    ))
+    )
+    if status:
+        query = query.where(Conversation.status == status)
+    convs = list(db.scalars(query.order_by(Conversation.updated_at.desc())))
     return [
         {
             "id": str(c.id),
             "title": c.title,
+            "status": c.status,
             "created_at": c.created_at.isoformat(),
             "updated_at": c.updated_at.isoformat(),
         }
@@ -408,15 +425,20 @@ def create_conversation(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """新建会话。"""
+    """新建会话（默认 status=draft，占位标题「新会话」，首条对话后转 active）。"""
     section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
-    conv = Conversation(section_id=section.id, title=payload.title or "新对话")
+    conv = Conversation(
+        section_id=section.id,
+        title=payload.title or "新会话",
+        status=ConversationStatus.draft.value,
+    )
     db.add(conv)
     db.commit()
     db.refresh(conv)
     return {
         "id": str(conv.id),
         "title": conv.title,
+        "status": conv.status,
         "created_at": conv.created_at.isoformat(),
         "updated_at": conv.updated_at.isoformat(),
     }
@@ -444,6 +466,7 @@ def update_conversation(
     return {
         "id": str(conv.id),
         "title": conv.title,
+        "status": conv.status,
         "created_at": conv.created_at.isoformat(),
         "updated_at": conv.updated_at.isoformat(),
     }

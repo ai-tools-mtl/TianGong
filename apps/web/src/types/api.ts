@@ -371,6 +371,7 @@ export interface SharedInfo {
 export interface Conversation {
   id: string
   title: string
+  status: 'draft' | 'active'
   created_at: string
   updated_at: string
 }

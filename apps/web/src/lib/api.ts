@@ -159,6 +159,7 @@ export const api = {
     onToken: (t: string) => void,
     signal?: AbortSignal,
     conversationId?: string,
+    onDone?: (data: { message_id: string; conversation_id?: string; title?: string | null }) => void,
   ) => {
     const res = await fetch(`${BASE}/api/v1/sections/${sectionId}/chat`, {
       method: 'POST',
@@ -167,7 +168,7 @@ export const api = {
       body: JSON.stringify({ message, conversation_id: conversationId ?? null }),
       signal,
     })
-    return _consumeSSE(res, onToken)
+    return _consumeSSE(res, onToken, onDone)
   },
 
   streamGenerate: async (
@@ -412,12 +413,16 @@ export const api = {
  * 后端事件类型（见 app/api/ai.py）：
  * - token：追加文本 {text}
  * - heartbeat：保活心跳，忽略
- * - done：完成 {message_id? section_id?}，正常结束
+ * - done：完成 {message_id, conversation_id?, title?}，触发 onDone 回调
  * - error：服务端错误 {code, message}，抛出 ApiError 让上层走 catch 分支
  *
  * 原实现只看 data.text，导致 error 事件被静默吞掉（用户看到"空回复+无报错"）。
  */
-async function _consumeSSE(res: Response, onToken: (t: string) => void): Promise<void> {
+async function _consumeSSE(
+  res: Response,
+  onToken: (t: string) => void,
+  onDone?: (data: { message_id: string; conversation_id?: string; title?: string | null }) => void,
+): Promise<void> {
   if (!res.body) return
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
@@ -454,8 +459,11 @@ async function _consumeSSE(res: Response, onToken: (t: string) => void): Promise
       if (eventType === 'token') {
         const text = data.text as string | undefined
         if (text) onToken(text)
+      } else if (eventType === 'done' && onDone) {
+        // done 事件：透传元数据（message_id / conversation_id / title）
+        onDone(data as { message_id: string; conversation_id?: string; title?: string | null })
       }
-      // heartbeat / done：无需特殊处理，流自然结束
+      // heartbeat：忽略
     }
   }
 }

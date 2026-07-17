@@ -252,3 +252,107 @@ def test_get_llm_falls_back_to_settings_when_no_config(monkeypatch):
     s = __import__("app.core.config", fromlist=["get_settings"]).get_settings()
     assert captured["base_url"] == s.glm_base_url
     assert captured["model"] == s.glm_model
+
+
+# ── 草稿会话 + LLM 标题总结 ──
+
+def test_chat_summarizes_title_on_first_message(client, registered_user, db_session, monkeypatch):
+    """草稿会话首条对话完成后：done 事件带 title，会话转 active。"""
+    import json as _json
+
+    section = _make_logged_in_section(client, registered_user, db_session)
+
+    async def fake_astream_chat(db, sec, history, msg, **kwargs):
+        yield "你好，这是回复"
+
+    monkeypatch.setattr("app.api.ai.astream_chat", fake_astream_chat)
+    # mock 标题总结，避免真实 LLM 调用
+    monkeypatch.setattr(
+        "app.api.ai.conversation_service.summarize_conversation_title",
+        lambda db, conv, u, a, llm_config=None: "权利要求讨论",
+    )
+
+    res = client.post(f"/api/v1/sections/{section.id}/chat", json={"message": "我想讨论权利要求"})
+    assert res.status_code == 200
+    body = res.text
+
+    # done 事件带 title + conversation_id
+    assert "event: done" in body
+    done_line = [l for l in body.split("\n") if l.startswith("data: ") and "message_id" in l][-1]
+    done_data = _json.loads(done_line[6:])
+    assert done_data["title"] == "权利要求讨论"
+    assert "conversation_id" in done_data
+
+    # 会话已转 active
+    db_session.expire_all()
+    from app.models import Conversation
+    from sqlalchemy import select as _sel
+    conv = db_session.scalar(_sel(Conversation).where(Conversation.section_id == section.id))
+    assert conv.status == "active"
+    assert conv.title == "权利要求讨论"
+
+
+def test_chat_does_not_resummarize_active_conversation(client, registered_user, db_session, monkeypatch):
+    """已是 active 的会话再 chat：done 不带 title（不重复总结）。"""
+    import json as _json
+
+    section = _make_logged_in_section(client, registered_user, db_session)
+
+    # 先建一个 active 会话
+    from app.models import Conversation, ConversationStatus
+    conv = Conversation(
+        section_id=section.id, title="已有标题",
+        status=ConversationStatus.active.value,
+    )
+    db_session.add(conv)
+    db_session.commit()
+    conv_id = str(conv.id)
+
+    summarize_called = {"n": 0}
+    def fake_summarize(db, c, u, a, llm_config=None):
+        summarize_called["n"] += 1
+        return "不应被调用"
+
+    async def fake_astream_chat(db, sec, history, msg, **kwargs):
+        yield "回复"
+
+    monkeypatch.setattr("app.api.ai.astream_chat", fake_astream_chat)
+    monkeypatch.setattr("app.api.ai.conversation_service.summarize_conversation_title", fake_summarize)
+
+    res = client.post(
+        f"/api/v1/sections/{section.id}/chat",
+        json={"message": "继续聊", "conversation_id": conv_id},
+    )
+    assert res.status_code == 200
+    body = res.text
+
+    done_line = [l for l in body.split("\n") if l.startswith("data: ") and "message_id" in l][-1]
+    done_data = _json.loads(done_line[6:])
+    assert done_data["title"] is None  # active 会话不重新总结
+    assert summarize_called["n"] == 0
+
+
+def test_list_conversations_filter_by_status(client, registered_user, db_session):
+    """list_conversations 支持 status 过滤。"""
+    section = _make_logged_in_section(client, registered_user, db_session)
+
+    from app.models import Conversation, ConversationStatus
+    db_session.add(Conversation(section_id=section.id, title="草稿1", status=ConversationStatus.draft.value))
+    db_session.add(Conversation(section_id=section.id, title="正式1", status=ConversationStatus.active.value))
+    db_session.add(Conversation(section_id=section.id, title="正式2", status=ConversationStatus.active.value))
+    db_session.commit()
+
+    # 不过滤：返回全部
+    all_convs = client.get(f"/api/v1/sections/{section.id}/conversations").json()
+    assert len(all_convs) == 3
+
+    # 过滤 draft
+    drafts = client.get(f"/api/v1/sections/{section.id}/conversations?status=draft").json()
+    assert len(drafts) == 1
+    assert drafts[0]["title"] == "草稿1"
+    assert drafts[0]["status"] == "draft"
+
+    # 过滤 active
+    actives = client.get(f"/api/v1/sections/{section.id}/conversations?status=active").json()
+    assert len(actives) == 2
+    assert all(c["status"] == "active" for c in actives)
