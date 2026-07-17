@@ -2,7 +2,7 @@ from app.models.agent_skill import AgentSkill
 from app.models.attachment import Attachment
 from app.models.audit_log import AuditLog
 from app.models.base import Base, JSONType
-from app.models.conversation import Conversation
+from app.models.conversation import Conversation, ConversationStatus
 from app.models.knowledge_chunk import KnowledgeChunk
 from app.models.knowledge_file import KnowledgeFile
 from app.models.knowledge_review import KnowledgeReview
@@ -27,7 +27,7 @@ __all__ = [
     "Base", "JSONType",
     "User", "Attachment", "Project", "ProjectMember", "ProjectTag", "Tag",
     "SystemSetting", "Template", "ParseJob", "Section", "SectionVersion",
-    "ShareLink", "Message", "Conversation",
+    "ShareLink", "Message", "Conversation", "ConversationStatus",
     "KnowledgeChunk", "KnowledgeFile", "KnowledgeReview",
     "ReviewRubric", "ReviewRecord", "UserLLMConfig",
     "AgentSkill",
