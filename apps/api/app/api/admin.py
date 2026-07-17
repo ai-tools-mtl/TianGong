@@ -275,6 +275,20 @@ def get_my_llm(
     return llm_config_service.list_user_llm_configs(db, user_id=current_user.id)
 
 
+@router.get("/settings/my-grant")
+def get_my_grant(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """普通用户查自己的全局 Key 授权状态（选源器用）。
+
+    复用 admin_service.get_user_grant（Task 2.2）。无记录返回 {is_active: False}。
+    注：admin 角色免授权，但本端点仍如实返回其 grant 行（若无行则 is_active=False）；
+    选源器前端对 admin 始终展示「全局 Key」选项（admin 走 source=global 免授权路径）。
+    """
+    return admin_service.get_user_grant(db, user_id=current_user.id) or {"is_active": False}
+
+
 @router.post("/settings/llm")
 def create_my_llm(
     payload: UserLLMCreateRequest,

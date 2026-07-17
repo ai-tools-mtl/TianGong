@@ -4,8 +4,11 @@ source 取值：
 - "global"：全局 Key（admin 免授权；非 admin 须有有效 grant）
 - "byok:{config_id}"：用户自配的指定配置（校验归属，越权 NotFound）
 - "env"：env 兜底
-- None（临时 fallback，Task 4.0 前端传 source 后可移除）：
-  admin → global；非 admin → 若被授权则 global，否则单条 BYOK，否则 env，否则 None
+- None（内部调用方的自动解析路径，永久保留）：后台任务（archiver / retriever /
+  knowledge_service / review / summary）无前端 source 上下文，依赖此分支
+  “自动挑一个合理配置”。admin → global；非 admin → 若被授权则 global，
+  否则单条 BYOK，否则 env，否则 None。
+  前端 AI 调用（chat/generate/rewrite/caption）通过 source 显式指定，不走此分支。
 """
 
 import uuid
@@ -36,12 +39,14 @@ def resolve_llm_config(db: Session, *, user_id, source: str | None = None) -> Re
     - "global"：全局 Key（admin 免授权；非 admin 须有有效 grant）
     - "byok:{config_id}"：用户自配的指定配置（校验归属，越权 NotFound）
     - "env"：env 兜底
-    - None（临时 fallback，Task 4.0 前端传 source 后可移除）：
-      admin → global；非 admin → 若被授权则 global，否则单条 BYOK，否则 env，否则 None
+    - None（内部调用方的自动解析路径，永久保留）：后台任务
+      （archiver/retriever/knowledge_service/review/summary）无前端 source 上下文，
+      依赖此分支“自动挑一个合理配置”。前端 AI 调用通过 source 显式指定，不走此分支。
     """
     user = db.get(User, user_id)
 
-    # ---- source=None 临时 fallback（Task 4.0 后移除）----
+    # ---- source=None：内部调用方（archiver/retriever/knowledge/review/summary）的
+    #      自动解析路径，永久保留（非临时）。前端 AI 调用始终显式传 source。
     if source is None:
         return _resolve_fallback(db, user=user, user_id=user_id)
 
@@ -79,7 +84,11 @@ def resolve_llm_config(db: Session, *, user_id, source: str | None = None) -> Re
 
 
 def _resolve_fallback(db: Session, *, user, user_id) -> ResolvedLLMConfig | None:
-    """临时 fallback（Task 4.0 前端传 source 后移除）。
+    """内部调用方的自动解析路径（永久保留，非临时 fallback）。
+
+    供无前端 source 上下文的后台任务使用（archiver / retriever /
+    knowledge_service / review / summary，调用方共 5 处）。前端 AI 调用
+    （chat/generate/rewrite/caption）通过 source 显式指定，不走此分支。
 
     admin → global；非 admin → 有效 grant 则 global，否则单条 BYOK，否则 env，否则 None。
     """
@@ -99,7 +108,7 @@ def _resolve_fallback(db: Session, *, user, user_id) -> ResolvedLLMConfig | None
         if cfg:
             return cfg
 
-    # 单条 BYOK（过渡：用户可能有多条，取最早创建的；Task 4.0 前端传 source 后 obsolete）。
+    # 单条 BYOK：内部调用方未指定 source 时的自动选择，取最早创建的一条。
     # 显式 order_by(created_at) 保证确定性选择（I-2：避免无序查询选到任意一条）。
     user_cfg = db.scalar(
         select(UserLLMConfig)

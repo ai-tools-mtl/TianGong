@@ -9,6 +9,7 @@ import ReactMarkdown from 'react-markdown'
 import { Button } from '@/components/ui/button'
 import { DiffReviewPanel } from '@/components/diff-review-panel'
 import { api } from '@/lib/api'
+import { clearDefaultSource, getDefaultSource } from '@/lib/llm-source'
 import { queryKeys, useApplyDiff, useComputeDiff, useMessages } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import { useUIStore } from '@/stores/ui'
@@ -17,6 +18,26 @@ import type { Hunk, Section } from '@/types/api'
 interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
+}
+
+/**
+ * 判定错误是否为“LLM 源失效”（全局 Key 授权被撤销 / 选中的 BYOK 被删）。
+ *
+ * streamChat/streamGenerate 在初始 POST !res.ok 时抛出的 Error 携带 .status
+ * 与 .code（见 api.ts _sseHttpError）；后端 ForbiddenError 序列化为
+ * {code:"forbidden", message:...}（HTTP 403）。这里三路兜底：status / code / message。
+ */
+function isForbiddenSourceError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  if ((err as { status?: number }).status === 403) return true
+  if ((err as { code?: string }).code === 'forbidden') return true
+  return /未授权|全局 Key|授权/.test(err.message)
+}
+
+/** 选定的 LLM 源失效：清默认源 + 引导用户去设置重选。 */
+function handleStaleSourceError() {
+  clearDefaultSource()
+  toast.error('当前 LLM 源已失效（授权被撤销或配置已删除），已清除默认源，请前往「设置」重新选择')
 }
 
 type AIPhase = 'idle' | 'chatting' | 'generating' | 'done' | 'diff-review'
@@ -78,6 +99,11 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
 
   async function handleSend() {
     if (!input.trim() || phase === 'chatting' || phase === 'generating') return
+    const source = getDefaultSource()
+    if (!source) {
+      toast.error('请先在设置中选择 LLM 源')
+      return
+    }
     const userMsg: ChatMessage = { role: 'user', content: input }
     setMessages((m) => [...m, userMsg, { role: 'assistant', content: '' }])
     setInput('')
@@ -93,9 +119,13 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
           copy[copy.length - 1] = { role: 'assistant', content: aiText }
           return copy
         })
-      }, abortRef.current.signal)
+      }, abortRef.current.signal, source)
     } catch (err: unknown) {
-      if (!(err instanceof DOMException && err.name === 'AbortError')) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        // 用户主动中断，静默
+      } else if (isForbiddenSourceError(err)) {
+        handleStaleSourceError()
+      } else {
         toast.error('AI 回复失败')
       }
     } finally {
@@ -125,6 +155,11 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
   }
 
   async function handleGenerate() {
+    const source = getDefaultSource()
+    if (!source) {
+      toast.error('请先在设置中选择 LLM 源')
+      return
+    }
     setPhase('generating')
     setAiDraft('')
     abortRef.current = new AbortController()
@@ -133,11 +168,14 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
       await api.streamGenerate(sectionId, (token) => {
         md += token
         setAiDraft(md)
-      }, abortRef.current.signal)
+      }, abortRef.current.signal, source)
       setPhase('done')
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') {
         setPhase('done')
+      } else if (isForbiddenSourceError(err)) {
+        handleStaleSourceError()
+        setPhase('idle')
       } else {
         toast.error('生成失败')
         setPhase('idle')
