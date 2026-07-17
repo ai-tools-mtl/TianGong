@@ -12,5 +12,8 @@ class Message(Base, IdMixin, TimestampMixin):
     section_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("sections.id", ondelete="CASCADE"), index=True
     )
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"), index=True
+    )
     role: Mapped[str] = mapped_column(String(20))  # user / assistant
     content: Mapped[str] = mapped_column(Text)

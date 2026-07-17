@@ -184,3 +184,98 @@ def test_chat_writes_llm_call_log_on_failure(client, registered_user, db_session
     assert log.status == "failed"
     assert log.error is not None
     assert "boom" in log.error
+
+
+# ── Fix 2: list_messages 必须按 conversation_id 隔离（防串历史）──
+
+def test_list_messages_requires_conversation_id(client, registered_user, db_session):
+    """list_messages 缺省 conversation_id 时应拒绝（422），
+    避免前端漏传时把 section 下所有会话的消息混在一起（串历史 bug 根因）。
+    """
+    section = _make_logged_in_section(client, registered_user, db_session)
+
+    # 不传 conversation_id
+    res = client.get(f"/api/v1/sections/{section.id}/messages")
+    assert res.status_code == 422, f"缺省 conversation_id 应 422，实际 {res.status_code}: {res.text}"
+
+
+def test_list_messages_isolated_by_conversation(client, registered_user, db_session):
+    """两个会话的消息互不串：传 A 的 conversation_id 只看到 A 的消息。"""
+    section = _make_logged_in_section(client, registered_user, db_session)
+
+    # 建两个会话
+    conv_a = client.post(f"/api/v1/sections/{section.id}/conversations", json={"title": "A"}).json()
+    conv_b = client.post(f"/api/v1/sections/{section.id}/conversations", json={"title": "B"}).json()
+
+    # 直接写消息（绕过 LLM）；conversation_id 列是 UUID，需转回 UUID
+    import uuid as _uuid
+    from app.models import Message
+    db_session.add(Message(section_id=section.id, conversation_id=_uuid.UUID(conv_a["id"]), role="user", content="msg-in-A"))
+    db_session.add(Message(section_id=section.id, conversation_id=_uuid.UUID(conv_b["id"]), role="user", content="msg-in-B"))
+    db_session.commit()
+
+    res_a = client.get(f"/api/v1/sections/{section.id}/messages?conversation_id={conv_a['id']}")
+    assert res_a.status_code == 200
+    contents_a = [m["content"] for m in res_a.json()]
+    assert contents_a == ["msg-in-A"], f"会话 A 不应包含 B 的消息，实际 {contents_a}"
+
+
+# ── Fix 5: get_llm 透传 BYOK / 全局配置 ──
+# 本地 P2 设计：get_llm(llm_config: ResolvedLLMConfig) —— 接收已解析的配置对象，
+# 不做 settings 回退（调用方负责先 resolve_llm_config 并处理 None）。
+# 下面两个测试验证该契约：传入的 ResolvedLLMConfig 字段直接驱动 ChatOpenAI 构造。
+
+def test_get_llm_uses_resolved_config_fields(monkeypatch):
+    """get_llm(llm_config) 应把 ResolvedLLMConfig 的 base_url/api_key/model 透传给 ChatOpenAI。"""
+    from app.ai.llm_client import get_llm
+    from app.services.llm_config_service import ResolvedLLMConfig
+
+    captured = {}
+
+    class _FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("app.ai.llm_client.ChatOpenAI", _FakeChatOpenAI)
+
+    cfg = ResolvedLLMConfig(
+        base_url="https://user.byok.example/v1",
+        api_key="sk-user-key",
+        model="user-model-x",
+        source="user",
+    )
+    get_llm(cfg)
+
+    assert captured["base_url"] == "https://user.byok.example/v1"
+    assert captured["api_key"] == "sk-user-key"
+    assert captured["model"] == "user-model-x"
+
+
+def test_get_llm_streaming_enables_stream_usage(monkeypatch):
+    """streaming=True 时同步开启 stream_usage（断链 C3：流式回传 token 用量给 usage_sink）。"""
+    from app.ai.llm_client import get_llm
+    from app.services.llm_config_service import ResolvedLLMConfig
+
+    captured = {}
+
+    class _FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("app.ai.llm_client.ChatOpenAI", _FakeChatOpenAI)
+
+    cfg = ResolvedLLMConfig(
+        base_url="https://global.example/v1",
+        api_key="sk-global",
+        model="global-model",
+        source="global",
+    )
+    get_llm(cfg, streaming=True)
+    assert captured["streaming"] is True
+    assert captured["stream_usage"] is True
+
+    # 非 streaming 时两者均 False
+    captured.clear()
+    get_llm(cfg, streaming=False)
+    assert captured["streaming"] is False
+    assert captured["stream_usage"] is False

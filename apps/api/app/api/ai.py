@@ -16,8 +16,14 @@ from app.ai.orchestrator import astream_chat, astream_generate, astream_rewrite
 from app.core.database import get_db
 from app.core.exceptions import ValidationError
 from app.deps import get_current_user
-from app.models import LLMCallLog, Message, Section, User
-from app.schemas.ai import ChatRequest, GenerateRequest, RewriteRequest
+from app.models import Conversation, LLMCallLog, Message, Section, User
+from app.schemas.ai import (
+    ChatRequest,
+    ConversationCreate,
+    ConversationUpdate,
+    GenerateRequest,
+    RewriteRequest,
+)
 from app.services import llm_config_service, section_service
 
 router = APIRouter(tags=["ai"])
@@ -31,13 +37,40 @@ def _sse_event(event: str, data: dict) -> str:
 
 
 def _get_section_with_history(
-    db: Session, user_id, section_id: str
+    db: Session, user_id, section_id: str, conversation_id: str | None = None
 ) -> tuple[Section, list[Message]]:
     section = section_service.get_section(db, user_id=user_id, section_id=section_id)
-    history = list(db.scalars(
-        select(Message).where(Message.section_id == section.id).order_by(Message.created_at)
-    ))
+    query = select(Message).where(Message.section_id == section.id)
+    if conversation_id:
+        import uuid as _uuid
+        try:
+            conv_uuid = _uuid.UUID(str(conversation_id))
+            query = query.where(Message.conversation_id == conv_uuid)
+        except (ValueError, AttributeError):
+            # 非法 conversation_id：历史为空（后续 _get_or_create_conversation 会新建）
+            pass
+    history = list(db.scalars(query.order_by(Message.created_at)))
     return section, history
+
+
+def _get_or_create_conversation(db: Session, section: Section, conversation_id: str | None) -> Conversation:
+    """获取指定会话，或创建默认会话。"""
+    if conversation_id:
+        import uuid as _uuid
+        try:
+            conv_uuid = _uuid.UUID(str(conversation_id))
+            conv = db.scalar(select(Conversation).where(
+                (Conversation.id == conv_uuid) & (Conversation.section_id == section.id)
+            ))
+            if conv:
+                return conv
+        except (ValueError, AttributeError):
+            pass
+    # 创建新会话
+    conv = Conversation(section_id=section.id, title="新对话")
+    db.add(conv)
+    db.flush()
+    return conv
 
 
 def _resolve_provider(llm_config) -> str:
@@ -124,14 +157,21 @@ async def chat(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    section, history = _get_section_with_history(db, current_user.id, section_id)
-    user_msg = Message(section_id=section.id, role="user", content=payload.message)
+    section, history = _get_section_with_history(db, current_user.id, section_id, payload.conversation_id)
+    conv = _get_or_create_conversation(db, section, payload.conversation_id)
+    user_msg = Message(section_id=section.id, conversation_id=conv.id, role="user", content=payload.message)
     db.add(user_msg)
     db.commit()
+
+    # 首次对话自动用用户消息截断做标题
+    if conv.title == "新对话":
+        conv.title = payload.message[:20] + ("..." if len(payload.message) > 20 else "")
+        db.commit()
 
     # 阶段 0：解析生效 LLM 配置（在 StreamingResponse 构造前解析，确保
     # ForbiddenError（如全局 Key 被撤销）能被全局异常处理器转成真正的 HTTP 403，
     # 而不是在 SSE 流已发出 200 头之后才抛出 → 客户端只能看到空响应）。
+    # source 由前端传入（"global" / "byok:{id}" / "env"），None 走 fallback。
     llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id, source=payload.source)
 
     async def generate():
@@ -159,14 +199,13 @@ async def chat(
                 else:
                     full_response += text
                     yield _sse_event("token", {"text": text})
-            ai_msg = Message(section_id=section.id, role="assistant", content=full_response)
+            ai_msg = Message(section_id=section.id, conversation_id=conv.id, role="assistant", content=full_response)
             db.add(ai_msg)
             db.commit()
             yield _sse_event("done", {"message_id": str(ai_msg.id)})
         except asyncio.CancelledError:
-            # 客户端断开：已生成的部分存为 assistant message（断线保留）
             if full_response:
-                db.add(Message(section_id=section.id, role="assistant", content=full_response))
+                db.add(Message(section_id=section.id, conversation_id=conv.id, role="assistant", content=full_response))
                 db.commit()
             status = "failed"
             err = "client_cancelled"
@@ -334,13 +373,29 @@ async def rewrite(
 @router.get("/sections/{section_id}/messages")
 def list_messages(
     section_id: str,
+    conversation_id: str | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """列出某会话的历史消息。
+
+    conversation_id 为必填：缺省时返回 422，避免前端漏传时把 section 下
+    所有会话的消息混在一起（串历史 bug 的根因）。
+    """
+    if not conversation_id:
+        raise ValidationError("conversation_id 为必填参数")
+    import uuid as _uuid
+    try:
+        conv_uuid = _uuid.UUID(str(conversation_id))
+    except (ValueError, AttributeError):
+        raise ValidationError("conversation_id 格式无效")
     section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
-    messages = list(db.scalars(
-        select(Message).where(Message.section_id == section.id).order_by(Message.created_at)
-    ))
+    query = (
+        select(Message)
+        .where(Message.section_id == section.id)
+        .where(Message.conversation_id == conv_uuid)
+    )
+    messages = list(db.scalars(query.order_by(Message.created_at)))
     return [
         {
             "id": str(m.id),
@@ -350,6 +405,99 @@ def list_messages(
         }
         for m in messages
     ]
+
+
+# ── 会话管理 ──
+
+@router.get("/sections/{section_id}/conversations")
+def list_conversations(
+    section_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """列出 section 下的所有会话（按最后更新倒序）。"""
+    section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
+    convs = list(db.scalars(
+        select(Conversation)
+        .where(Conversation.section_id == section.id)
+        .order_by(Conversation.updated_at.desc())
+    ))
+    return [
+        {
+            "id": str(c.id),
+            "title": c.title,
+            "created_at": c.created_at.isoformat(),
+            "updated_at": c.updated_at.isoformat(),
+        }
+        for c in convs
+    ]
+
+
+@router.post("/sections/{section_id}/conversations", status_code=201)
+def create_conversation(
+    section_id: str,
+    payload: ConversationCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """新建会话。"""
+    section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
+    conv = Conversation(section_id=section.id, title=payload.title or "新对话")
+    db.add(conv)
+    db.commit()
+    db.refresh(conv)
+    return {
+        "id": str(conv.id),
+        "title": conv.title,
+        "created_at": conv.created_at.isoformat(),
+        "updated_at": conv.updated_at.isoformat(),
+    }
+
+
+@router.patch("/sections/{section_id}/conversations/{conversation_id}")
+def update_conversation(
+    section_id: str,
+    conversation_id: str,
+    payload: ConversationUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """重命名会话。"""
+    import uuid as _uuid
+    section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
+    conv = db.scalar(select(Conversation).where(
+        (Conversation.id == _uuid.UUID(conversation_id)) & (Conversation.section_id == section.id)
+    ))
+    if conv is None:
+        from app.core.exceptions import NotFoundError
+        raise NotFoundError("会话不存在")
+    conv.title = payload.title
+    db.commit()
+    return {
+        "id": str(conv.id),
+        "title": conv.title,
+        "created_at": conv.created_at.isoformat(),
+        "updated_at": conv.updated_at.isoformat(),
+    }
+
+
+@router.delete("/sections/{section_id}/conversations/{conversation_id}", status_code=204)
+def delete_conversation(
+    section_id: str,
+    conversation_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """删除会话（级联删除消息）。"""
+    import uuid as _uuid
+    section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
+    conv = db.scalar(select(Conversation).where(
+        (Conversation.id == _uuid.UUID(conversation_id)) & (Conversation.section_id == section.id)
+    ))
+    if conv:
+        db.delete(conv)
+        db.commit()
+    return None
 
 
 class CaptionRequest(BaseModel):
@@ -376,6 +524,9 @@ async def caption_figures(
 
     from langchain_core.messages import HumanMessage, SystemMessage
 
+    # source 由前端传入；在 StreamingResponse 构造前解析，与其它端点保持一致
+    llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id, source=payload.source)
+
     descs = "\n".join(f"- {d}" for d in payload.descriptions)
     system = (
         "你是专利交底书撰写助手。请根据用户提供的图片文字描述，"
@@ -385,8 +536,6 @@ async def caption_figures(
         SystemMessage(content=system),
         HumanMessage(content=f"以下是各图的文字描述，请生成规范图注：\n{descs}"),
     ]
-
-    llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id, source=payload.source)
 
     async def generate():
         usage = {}  # 断链 C3：astream_llm 把最后一块 usage_metadata 写入此 holder
