@@ -21,7 +21,7 @@ import {
 } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import { useUIStore } from '@/stores/ui'
-import type { Hunk, Section } from '@/types/api'
+import type { Conversation, Hunk, Section } from '@/types/api'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -119,12 +119,19 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
   }
 
   function handleNewConversation() {
-    // 进入"草稿新会话"本地态：不立即落库，等首条消息时再建。
-    // 避免旧实现因 setState 异步导致 handleSend 用旧 currentConvId 又建一个会话（重复空"新对话"根因）。
+    // 立即建草稿会话（后端 status=draft），列表可见、有反馈。
+    // 首条对话完成后，后端同步总结标题并转 active。
     msgLoadedForConv.current = null
-    setCurrentConvId(null)
     setMessages([])
     setPhase('idle')
+    createConv.mutate(undefined, {
+      onSuccess: (conv: Conversation) => {
+        setCurrentConvId(conv.id)
+      },
+      onError: () => {
+        toast.error('创建会话失败')
+      },
+    })
   }
 
   function handleDeleteConversation(convId: string) {
@@ -144,41 +151,39 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
 
   async function handleSend() {
     if (!input.trim() || phase === 'chatting' || phase === 'generating') return
+    // 草稿会话已由 handleNewConversation 建好；若无选中会话则提示
+    if (!currentConvId) {
+      toast.error('会话未准备好，请稍候')
+      return
+    }
     const userMsg: ChatMessage = { role: 'user', content: input }
     setMessages((m) => [...m, userMsg, { role: 'assistant', content: '' }])
     setInput('')
     setPhase('chatting')
     abortRef.current = new AbortController()
 
-    // Fix 3：若处于草稿新会话（currentConvId=null），先建会话拿到 id 再发，
-    // 保证本次请求与下次请求用同一个 conversation_id，不会重复建会话。
-    let convId = currentConvId
-    if (!convId) {
-      try {
-        const conv = await api.createConversation(sectionId)
-        convId = conv.id
-        setCurrentConvId(convId)
-        msgLoadedForConv.current = convId
-      } catch {
-        toast.error('创建会话失败')
-        setPhase('idle')
-        setMessages((m) => m.slice(0, -2)) // 撤回 user + assistant 占位
-        return
-      }
-    }
-
     let aiText = ''
     try {
-      await api.streamChat(sectionId, userMsg.content, (token) => {
-        aiText += token
-        setMessages((m) => {
-          const copy = [...m]
-          copy[copy.length - 1] = { role: 'assistant', content: aiText }
-          return copy
-        })
-      }, abortRef.current.signal, convId)
-      // chat 后刷新会话列表（标题可能更新）
-      qc.invalidateQueries({ queryKey: ['conversations', sectionId] })
+      await api.streamChat(
+        sectionId,
+        userMsg.content,
+        (token) => {
+          aiText += token
+          setMessages((m) => {
+            const copy = [...m]
+            copy[copy.length - 1] = { role: 'assistant', content: aiText }
+            return copy
+          })
+        },
+        abortRef.current.signal,
+        currentConvId,
+        (doneData) => {
+          // done 事件：草稿会话首条对话后，后端总结标题并转 active，回传新 title
+          if (doneData.title) {
+            qc.invalidateQueries({ queryKey: ['conversations', sectionId] })
+          }
+        },
+      )
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') {
         // 用户主动停止：保留已生成的半截内容，不弹错

@@ -1,6 +1,6 @@
 'use client'
 
-import { ChevronDown, ChevronUp, Plus, Trash2 } from 'lucide-react'
+import { ChevronDown, ChevronUp, Plus, Sparkles, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -107,7 +107,14 @@ export function ConversationList({
                   )}
                 >
                   <span className={cn('size-1.5 shrink-0 rounded-full', selected ? 'bg-primary' : '')} />
-                  <span className="flex-1 truncate text-[12px]">{c.title}</span>
+                  {c.status === 'draft' ? (
+                    <span className="flex flex-1 items-center gap-1 truncate text-[12px] italic text-muted-foreground">
+                      <Sparkles className="size-3 shrink-0 text-ai" />
+                      <span className="truncate">{c.title}</span>
+                    </span>
+                  ) : (
+                    <span className="flex-1 truncate text-[12px]">{c.title}</span>
+                  )}
                   <span className="text-[11px] tabular-nums text-muted-foreground">
                     {formatConversationTime(c.updated_at)}
                   </span>
