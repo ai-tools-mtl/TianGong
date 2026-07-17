@@ -16,8 +16,8 @@ from app.ai.orchestrator import astream_chat, astream_generate, astream_rewrite
 from app.core.database import get_db
 from app.core.exceptions import ValidationError
 from app.deps import get_current_user
-from app.models import LLMCallLog, Message, Section, User
-from app.schemas.ai import ChatRequest, RewriteRequest
+from app.models import Conversation, LLMCallLog, Message, Section, User
+from app.schemas.ai import ChatRequest, ConversationCreate, ConversationUpdate, RewriteRequest
 from app.services import llm_config_service, section_service
 
 router = APIRouter(tags=["ai"])
@@ -31,13 +31,29 @@ def _sse_event(event: str, data: dict) -> str:
 
 
 def _get_section_with_history(
-    db: Session, user_id, section_id: str
+    db: Session, user_id, section_id: str, conversation_id: str | None = None
 ) -> tuple[Section, list[Message]]:
     section = section_service.get_section(db, user_id=user_id, section_id=section_id)
-    history = list(db.scalars(
-        select(Message).where(Message.section_id == section.id).order_by(Message.created_at)
-    ))
+    query = select(Message).where(Message.section_id == section.id)
+    if conversation_id:
+        query = query.where(Message.conversation_id == conversation_id)
+    history = list(db.scalars(query.order_by(Message.created_at)))
     return section, history
+
+
+def _get_or_create_conversation(db: Session, section: Section, conversation_id: str | None) -> Conversation:
+    """获取指定会话，或创建默认会话。"""
+    if conversation_id:
+        conv = db.scalar(select(Conversation).where(
+            (Conversation.id == conversation_id) & (Conversation.section_id == section.id)
+        ))
+        if conv:
+            return conv
+    # 创建新会话
+    conv = Conversation(section_id=section.id, title="新对话")
+    db.add(conv)
+    db.flush()
+    return conv
 
 
 def _resolve_provider(db: Session, user_id) -> str:
@@ -124,10 +140,16 @@ async def chat(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    section, history = _get_section_with_history(db, current_user.id, section_id)
-    user_msg = Message(section_id=section.id, role="user", content=payload.message)
+    section, history = _get_section_with_history(db, current_user.id, section_id, payload.conversation_id)
+    conv = _get_or_create_conversation(db, section, payload.conversation_id)
+    user_msg = Message(section_id=section.id, conversation_id=conv.id, role="user", content=payload.message)
     db.add(user_msg)
     db.commit()
+
+    # 首次对话自动用用户消息截断做标题
+    if conv.title == "新对话":
+        conv.title = payload.message[:20] + ("..." if len(payload.message) > 20 else "")
+        db.commit()
 
     async def generate():
         full_response = ""
@@ -143,14 +165,13 @@ async def chat(
                 else:
                     full_response += text
                     yield _sse_event("token", {"text": text})
-            ai_msg = Message(section_id=section.id, role="assistant", content=full_response)
+            ai_msg = Message(section_id=section.id, conversation_id=conv.id, role="assistant", content=full_response)
             db.add(ai_msg)
             db.commit()
             yield _sse_event("done", {"message_id": str(ai_msg.id)})
         except asyncio.CancelledError:
-            # 客户端断开：已生成的部分存为 assistant message（断线保留）
             if full_response:
-                db.add(Message(section_id=section.id, role="assistant", content=full_response))
+                db.add(Message(section_id=section.id, conversation_id=conv.id, role="assistant", content=full_response))
                 db.commit()
             status = "failed"
             err = "client_cancelled"
@@ -282,13 +303,15 @@ async def rewrite(
 @router.get("/sections/{section_id}/messages")
 def list_messages(
     section_id: str,
+    conversation_id: str | None = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
-    messages = list(db.scalars(
-        select(Message).where(Message.section_id == section.id).order_by(Message.created_at)
-    ))
+    query = select(Message).where(Message.section_id == section.id)
+    if conversation_id:
+        query = query.where(Message.conversation_id == conversation_id)
+    messages = list(db.scalars(query.order_by(Message.created_at)))
     return [
         {
             "id": str(m.id),
@@ -298,6 +321,97 @@ def list_messages(
         }
         for m in messages
     ]
+
+
+# ── 会话管理 ──
+
+@router.get("/sections/{section_id}/conversations")
+def list_conversations(
+    section_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """列出 section 下的所有会话（按最后更新倒序）。"""
+    section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
+    convs = list(db.scalars(
+        select(Conversation)
+        .where(Conversation.section_id == section.id)
+        .order_by(Conversation.updated_at.desc())
+    ))
+    return [
+        {
+            "id": str(c.id),
+            "title": c.title,
+            "created_at": c.created_at.isoformat(),
+            "updated_at": c.updated_at.isoformat(),
+        }
+        for c in convs
+    ]
+
+
+@router.post("/sections/{section_id}/conversations", status_code=201)
+def create_conversation(
+    section_id: str,
+    payload: ConversationCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """新建会话。"""
+    section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
+    conv = Conversation(section_id=section.id, title=payload.title or "新对话")
+    db.add(conv)
+    db.commit()
+    db.refresh(conv)
+    return {
+        "id": str(conv.id),
+        "title": conv.title,
+        "created_at": conv.created_at.isoformat(),
+        "updated_at": conv.updated_at.isoformat(),
+    }
+
+
+@router.patch("/sections/{section_id}/conversations/{conversation_id}")
+def update_conversation(
+    section_id: str,
+    conversation_id: str,
+    payload: ConversationUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """重命名会话。"""
+    section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
+    conv = db.scalar(select(Conversation).where(
+        (Conversation.id == conversation_id) & (Conversation.section_id == section.id)
+    ))
+    if conv is None:
+        from app.core.exceptions import NotFoundError
+        raise NotFoundError("会话不存在")
+    conv.title = payload.title
+    db.commit()
+    return {
+        "id": str(conv.id),
+        "title": conv.title,
+        "created_at": conv.created_at.isoformat(),
+        "updated_at": conv.updated_at.isoformat(),
+    }
+
+
+@router.delete("/sections/{section_id}/conversations/{conversation_id}", status_code=204)
+def delete_conversation(
+    section_id: str,
+    conversation_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """删除会话（级联删除消息）。"""
+    section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
+    conv = db.scalar(select(Conversation).where(
+        (Conversation.id == conversation_id) & (Conversation.section_id == section.id)
+    ))
+    if conv:
+        db.delete(conv)
+        db.commit()
+    return None
 
 
 class CaptionRequest(BaseModel):
