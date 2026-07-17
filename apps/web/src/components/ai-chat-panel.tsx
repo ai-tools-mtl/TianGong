@@ -320,7 +320,7 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
       {/* 标题栏 */}
       <div className="flex h-10 shrink-0 items-center justify-between gap-1 border-b px-2">
         <h3 className="flex items-center gap-1.5 px-1 text-[13px] font-semibold">
-          <Sparkles className="size-3.5 text-ai" />
+          <Sparkles className={cn('size-3.5 text-ai', convsLoading && 'animate-pulse')} />
           AI 助手
         </h3>
         <div className="flex items-center gap-0.5">

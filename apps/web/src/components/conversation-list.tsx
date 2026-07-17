@@ -43,7 +43,7 @@ export function ConversationList({
         onClick={() => hasConvs && setExpanded((e) => !e)}
         disabled={loading || !hasConvs}
         className="flex h-6 flex-1 items-center gap-1 truncate rounded px-1 text-left text-[12px] outline-none hover:bg-muted disabled:cursor-default disabled:hover:bg-transparent"
-        title={current?.title ?? '新对话'}
+        title={current?.title ?? '新会话'}
       >
         {loading ? (
           <span className="text-muted-foreground">加载中...</span>
@@ -57,7 +57,7 @@ export function ConversationList({
             )}
           </>
         ) : (
-          <span className="text-muted-foreground">新对话</span>
+          <span className="text-muted-foreground">新会话</span>
         )}
       </button>
       <Button
