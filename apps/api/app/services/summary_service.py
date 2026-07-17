@@ -22,8 +22,21 @@ def generate_summary(db: Session, section: Section) -> str:
         from langchain_core.messages import HumanMessage
 
         from app.ai.llm_client import get_llm
+        from app.models import Project
+        from app.services import llm_config_service
 
-        llm = get_llm()
+        # 反查 project.user_id，解析 BYOK / 全局 LLM 配置
+        project = db.get(Project, section.project_id)
+        cfg = None
+        if project is not None:
+            try:
+                cfg = llm_config_service.resolve_llm_config(db, user_id=project.user_id)
+            except Exception:
+                cfg = None
+
+        llm = get_llm(
+            **({"base_url": cfg.base_url or None, "api_key": cfg.api_key or None, "model": cfg.model or None} if cfg else {})
+        )
         resp = llm.invoke([
             HumanMessage(content=(
                 f"请用 100-200 字概括以下专利交底书章节内容的核心要点：\n\n"

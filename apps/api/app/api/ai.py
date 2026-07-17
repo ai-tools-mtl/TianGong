@@ -36,7 +36,13 @@ def _get_section_with_history(
     section = section_service.get_section(db, user_id=user_id, section_id=section_id)
     query = select(Message).where(Message.section_id == section.id)
     if conversation_id:
-        query = query.where(Message.conversation_id == conversation_id)
+        import uuid as _uuid
+        try:
+            conv_uuid = _uuid.UUID(str(conversation_id))
+            query = query.where(Message.conversation_id == conv_uuid)
+        except (ValueError, AttributeError):
+            # 非法 conversation_id：历史为空（后续 _get_or_create_conversation 会新建）
+            pass
     history = list(db.scalars(query.order_by(Message.created_at)))
     return section, history
 
@@ -44,11 +50,16 @@ def _get_section_with_history(
 def _get_or_create_conversation(db: Session, section: Section, conversation_id: str | None) -> Conversation:
     """获取指定会话，或创建默认会话。"""
     if conversation_id:
-        conv = db.scalar(select(Conversation).where(
-            (Conversation.id == conversation_id) & (Conversation.section_id == section.id)
-        ))
-        if conv:
-            return conv
+        import uuid as _uuid
+        try:
+            conv_uuid = _uuid.UUID(str(conversation_id))
+            conv = db.scalar(select(Conversation).where(
+                (Conversation.id == conv_uuid) & (Conversation.section_id == section.id)
+            ))
+            if conv:
+                return conv
+        except (ValueError, AttributeError):
+            pass
     # 创建新会话
     conv = Conversation(section_id=section.id, title="新对话")
     db.add(conv)
@@ -77,6 +88,26 @@ def _resolve_model(db: Session, user_id) -> str:
         pass
     from app.core.config import get_settings
     return get_settings().glm_model
+
+
+def _resolve_llm(db: Session, user_id):
+    """一次性解析 LLM 配置，供本次请求复用。
+
+    返回 (llm_config, provider, model)：
+    - llm_config: ResolvedLLMConfig | None —— 透传给 orchestrator/astream_llm，
+      让用户 BYOK / 全局配置真正生效（而非永远走 settings 默认）。
+    - provider / model: 用于 LLMCallLog 日志字段。
+    无可用配置时 llm_config=None（回退 settings），provider='global'，
+    model=settings.glm_model。
+    """
+    try:
+        cfg = llm_config_service.resolve_llm_config(db, user_id=user_id)
+    except Exception:
+        cfg = None
+    if cfg is not None:
+        return cfg, cfg.source, cfg.model
+    from app.core.config import get_settings
+    return None, "global", get_settings().glm_model
 
 
 def _log_llm_call(
@@ -151,6 +182,9 @@ async def chat(
         conv.title = payload.message[:20] + ("..." if len(payload.message) > 20 else "")
         db.commit()
 
+    # 一次性解析 LLM 配置（用户 BYOK > 全局 > settings 默认）
+    llm_config, provider, model = _resolve_llm(db, current_user.id)
+
     async def generate():
         full_response = ""
         start = time.monotonic()
@@ -158,7 +192,7 @@ async def chat(
         err = None
         try:
             async for kind, text in _yield_with_heartbeat(
-                astream_chat(db, section, history, payload.message)
+                astream_chat(db, section, history, payload.message, llm_config=llm_config)
             ):
                 if kind == "heartbeat":
                     yield _sse_event("heartbeat", {})
@@ -186,8 +220,8 @@ async def chat(
                 user_id=current_user.id,
                 project_id=section.project_id,
                 action="chat",
-                model=_resolve_model(db, current_user.id),
-                provider=_resolve_provider(db, current_user.id),
+                model=model,
+                provider=provider,
                 status=status,
                 duration_ms=int((time.monotonic() - start) * 1000),
                 error=err,
@@ -204,6 +238,8 @@ async def generate_draft(
 ):
     section, history = _get_section_with_history(db, current_user.id, section_id)
 
+    llm_config, provider, model = _resolve_llm(db, current_user.id)
+
     async def generate():
         full_md = ""
         start = time.monotonic()
@@ -211,7 +247,7 @@ async def generate_draft(
         err = None
         try:
             async for kind, text in _yield_with_heartbeat(
-                astream_generate(db, section, history)
+                astream_generate(db, section, history, llm_config=llm_config)
             ):
                 if kind == "heartbeat":
                     yield _sse_event("heartbeat", {})
@@ -244,8 +280,8 @@ async def generate_draft(
                 user_id=current_user.id,
                 project_id=section.project_id,
                 action="generate",
-                model=_resolve_model(db, current_user.id),
-                provider=_resolve_provider(db, current_user.id),
+                model=model,
+                provider=provider,
                 status=status,
                 duration_ms=int((time.monotonic() - start) * 1000),
                 error=err,
@@ -263,13 +299,15 @@ async def rewrite(
 ):
     section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
 
+    llm_config, provider, model = _resolve_llm(db, current_user.id)
+
     async def generate():
         start = time.monotonic()
         status = "success"
         err = None
         try:
             async for kind, text in _yield_with_heartbeat(
-                astream_rewrite(section, payload.selected_text, payload.instruction)
+                astream_rewrite(section, payload.selected_text, payload.instruction, llm_config=llm_config)
             ):
                 if kind == "heartbeat":
                     yield _sse_event("heartbeat", {})
@@ -290,8 +328,8 @@ async def rewrite(
                 user_id=current_user.id,
                 project_id=section.project_id,
                 action="rewrite",
-                model=_resolve_model(db, current_user.id),
-                provider=_resolve_provider(db, current_user.id),
+                model=model,
+                provider=provider,
                 status=status,
                 duration_ms=int((time.monotonic() - start) * 1000),
                 error=err,
@@ -307,10 +345,24 @@ def list_messages(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    """列出某会话的历史消息。
+
+    conversation_id 为必填：缺省时返回 422，避免前端漏传时把 section 下
+    所有会话的消息混在一起（串历史 bug 的根因）。
+    """
+    if not conversation_id:
+        raise ValidationError("conversation_id 为必填参数")
+    import uuid as _uuid
+    try:
+        conv_uuid = _uuid.UUID(str(conversation_id))
+    except (ValueError, AttributeError):
+        raise ValidationError("conversation_id 格式无效")
     section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
-    query = select(Message).where(Message.section_id == section.id)
-    if conversation_id:
-        query = query.where(Message.conversation_id == conversation_id)
+    query = (
+        select(Message)
+        .where(Message.section_id == section.id)
+        .where(Message.conversation_id == conv_uuid)
+    )
     messages = list(db.scalars(query.order_by(Message.created_at)))
     return [
         {
@@ -379,9 +431,10 @@ def update_conversation(
     db: Session = Depends(get_db),
 ):
     """重命名会话。"""
+    import uuid as _uuid
     section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
     conv = db.scalar(select(Conversation).where(
-        (Conversation.id == conversation_id) & (Conversation.section_id == section.id)
+        (Conversation.id == _uuid.UUID(conversation_id)) & (Conversation.section_id == section.id)
     ))
     if conv is None:
         from app.core.exceptions import NotFoundError
@@ -404,9 +457,10 @@ def delete_conversation(
     db: Session = Depends(get_db),
 ):
     """删除会话（级联删除消息）。"""
+    import uuid as _uuid
     section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
     conv = db.scalar(select(Conversation).where(
-        (Conversation.id == conversation_id) & (Conversation.section_id == section.id)
+        (Conversation.id == _uuid.UUID(conversation_id)) & (Conversation.section_id == section.id)
     ))
     if conv:
         db.delete(conv)
@@ -436,6 +490,8 @@ async def caption_figures(
 
     from langchain_core.messages import HumanMessage, SystemMessage
 
+    llm_config, _, _ = _resolve_llm(db, current_user.id)
+
     descs = "\n".join(f"- {d}" for d in payload.descriptions)
     system = (
         "你是专利交底书撰写助手。请根据用户提供的图片文字描述，"
@@ -448,7 +504,11 @@ async def caption_figures(
 
     async def generate():
         try:
-            async for token in astream_llm(messages):
+            async for token in astream_llm(messages, **({
+                "base_url": llm_config.base_url or None,
+                "api_key": llm_config.api_key or None,
+                "model": llm_config.model or None,
+            } if llm_config else {})):
                 yield _sse_event("token", {"text": token})
             yield _sse_event("done", {})
         except asyncio.CancelledError:
