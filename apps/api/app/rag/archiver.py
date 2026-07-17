@@ -46,6 +46,7 @@ def archive_project(db: Session, *, project: Project, user_id) -> int:
     for chunk, vec in zip(chunks, vectors, strict=False):
         db.add(KnowledgeChunk(
             user_id=user_id,
+            scope="personal",  # 三域隔离(关键约束 1):归档进个人库,上报通过才升 global
             source_type="disclosure",
             source_id=project.id,
             source_section_key=chunk.section_key,

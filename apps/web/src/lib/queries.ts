@@ -7,7 +7,17 @@ import {
 } from '@tanstack/react-query'
 
 import { api } from '@/lib/api'
-import type { Project, ProjectCreate, Section, Tag, TagCreate, TagMerge, TemplateSummary } from '@/types/api'
+import type {
+  KnowledgeFile,
+  KnowledgeReview,
+  Project,
+  ProjectCreate,
+  Section,
+  Tag,
+  TagCreate,
+  TagMerge,
+  TemplateSummary,
+} from '@/types/api'
 
 export const queryKeys = {
   projects: ['projects'] as const,
@@ -18,6 +28,12 @@ export const queryKeys = {
   attachments: (projectId: string) => ['attachments', projectId] as const,
   skills: (id: string) => ['skills', id] as const,
   tags: ['tags'] as const,
+  knowledgePersonal: ['knowledge', 'personal'] as const,
+  knowledgeGlobal: ['knowledge', 'global'] as const,
+  reviews: ['reviews'] as const,
+  members: (projectId: string) => ['members', projectId] as const,
+  shareLinks: (projectId: string) => ['share-links', projectId] as const,
+  messages: (sectionId: string) => ['messages', sectionId] as const,
 }
 
 // ── 项目 ──
@@ -209,5 +225,159 @@ export function useDetachProjectTag() {
     mutationFn: ({ projectId, tagId }: { projectId: string; tagId: string }) =>
       api.detachProjectTag(projectId, tagId),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.projects }),
+  })
+}
+
+// ── 知识库(三域)──
+export function usePersonalKnowledge() {
+  return useQuery<KnowledgeFile[]>({
+    queryKey: queryKeys.knowledgePersonal,
+    queryFn: () => api.listPersonalKnowledge(),
+  })
+}
+
+export function useGlobalKnowledge() {
+  return useQuery<KnowledgeFile[]>({
+    queryKey: queryKeys.knowledgeGlobal,
+    queryFn: () => api.listGlobalKnowledge(),
+  })
+}
+
+export function useUploadKnowledgeFile() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (file: File) => api.uploadKnowledgeFile(file),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.knowledgePersonal }),
+  })
+}
+
+export function useAdminUploadGlobal() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (file: File) => api.adminUploadGlobal(file),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.knowledgeGlobal }),
+  })
+}
+
+export function useSubmitKnowledgeReview() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (fileId: string) => api.submitKnowledgeReview(fileId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.knowledgePersonal }),
+  })
+}
+
+// ── 知识库审核(admin)──
+export function usePendingReviews() {
+  return useQuery<KnowledgeReview[]>({
+    queryKey: queryKeys.reviews,
+    queryFn: () => api.listPendingReviews(),
+  })
+}
+
+export function useApproveReview() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (reviewId: string) => api.approveReview(reviewId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.reviews })
+      qc.invalidateQueries({ queryKey: queryKeys.knowledgeGlobal })
+    },
+  })
+}
+
+export function useRejectReview() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ reviewId, comment }: { reviewId: string; comment?: string }) =>
+      api.rejectReview(reviewId, comment),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.reviews }),
+  })
+}
+
+// ── Diff（计划 16）──
+
+/**
+ * 计算差异：传入 AI 生成的 markdown 文本，返回 hunks。
+ * 纯计算接口，不在 onSuccess 里做任何 UI 副作用——
+ * onSuccess 回调里拿到 hunks 后由调用方决定如何展示。
+ */
+export function useComputeDiff(sectionId: string) {
+  return useMutation({
+    mutationFn: (aiText: string) => api.computeDiff(sectionId, aiText),
+  })
+}
+
+/**
+ * 应用 diff。成功后失效 sections 缓存（apply-diff 改写了章节内容，版本号变化）。
+ */
+export function useApplyDiff(sectionId: string, projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: { ai_text: string; accepted_hunk_ids: string[]; expected_version: number }) =>
+      api.applyDiff(sectionId, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.sections(projectId) })
+    },
+  })
+}
+
+// ── 协作（计划 17）──
+
+export function useMembers(projectId: string) {
+  return useQuery({
+    queryKey: queryKeys.members(projectId),
+    queryFn: () => api.listMembers(projectId),
+    enabled: !!projectId,
+  })
+}
+
+export function useAddMember(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (email: string) => api.addMember(projectId, email),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.members(projectId) }),
+  })
+}
+
+export function useRemoveMember(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (memberId: string) => api.removeMember(projectId, memberId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.members(projectId) }),
+  })
+}
+
+export function useShareLinks(projectId: string) {
+  return useQuery({
+    queryKey: queryKeys.shareLinks(projectId),
+    queryFn: () => api.listShareLinks(projectId),
+    enabled: !!projectId,
+  })
+}
+
+export function useCreateShareLink(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: { permissions: 'comment' | 'readonly'; expires_days?: number | null }) =>
+      api.createShareLink(projectId, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.shareLinks(projectId) }),
+  })
+}
+
+export function useRevokeShareLink(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (linkId: string) => api.revokeShareLink(projectId, linkId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.shareLinks(projectId) }),
+  })
+}
+
+// ── AI 对话记录 ──
+
+export function useMessages(sectionId: string) {
+  return useQuery({
+    queryKey: queryKeys.messages(sectionId),
+    queryFn: () => api.listMessages(sectionId),
   })
 }

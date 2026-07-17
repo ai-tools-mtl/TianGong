@@ -23,9 +23,12 @@ class RetrievalResult:
 def retrieve(
     db: Session, *, user_id, query: str, top_k: int = 3
 ) -> list[RetrievalResult]:
-    """检索用户知识库中与 query 最相似的 chunk。
+    """检索与 query 最相似的 chunk（三域 + 解析配置向量化）。
 
-    向量化配置由 user_id 内部解析（断链修复：embed 真用 BYOK/全局配置）。
+    命中范围：scope=global（全员共享）+ scope=personal 且 user_id=本人。
+    不命中他人 personal（严格隔离，关键约束 1）。
+
+    向量化配置由 user_id 内部解析（断链修复：embed 真用 BYOK/全局/env 配置）。
     无可用配置时返回空结果（检索不可用，调用方按空结果处理）。
     """
     embed_config = resolve_llm_config(db, user_id=user_id)
@@ -38,7 +41,13 @@ def retrieve(
             KnowledgeChunk,
             KnowledgeChunk.embedding.cosine_distance(query_vec).label("distance"),
         )
-        .where(KnowledgeChunk.user_id == user_id)
+        .where(
+            (KnowledgeChunk.scope == "global")
+            | (
+                (KnowledgeChunk.scope == "personal")
+                & (KnowledgeChunk.user_id == user_id)
+            )
+        )
         .order_by("distance")
         .limit(top_k)
     )
@@ -49,10 +58,12 @@ def retrieve(
         score = 1.0 - distance
         if score < SIMILARITY_THRESHOLD:
             continue
+        meta = chunk.metadata_ or {}
         results.append(RetrievalResult(
             content=chunk.content,
             score=score,
             source_section_key=chunk.source_section_key,
-            project_title=chunk.metadata_.get("project_title") if chunk.metadata_ else None,
+            # 归档类用 project_title,导入类用 title
+            project_title=meta.get("project_title") or meta.get("title"),
         ))
     return results

@@ -290,3 +290,81 @@ export interface ProjectTag {
   id: string
   name: string
 }
+
+// ── 知识库(三域 + 审核流)──
+
+export interface KnowledgeFile {
+  id: string
+  uploader_id: string
+  scope: 'personal' | 'global'
+  filename: string
+  mime_type: string
+  size: number
+  source_type: string // external_pdf / external_docx / disclosure_export
+  created_at: string
+}
+
+export interface KnowledgeReview {
+  id: string
+  submitter_id: string
+  reviewer_id: string | null
+  source_type: string // external / disclosure_export
+  file_id: string
+  filename: string | null // 联查 KnowledgeFile 得到(审核工作台展示用)
+  status: 'pending' | 'approved' | 'rejected'
+  review_comment: string | null
+  created_at: string
+  reviewed_at: string | null
+}
+
+// ── Diff（计划 16）──
+
+/** diff-match-patch 操作：-1=删除 / 0=相等 / 1=插入（元组，可解构为 [op, text]） */
+export type InlineDiffOp = [number, string]
+
+export interface Hunk {
+  id: string
+  type: 'replace' | 'insert' | 'delete'
+  inline?: InlineDiffOp[]
+  text?: string
+  original_para?: string
+  modified_para?: string
+}
+
+export interface DiffResponse {
+  hunks: Hunk[]
+}
+
+// ── 协作（计划 17）──
+
+export interface Member {
+  id: string
+  project_id: string
+  user_id: string
+  email: string
+  name: string
+  role: string
+  created_at: string
+}
+
+export interface ShareLink {
+  id: string
+  project_id: string
+  token: string
+  permissions: string
+  expires_at: string | null
+  created_by: string
+  created_at: string
+}
+
+export interface ShareLinkCreate {
+  permissions: 'comment' | 'readonly'
+  expires_days?: number | null
+}
+
+export interface SharedInfo {
+  title: string
+  permissions: string
+  project_id: string
+  share_token: string
+}

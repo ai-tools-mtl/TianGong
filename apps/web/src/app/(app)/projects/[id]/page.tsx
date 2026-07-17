@@ -1,17 +1,19 @@
 'use client'
 
-import { Archive, CheckCircle2, Eye, History, PanelLeft, PanelRight, Search, Sparkles } from 'lucide-react'
+import { Archive, CheckCircle2, Eye, History, PanelLeft, PanelRight, Search, Send, Share2, Sparkles } from 'lucide-react'
 import { useParams } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import { AIChatPanel } from '@/components/ai-chat-panel'
+import { ResizeHandle } from '@/components/resize-handle'
 import { SectionOutline } from '@/components/section-outline'
 import { FigureUpload } from '@/components/editor/figure-upload'
 import { TiptapEditor } from '@/components/editor/tiptap-editor'
 import type { TiptapEditorRef } from '@/components/editor/tiptap-editor'
 import { VersionDrawer } from '@/components/version-drawer'
+import { ShareDialog } from '@/components/share-dialog'
 import { SkillsDialog } from '@/components/skills-dialog'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
@@ -28,17 +30,25 @@ export default function ProjectDetailPage() {
   const updateSection = useUpdateSection()
   const { data: project } = useProject(projectId)
   const archiveMutation = useArchiveProject()
+  const submitDisclosure = useMutation({
+    mutationFn: () => api.submitDisclosureReview(projectId),
+    onSuccess: () => toast.success('已上报,等待管理员审核进入全局库'),
+    onError: (err: { message?: string }) => toast.error(err?.message ?? '上报失败'),
+  })
   const qc = useQueryClient()
   const [currentId, setCurrentId] = useState<string | null>(null)
   const [current, setCurrent] = useState<Section | null>(null)
   const [versionOpen, setVersionOpen] = useState(false)
   const [skillsOpen, setSkillsOpen] = useState(false)
+  const [shareOpen, setShareOpen] = useState(false)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const editorRef = useRef<TiptapEditorRef>(null)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle')
 
   const leftCollapsed = useUIStore((s) => s.leftCollapsed)
   const rightCollapsed = useUIStore((s) => s.rightCollapsed)
+  const rightWidth = useUIStore((s) => s.rightWidth)
+  const setRightWidth = useUIStore((s) => s.setRightWidth)
   const toggleLeft = useUIStore((s) => s.toggleLeft)
   const toggleRight = useUIStore((s) => s.toggleRight)
 
@@ -133,9 +143,9 @@ export default function ProjectDetailPage() {
     })
   }
 
-  // 三栏宽度按折叠态切换：左栏 240 / 收起 56；右栏 360 / 收起 0
+  // 三栏宽度按折叠态切换：左栏 240 / 收起 56；右栏 rightWidth / 收起 0
   const leftCol = leftCollapsed ? '56px' : '240px'
-  const rightCol = rightCollapsed ? '0px' : '360px'
+  const rightCol = rightCollapsed ? '0px' : `${rightWidth}px`
 
   return (
     <div
@@ -149,7 +159,7 @@ export default function ProjectDetailPage() {
           leftCollapsed ? 'items-center' : '',
         )}
       >
-        <div className="flex h-9 items-center justify-between border-b px-2">
+        <div className="flex h-10 items-center justify-between border-b px-2">
           {!leftCollapsed && (
             <span className="px-1.5 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
               章节大纲
@@ -178,7 +188,7 @@ export default function ProjectDetailPage() {
 
       {/* 中栏：编辑器 */}
       <section className="flex min-w-0 flex-col overflow-hidden">
-        <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b px-4">
+        <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b px-4">
           <div className="flex items-center gap-2">
             <h1 className="truncate text-[15px] font-semibold">
               {current?.title ?? '未选择章节'}
@@ -212,6 +222,15 @@ export default function ProjectDetailPage() {
               >
                 <Sparkles className="size-3.5" />
                 技能
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 gap-1.5"
+                onClick={() => setShareOpen(true)}
+              >
+                <Share2 className="size-3.5" />
+                分享
               </Button>
               <Button variant="ghost" size="sm" className="h-8 gap-1.5" asChild>
                 <a
@@ -250,11 +269,37 @@ export default function ProjectDetailPage() {
                 <Archive className="size-3.5" />
                 {project?.status === 'archived' ? '更新知识库' : '归档到知识库'}
               </Button>
+              {project?.status === 'archived' && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 gap-1.5"
+                  onClick={() => submitDisclosure.mutate()}
+                  disabled={submitDisclosure.isPending}
+                >
+                  <Send className="size-3.5" />
+                  {submitDisclosure.isPending ? '上报中...' : '上报到全局库'}
+                </Button>
+              )}
+              {rightCollapsed && (
+                <>
+                  <span className="mx-1 h-4 w-px bg-border" />
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 gap-1.5"
+                    onClick={toggleRight}
+                  >
+                    <PanelRight className="size-3.5" />
+                    AI
+                  </Button>
+                </>
+              )}
             </div>
           )}
         </div>
-        <div className="flex-1 overflow-y-auto px-6 py-6">
-          <div className="mx-auto max-w-5xl">
+        <div className="flex-1 overflow-y-auto px-6 py-4">
+          <div className="h-full">
             {current && current.key === 'drawings' && (
               <div className="mb-3">
                 <FigureUpload
@@ -270,32 +315,26 @@ export default function ProjectDetailPage() {
                 ref={editorRef}
                 content={current.content}
                 onChange={handleSave}
+                sectionId={current.id}
               />
             )}
           </div>
         </div>
       </section>
 
-      {/* 右栏：AI 对话（面板自带标题栏 + 折叠按钮） */}
+      {/* 拖拽分隔条 + 右栏：AI 对话（作为一个 grid 子元素） */}
       {current && !rightCollapsed && (
-        <aside className="flex min-w-0 flex-col border-l bg-background">
-          <div className="flex-1 overflow-hidden">
-            <AIChatPanel sectionId={current.id} projectId={projectId} />
-          </div>
-        </aside>
-      )}
-
-      {/* 右栏折叠时：浮动展开按钮 */}
-      {current && rightCollapsed && (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={toggleRight}
-          className="fixed right-4 top-16 z-30 h-8 gap-1.5 shadow-sm"
-        >
-          <PanelRight className="size-3.5" />
-          AI
-        </Button>
+        <div className="flex min-w-0">
+          <ResizeHandle
+            side="left"
+            onResize={(delta) => setRightWidth(rightWidth + delta)}
+          />
+          <aside className="flex min-w-0 flex-1 flex-col bg-background">
+            <div className="flex-1 overflow-hidden">
+              <AIChatPanel sectionId={current.id} section={current} projectId={projectId} />
+            </div>
+          </aside>
+        </div>
       )}
 
       {current && (
@@ -310,6 +349,12 @@ export default function ProjectDetailPage() {
         projectId={projectId}
         open={skillsOpen}
         onOpenChange={setSkillsOpen}
+      />
+
+      <ShareDialog
+        projectId={projectId}
+        open={shareOpen}
+        onOpenChange={setShareOpen}
       />
     </div>
   )

@@ -1,12 +1,15 @@
-"""附件/附图路由（设计 13.2 文件上传安全）。"""
+"""附件/附图路由（设计 13.2 文件上传安全）。
 
-import os
+存储改造(T3):下载从 FileResponse(本地路径)改为 Response(minio 字节流)。
+"""
 
 from fastapi import APIRouter, Depends, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.exceptions import NotFoundError
+from app.core.storage import get_storage
 from app.deps import get_current_user
 from app.models import User
 from app.services import attachment_service, section_service
@@ -38,7 +41,7 @@ async def upload(
     section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
     content = await file.read()
     att = attachment_service.upload_attachment(
-        db, user_id=current_user.id,
+        db, storage=get_storage(), user_id=current_user.id,
         project_id=str(section.project_id), section_id=section_id,
         filename=file.filename or "upload.png", content=content,
     )
@@ -65,14 +68,15 @@ def download(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """鉴权后返回图片流（不暴露真实路径）。"""
+    """鉴权后返回图片流（从 minio 取字节,不暴露 key）。"""
     att = attachment_service.get_attachment(db, user_id=current_user.id, attachment_id=attachment_id)
-    if not os.path.exists(att.storage_path):
-        from app.core.exceptions import NotFoundError
-
+    try:
+        content = get_storage().get("personal", att.storage_path)
+    except Exception:
         raise NotFoundError("文件不存在")
-    return FileResponse(
-        att.storage_path, media_type=att.mime_type, filename=att.filename,
+    return Response(
+        content=content, media_type=att.mime_type,
+        headers={"Content-Disposition": f'attachment; filename="{att.filename}"'},
     )
 
 
@@ -82,5 +86,7 @@ def delete(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    attachment_service.delete_attachment(db, user_id=current_user.id, attachment_id=attachment_id)
+    attachment_service.delete_attachment(
+        db, storage=get_storage(), user_id=current_user.id, attachment_id=attachment_id,
+    )
     return None

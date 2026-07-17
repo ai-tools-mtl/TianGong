@@ -1,6 +1,9 @@
-"""附件服务：存盘 + 魔数校验 + CRUD（设计 13.2 文件上传安全）。"""
+"""附件服务：对象存储 + 魔数校验 + CRUD（设计 13.2 文件上传安全）。
 
-import os
+存储改造(计划 T3):本地磁盘 → minio 对象存储。storage_path 字段语义从
+"本地完整路径"变为"minio object key",如 attachments/{user_id}/{uuid}.png。
+"""
+
 import uuid
 
 from sqlalchemy import select
@@ -8,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.exceptions import NotFoundError, ValidationError
+from app.core.storage import Storage
 from app.models import Attachment
 
 # 图片魔数签名（设计 13.2：不轻信扩展名，校验魔数）
@@ -33,10 +37,10 @@ def _ext_for_mime(mime: str) -> str:
 
 
 def upload_attachment(
-    db: Session, *, user_id, project_id: str, section_id: str | None,
-    filename: str, content: bytes,
+    db: Session, *, storage: Storage, user_id, project_id: str,
+    section_id: str | None, filename: str, content: bytes,
 ) -> Attachment:
-    """校验 + 存盘 + 建记录。"""
+    """校验 + 存 minio + 建记录。"""
     settings = get_settings()
 
     # 魔数校验（设计 13.2）
@@ -49,19 +53,15 @@ def upload_attachment(
     if len(content) > max_bytes:
         raise ValidationError(f"图片大小超过 {settings.max_image_size_mb}MB 限制")
 
-    # UUID 存储名（防路径遍历，设计 13.2）
-    stored_name = f"{uuid.uuid4()}{_ext_for_mime(real_mime)}"
-    upload_dir = settings.upload_dir
-    os.makedirs(upload_dir, exist_ok=True)
-    file_path = os.path.join(upload_dir, stored_name)
-    with open(file_path, "wb") as f:
-        f.write(content)
+    # object key:personal bucket 下按 user 隔离(防路径遍历,设计 13.2)
+    object_key = f"attachments/{user_id}/{uuid.uuid4()}{_ext_for_mime(real_mime)}"
+    storage.put("personal", object_key, content, real_mime)
 
     att = Attachment(
         project_id=uuid.UUID(project_id),
         section_id=uuid.UUID(section_id) if section_id else None,
         filename=filename,
-        storage_path=file_path,
+        storage_path=object_key,  # 语义变更:minio object key(不再是本地路径)
         mime_type=real_mime,
         size=len(content),
     )
@@ -104,11 +104,11 @@ def get_attachment(db: Session, *, user_id, attachment_id: str) -> Attachment:
     return att
 
 
-def delete_attachment(db: Session, *, user_id, attachment_id: str) -> None:
-    """删除附件（记录 + 文件）。"""
+def delete_attachment(
+    db: Session, *, storage: Storage, user_id, attachment_id: str,
+) -> None:
+    """删除附件（记录 + minio 对象,幂等）。"""
     att = get_attachment(db, user_id=user_id, attachment_id=attachment_id)
-    # 删文件
-    if os.path.exists(att.storage_path):
-        os.remove(att.storage_path)
+    storage.delete("personal", att.storage_path)  # 幂等:对象不存在不抛
     db.delete(att)
     db.commit()

@@ -1,11 +1,17 @@
 import type {
   ApiError,
+  DiffResponse,
   LoginRequest,
+  Member,
   Project,
   ProjectCreate,
   ProjectTag,
   ProjectUpdate,
   RegisterRequest,
+  Section,
+  ShareLink,
+  ShareLinkCreate,
+  SharedInfo,
   Tag,
   TagCreate,
   TagMerge,
@@ -176,6 +182,11 @@ export const api = {
     return _consumeSSE(res, onToken)
   },
 
+  listMessages: (sectionId: string) =>
+    request<{ id: string; role: string; content: string; created_at: string }[]>(
+      `/sections/${sectionId}/messages`,
+    ),
+
   // ── 版本 ──
   listVersions: (sectionId: string) =>
     request<import('@/types/api').Version[]>(`/sections/${sectionId}/versions`),
@@ -258,6 +269,105 @@ export const api = {
   deleteMyLLM: () => request<{ message: string }>(`/settings/llm`, { method: 'DELETE' }),
   testMyLLM: (data: { base_url: string; api_key: string; model: string }) =>
     request<{ ok: boolean; response?: string; error?: string }>(`/settings/llm/test`, { method: 'POST', body: JSON.stringify(data) }),
+
+  // ── 知识库(三域 + 审核流)──
+  uploadKnowledgeFile: async (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(`${BASE}/api/v1/knowledge/upload`, {
+      method: 'POST', credentials: 'include', body: form,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: `HTTP ${res.status}` }))
+      throw err
+    }
+    return res.json() as Promise<import('@/types/api').KnowledgeFile>
+  },
+
+  adminUploadGlobal: async (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(`${BASE}/api/v1/admin/knowledge/upload`, {
+      method: 'POST', credentials: 'include', body: form,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: `HTTP ${res.status}` }))
+      throw err
+    }
+    return res.json() as Promise<{ file_id: string; scope: string; source_type: string }>
+  },
+
+  submitKnowledgeReview: (fileId: string) =>
+    request<{ review_id: string; status: string }>(
+      `/knowledge/files/${fileId}/submit-review`, { method: 'POST' },
+    ),
+
+  submitDisclosureReview: (projectId: string) =>
+    request<{ review_id: string; status: string }>(
+      `/projects/${projectId}/submit-disclosure-review`, { method: 'POST' },
+    ),
+
+  listPersonalKnowledge: () =>
+    request<import('@/types/api').KnowledgeFile[]>('/knowledge/files/personal'),
+  listGlobalKnowledge: () =>
+    request<import('@/types/api').KnowledgeFile[]>('/knowledge/files/global'),
+
+  knowledgeFileUrl: (fileId: string) =>
+    `${BASE}/api/v1/knowledge/files/${fileId}/download`,
+
+  // ── 知识库审核(admin)──
+  listPendingReviews: () =>
+    request<import('@/types/api').KnowledgeReview[]>('/admin/knowledge/reviews'),
+  approveReview: (reviewId: string) =>
+    request<import('@/types/api').KnowledgeReview>(
+      `/admin/knowledge/reviews/${reviewId}/approve`, { method: 'POST' },
+    ),
+  rejectReview: (reviewId: string, comment?: string) =>
+    request<import('@/types/api').KnowledgeReview>(
+      `/admin/knowledge/reviews/${reviewId}/reject`,
+      { method: 'POST', body: JSON.stringify({ comment: comment ?? null }) },
+    ),
+
+  // ── Diff（计划 16）──
+  computeDiff: (sectionId: string, aiText: string) =>
+    request<DiffResponse>(`/sections/${sectionId}/diff`, {
+      method: 'POST',
+      body: JSON.stringify({ ai_text: aiText }),
+    }),
+
+  applyDiff: (sectionId: string, data: { ai_text: string; accepted_hunk_ids: string[]; expected_version: number }) =>
+    request<Section>(`/sections/${sectionId}/apply-diff`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  // ── 协作（计划 17）──
+  listMembers: (projectId: string) =>
+    request<Member[]>(`/projects/${projectId}/members`),
+
+  addMember: (projectId: string, email: string) =>
+    request<Member>(`/projects/${projectId}/members`, {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }),
+
+  removeMember: (projectId: string, memberId: string) =>
+    request<void>(`/projects/${projectId}/members/${memberId}`, { method: 'DELETE' }),
+
+  listShareLinks: (projectId: string) =>
+    request<ShareLink[]>(`/projects/${projectId}/share-links`),
+
+  createShareLink: (projectId: string, data: ShareLinkCreate) =>
+    request<ShareLink>(`/projects/${projectId}/share-links`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  revokeShareLink: (projectId: string, linkId: string) =>
+    request<void>(`/projects/${projectId}/share-links/${linkId}`, { method: 'DELETE' }),
+
+  getSharedInfo: (token: string) =>
+    request<SharedInfo>(`/shared/${token}`),
 }
 
 async function _consumeSSE(res: Response, onToken: (t: string) => void): Promise<void> {

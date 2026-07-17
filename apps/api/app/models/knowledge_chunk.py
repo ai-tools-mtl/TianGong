@@ -16,6 +16,12 @@ class KnowledgeChunk(Base, IdMixin, TimestampMixin):
     user_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), index=True
     )
+    # 三域隔离(关键约束 1):
+    # - scope=personal:user_id 是 owner,严格隔离,仅本人可检索
+    # - scope=global:user_id 记「上传者/来源」,全员可检索(retriever 不按 user_id 过滤 global)
+    # 注意:personal 素材 approve 升 global 后,user_id 仍是原 owner——
+    # 该用户从 personal 角度不再单独命中它(已升 global,走 global 分支),语义一致。
+    scope: Mapped[str] = mapped_column(String(20), default="personal")  # personal / global
     source_type: Mapped[str] = mapped_column(String(30), default="disclosure")
     source_id: Mapped[uuid.UUID] = mapped_column(index=True)
     source_section_key: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -23,3 +29,9 @@ class KnowledgeChunk(Base, IdMixin, TimestampMixin):
     content: Mapped[str] = mapped_column(Text)
     embedding = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSONType, nullable=True)
+    # 关联源文件(导入类有,自产归档类可为 NULL)
+    file_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("knowledge_files.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # 审核状态:NULL(非上报对象)/ pending / approved / rejected
+    review_status: Mapped[str | None] = mapped_column(String(20), nullable=True)

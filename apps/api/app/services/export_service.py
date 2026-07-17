@@ -1,13 +1,18 @@
-"""导出服务：Tiptap JSON → docx / Markdown（设计 13.5）。"""
+"""导出服务：Tiptap JSON → docx / Markdown（设计 13.5）。
+
+存储改造(T3):图片从本地路径改为从 minio 取字节流。
+"""
 
 import io
+import re
+import uuid
 from typing import Any
 
 from docx import Document
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Project, Section
+from app.models import Attachment, Project, Section
 
 
 def export_markdown(db: Session, *, project: Project) -> str:
@@ -51,7 +56,7 @@ def export_docx(db: Session, *, project: Project) -> bytes:
     for s in sections:
         doc.add_heading(s.title, level=1)
         if s.content:
-            _render_tiptap_to_docx(doc, s.content)
+            _render_tiptap_to_docx(doc, s.content, db)
         else:
             doc.add_paragraph("（待填写）")
 
@@ -112,8 +117,13 @@ def _tiptap_to_markdown(doc_json: dict) -> str:
     return "".join(parts).strip()
 
 
-def _render_tiptap_to_docx(doc: Document, doc_json: dict) -> None:
-    """把 Tiptap JSON 渲染到 python-docx Document。"""
+def _render_tiptap_to_docx(doc: Document, doc_json: dict, db: Session) -> None:
+    """把 Tiptap JSON 渲染到 python-docx Document。
+
+    图片节点:src 形如 /api/v1/projects/{pid}/attachments/{aid}/file,
+    从中提 attachment_id → 查 storage_path → 从 minio 取字节 → add_picture。
+    图片缺失不阻断导出(try/except 兜底)。
+    """
     def walk(node: Any):
         if isinstance(node, dict):
             ntype = node.get("type")
@@ -127,9 +137,12 @@ def _render_tiptap_to_docx(doc: Document, doc_json: dict) -> None:
             elif ntype == "image":
                 src = node.get("attrs", {}).get("src", "")
                 alt = node.get("attrs", {}).get("alt", "")
-                import os
-                if src and os.path.exists(src.split("?")[0]):
-                    doc.add_picture(src.split("?")[0])
+                buf = _fetch_image_bytes(db, src)
+                if buf:
+                    try:
+                        doc.add_picture(io.BytesIO(buf))
+                    except Exception:
+                        pass  # 图片损坏不阻断导出
                 doc.add_paragraph(alt)
             elif ntype in ("bulletList", "orderedList"):
                 style = "List Bullet" if ntype == "bulletList" else "List Number"
@@ -145,6 +158,32 @@ def _render_tiptap_to_docx(doc: Document, doc_json: dict) -> None:
                 walk(item)
 
     walk(doc_json)
+
+
+# 匹配附件下载 URL 里的 attachment_id(UUID)
+_ATT_URL_RE = re.compile(r"/attachments/([0-9a-fA-F-]{36})/file")
+
+
+def _fetch_image_bytes(db: Session, src: str) -> bytes | None:
+    """从 Tiptap image src 反查 attachment,从 minio 取图片字节。失败返回 None。"""
+    if not src:
+        return None
+    m = _ATT_URL_RE.search(src)
+    if not m:
+        return None
+    try:
+        att_id = uuid.UUID(m.group(1))
+    except ValueError:
+        return None
+    att = db.get(Attachment, att_id)
+    if att is None or not att.storage_path:
+        return None
+    try:
+        from app.core.storage import get_storage
+
+        return get_storage().get("personal", att.storage_path)
+    except Exception:
+        return None
 
 
 def _get_text(node: dict) -> str:

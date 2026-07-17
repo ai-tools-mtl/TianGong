@@ -3,8 +3,11 @@
 User 模型改造：username 成为登录标识（UNIQUE NOT NULL），email 降级为可选联系
 方式（nullable、不再唯一）。按 drop-rebuild 共识，users 表现有数据可丢弃。
 
+合并修复：down_revision 从 d08c8546464c 改指向 main 链尾 7076816516e4
+（merge main→P2 后迁移链分叉，此处重定向使 P2 4 个迁移挂在 main 链之后）。
+
 Revision ID: 74fc314a95ce
-Revises: d08c8546464c
+Revises: 7076816516e4
 Create Date: 2026-07-16 17:21:58.674597
 
 """
@@ -16,7 +19,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '74fc314a95ce'
-down_revision: Union[str, Sequence[str], None] = 'd08c8546464c'
+down_revision: Union[str, Sequence[str], None] = '7076816516e4'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
