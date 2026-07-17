@@ -163,12 +163,17 @@ export const api = {
     onToken: (t: string) => void,
     signal?: AbortSignal,
     source?: string,
+    conversationId?: string,
   ) => {
     const res = await fetch(`${BASE}/api/v1/sections/${sectionId}/chat`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, ...(source ? { source } : {}) }),
+      body: JSON.stringify({
+        message,
+        conversation_id: conversationId ?? null,
+        ...(source ? { source } : {}),
+      }),
       signal,
     })
     if (!res.ok) throw await _sseHttpError(res)
@@ -192,10 +197,45 @@ export const api = {
     return _consumeSSE(res, onToken)
   },
 
-  listMessages: (sectionId: string) =>
+  streamRewrite: async (
+    sectionId: string,
+    data: { selected_text: string; instruction?: string },
+    onToken: (t: string) => void,
+    signal?: AbortSignal,
+  ) => {
+    const res = await fetch(`${BASE}/api/v1/sections/${sectionId}/rewrite`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+      signal,
+    })
+    return _consumeSSE(res, onToken)
+  },
+
+  listMessages: (sectionId: string, conversationId?: string) =>
     request<{ id: string; role: string; content: string; created_at: string }[]>(
-      `/sections/${sectionId}/messages`,
+      `/sections/${sectionId}/messages${conversationId ? `?conversation_id=${conversationId}` : ''}`,
     ),
+
+  // ── AI 会话 ──
+  listConversations: (sectionId: string) =>
+    request<import('@/types/api').Conversation[]>(`/sections/${sectionId}/conversations`),
+
+  createConversation: (sectionId: string, title?: string) =>
+    request<import('@/types/api').Conversation>(`/sections/${sectionId}/conversations`, {
+      method: 'POST',
+      body: JSON.stringify({ title: title ?? null }),
+    }),
+
+  updateConversation: (sectionId: string, conversationId: string, title: string) =>
+    request<import('@/types/api').Conversation>(
+      `/sections/${sectionId}/conversations/${conversationId}`,
+      { method: 'PATCH', body: JSON.stringify({ title }) },
+    ),
+
+  deleteConversation: (sectionId: string, conversationId: string) =>
+    request<void>(`/sections/${sectionId}/conversations/${conversationId}`, { method: 'DELETE' }),
 
   // ── 版本 ──
   listVersions: (sectionId: string) =>
@@ -429,6 +469,17 @@ async function _sseHttpError(res: Response): Promise<Error & { status: number; c
   return err
 }
 
+/**
+ * 消费 SSE 流：按 event 字段分发。
+ *
+ * 后端事件类型（见 app/api/ai.py）：
+ * - token：追加文本 {text}
+ * - heartbeat：保活心跳，忽略
+ * - done：完成 {message_id? section_id?}，正常结束
+ * - error：服务端错误 {code, message}，抛出 ApiError 让上层走 catch 分支
+ *
+ * 原实现只看 data.text，导致 error 事件被静默吞掉（用户看到"空回复+无报错"）。
+ */
 async function _consumeSSE(res: Response, onToken: (t: string) => void): Promise<void> {
   if (!res.body) return
   const reader = res.body.getReader()
@@ -443,18 +494,31 @@ async function _consumeSSE(res: Response, onToken: (t: string) => void): Promise
     buffer = events.pop() || ''
     for (const evt of events) {
       const lines = evt.split('\n')
+      let eventType = 'message'
       let dataLine = ''
       for (const line of lines) {
-        if (line.startsWith('data: ')) dataLine = line.slice(6)
+        if (line.startsWith('event: ')) eventType = line.slice(7).trim()
+        else if (line.startsWith('data: ')) dataLine = line.slice(6)
       }
       if (!dataLine) continue
+      let data: Record<string, unknown> = {}
       try {
-        const data = JSON.parse(dataLine)
-        if (data.text) onToken(data.text)
-        // heartbeat/error/done 事件无 text，忽略（上层靠流结束判断）
+        data = JSON.parse(dataLine)
       } catch {
-        // 忽略解析失败的行
+        continue
       }
+      if (eventType === 'error') {
+        // 服务端明确报错：抛出，让调用方弹 toast
+        const code = (data.code as string) || 'llm_error'
+        const message = (data.message as string) || 'AI 服务错误'
+        const err: ApiError = { code, message }
+        throw err
+      }
+      if (eventType === 'token') {
+        const text = data.text as string | undefined
+        if (text) onToken(text)
+      }
+      // heartbeat / done：无需特殊处理，流自然结束
     }
   }
 }

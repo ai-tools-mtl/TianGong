@@ -429,3 +429,12 @@ export interface SharedInfo {
   project_id: string
   share_token: string
 }
+
+// ── AI 会话 ──
+
+export interface Conversation {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+}
