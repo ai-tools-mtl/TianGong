@@ -3,6 +3,8 @@
  * Spec: docs/superpowers/specs/2026-07-17-conversation-list-grouping-design.md
  */
 
+import type { Conversation } from '@/types/api'
+
 export type TimeGroupKey = 'today' | 'yesterday' | 'thisWeek' | 'thisMonth' | 'earlier'
 
 export const GROUP_LABELS: Record<TimeGroupKey, string> = {
@@ -43,4 +45,30 @@ export function getTimeBucket(date: Date, now: Date = new Date()): TimeGroupKey 
   if (t >= weekStart.getTime()) return 'thisWeek'
   if (t >= monthStart.getTime()) return 'thisMonth'
   return 'earlier'
+}
+
+export interface ConversationGroup {
+  key: TimeGroupKey
+  label: string
+  items: Conversation[]
+}
+
+const GROUP_ORDER: TimeGroupKey[] = ['today', 'yesterday', 'thisWeek', 'thisMonth', 'earlier']
+
+/**
+ * 把会话按 updated_at 分到 5 个时间桶。
+ * 输入应已按 updated_at 倒序（后端 list_conversations 保证）；每组内保持原顺序。
+ * 空桶不会出现在结果里。顺序固定为 today → earlier。
+ */
+export function groupConversations(conversations: Conversation[], now: Date = new Date()): ConversationGroup[] {
+  const buckets: Record<TimeGroupKey, Conversation[]> = {
+    today: [], yesterday: [], thisWeek: [], thisMonth: [], earlier: [],
+  }
+  for (const c of conversations) {
+    const d = new Date(c.updated_at)
+    buckets[getTimeBucket(d, now)].push(c)
+  }
+  return GROUP_ORDER
+    .filter((k) => buckets[k].length > 0)
+    .map((k) => ({ key: k, label: GROUP_LABELS[k], items: buckets[k] }))
 }
