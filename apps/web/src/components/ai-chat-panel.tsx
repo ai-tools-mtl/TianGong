@@ -1,12 +1,13 @@
 'use client'
 
-import { GitCompare, Loader2, PanelRight, Plus, Sparkles, Trash2 } from 'lucide-react'
+import { GitCompare, Loader2, PanelRight, Sparkles, Trash2 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
 
 import { Button } from '@/components/ui/button'
+import { ConversationList } from '@/components/conversation-list'
 import { DiffReviewPanel } from '@/components/diff-review-panel'
 import { api } from '@/lib/api'
 import {
@@ -20,7 +21,7 @@ import {
 } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import { useUIStore } from '@/stores/ui'
-import type { Conversation, Hunk, Section } from '@/types/api'
+import type { Hunk, Section } from '@/types/api'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -126,15 +127,16 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
     setPhase('idle')
   }
 
-  function handleDeleteConversation() {
-    if (!currentConvId) return
-    const convId = currentConvId
+  function handleDeleteConversation(convId: string) {
     deleteConv.mutate(convId, {
       onSuccess: () => {
-        msgLoadedForConv.current = null
-        setCurrentConvId(null)
-        setMessages([])
-        setPhase('idle')
+        // 删除的是当前会话才清空显示
+        if (convId === currentConvId) {
+          msgLoadedForConv.current = null
+          setCurrentConvId(null)
+          setMessages([])
+          setPhase('idle')
+        }
         toast.success('会话已删除')
       },
     })
@@ -351,43 +353,16 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
 
       {/* 会话选择栏 */}
       {phase !== 'generating' && phase !== 'done' && (
-        <div className="flex h-8 shrink-0 items-center gap-1 border-b bg-muted/30 px-2">
-          <select
-            value={currentConvId ?? ''}
-            onChange={(e) => handleSelectConversation(e.target.value)}
-            className="h-6 flex-1 truncate rounded border-none bg-transparent text-[12px] outline-none cursor-pointer hover:bg-muted"
-            disabled={convsLoading || createConv.isPending}
-          >
-            {convsLoading && <option>加载中...</option>}
-            {!convsLoading && (conversations?.length ?? 0) === 0 && <option value="">新对话</option>}
-            {conversations?.map((c: Conversation) => (
-              <option key={c.id} value={c.id}>
-                {c.title}
-              </option>
-            ))}
-          </select>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            onClick={handleNewConversation}
-            disabled={createConv.isPending}
-            title="新建会话"
-          >
-            <Plus className="size-3.5" />
-          </Button>
-          {currentConvId && (conversations?.length ?? 0) > 1 && (
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              onClick={handleDeleteConversation}
-              disabled={deleteConv.isPending}
-              title="删除当前会话"
-              className="text-muted-foreground hover:text-destructive"
-            >
-              <Trash2 className="size-3.5" />
-            </Button>
-          )}
-        </div>
+        <ConversationList
+          conversations={conversations ?? []}
+          currentConvId={currentConvId}
+          loading={convsLoading}
+          createPending={createConv.isPending}
+          deletePending={deleteConv.isPending}
+          onSelect={handleSelectConversation}
+          onNew={handleNewConversation}
+          onDelete={handleDeleteConversation}
+        />
       )}
 
       {/* 内容区 */}
