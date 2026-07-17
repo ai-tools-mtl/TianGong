@@ -56,6 +56,7 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
   const { data: conversations, isLoading: convsLoading } = useConversations(sectionId)
   const createConv = useCreateConversation(sectionId)
   const deleteConv = useDeleteConversation(sectionId)
+  // useMessages 在无 conversationId 时禁用（后端强制要求 conversation_id）
   const { data: history } = useMessages(sectionId, currentConvId ?? undefined)
 
   // 首次加载会话列表：自动选中最新（第一个）
@@ -65,11 +66,16 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
     }
   }, [conversations, currentConvId])
 
-  // 会话或 section 变化时加载历史消息
+  // 会话变化时加载历史消息（currentConvId 为 null 时不加载，保持空白新会话态）
   useEffect(() => {
-    const loadKey = currentConvId ?? '__null__'
-    if (history && msgLoadedForConv.current !== loadKey) {
-      msgLoadedForConv.current = loadKey
+    if (!currentConvId) {
+      // 草稿新会话：清空显示，等待首条消息
+      msgLoadedForConv.current = null
+      setMessages([])
+      return
+    }
+    if (history && msgLoadedForConv.current !== currentConvId) {
+      msgLoadedForConv.current = currentConvId
       setMessages(
         history.map((m: { role: string; content: string }) => ({
           role: m.role as 'user' | 'assistant',
@@ -112,16 +118,12 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
   }
 
   function handleNewConversation() {
+    // 进入"草稿新会话"本地态：不立即落库，等首条消息时再建。
+    // 避免旧实现因 setState 异步导致 handleSend 用旧 currentConvId 又建一个会话（重复空"新对话"根因）。
     msgLoadedForConv.current = null
     setCurrentConvId(null)
     setMessages([])
     setPhase('idle')
-    // 创建会话后由 conversations query 自动刷新
-    createConv.mutate('新对话', {
-      onSuccess: (conv: Conversation) => {
-        setCurrentConvId(conv.id)
-      },
-    })
   }
 
   function handleDeleteConversation() {
@@ -146,6 +148,23 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
     setPhase('chatting')
     abortRef.current = new AbortController()
 
+    // Fix 3：若处于草稿新会话（currentConvId=null），先建会话拿到 id 再发，
+    // 保证本次请求与下次请求用同一个 conversation_id，不会重复建会话。
+    let convId = currentConvId
+    if (!convId) {
+      try {
+        const conv = await api.createConversation(sectionId)
+        convId = conv.id
+        setCurrentConvId(convId)
+        msgLoadedForConv.current = convId
+      } catch {
+        toast.error('创建会话失败')
+        setPhase('idle')
+        setMessages((m) => m.slice(0, -2)) // 撤回 user + assistant 占位
+        return
+      }
+    }
+
     let aiText = ''
     try {
       await api.streamChat(sectionId, userMsg.content, (token) => {
@@ -155,12 +174,24 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
           copy[copy.length - 1] = { role: 'assistant', content: aiText }
           return copy
         })
-      }, abortRef.current.signal, currentConvId ?? undefined)
+      }, abortRef.current.signal, convId)
       // chat 后刷新会话列表（标题可能更新）
       qc.invalidateQueries({ queryKey: ['conversations', sectionId] })
     } catch (err: unknown) {
-      if (!(err instanceof DOMException && err.name === 'AbortError')) {
-        toast.error('AI 回复失败')
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        // 用户主动停止：保留已生成的半截内容，不弹错
+      } else {
+        // SSE error 事件抛出的 ApiError 带 message；其它异常降级提示
+        const e = err as { message?: string }
+        toast.error(e?.message || 'AI 回复失败')
+        // 移除空的 assistant 占位（若有）
+        setMessages((m) => {
+          const last = m[m.length - 1]
+          if (last && last.role === 'assistant' && !last.content) {
+            return m.slice(0, -1)
+          }
+          return m
+        })
       }
     } finally {
       setPhase('idle')
@@ -191,8 +222,8 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
     setPhase('generating')
     setAiDraft('')
     abortRef.current = new AbortController()
+    let md = ''
     try {
-      let md = ''
       await api.streamGenerate(sectionId, (token) => {
         md += token
         setAiDraft(md)
@@ -200,9 +231,11 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
       setPhase('done')
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') {
-        setPhase('done')
+        // 已有部分内容则进 done 态供审查；否则回 idle
+        setPhase(md ? 'done' : 'idle')
       } else {
-        toast.error('生成失败')
+        const e = err as { message?: string }
+        toast.error(e?.message || '生成失败')
         setPhase('idle')
       }
     }
@@ -295,7 +328,7 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
               <Trash2 className="size-3.5" />
             </Button>
           )}
-          {phase === 'generating' ? (
+          {phase === 'generating' || phase === 'chatting' ? (
             <Button size="xs" variant="destructive" onClick={handleStop}>
               停止
             </Button>

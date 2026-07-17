@@ -33,7 +33,8 @@ export const queryKeys = {
   reviews: ['reviews'] as const,
   members: (projectId: string) => ['members', projectId] as const,
   shareLinks: (projectId: string) => ['share-links', projectId] as const,
-  messages: (sectionId: string) => ['messages', sectionId] as const,
+  messages: (sectionId: string, conversationId?: string) =>
+    ['messages', sectionId, conversationId ?? null] as const,
 }
 
 // ── 项目 ──
@@ -377,8 +378,10 @@ export function useRevokeShareLink(projectId: string) {
 
 export function useMessages(sectionId: string, conversationId?: string) {
   return useQuery({
-    queryKey: queryKeys.messages(sectionId),
+    queryKey: queryKeys.messages(sectionId, conversationId),
     queryFn: () => api.listMessages(sectionId, conversationId),
+    // 无 conversationId 不查询（后端已强制要求，避免 422 噪音）
+    enabled: !!conversationId,
   })
 }
 
