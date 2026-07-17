@@ -9,6 +9,7 @@ import ReactMarkdown from 'react-markdown'
 import { Button } from '@/components/ui/button'
 import { DiffReviewPanel } from '@/components/diff-review-panel'
 import { api } from '@/lib/api'
+import { getDefaultSource } from '@/lib/llm-source'
 import { queryKeys, useApplyDiff, useComputeDiff, useMessages } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import { useUIStore } from '@/stores/ui'
@@ -78,6 +79,11 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
 
   async function handleSend() {
     if (!input.trim() || phase === 'chatting' || phase === 'generating') return
+    const source = getDefaultSource()
+    if (!source) {
+      toast.error('请先在设置中选择 LLM 源')
+      return
+    }
     const userMsg: ChatMessage = { role: 'user', content: input }
     setMessages((m) => [...m, userMsg, { role: 'assistant', content: '' }])
     setInput('')
@@ -93,7 +99,7 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
           copy[copy.length - 1] = { role: 'assistant', content: aiText }
           return copy
         })
-      }, abortRef.current.signal)
+      }, abortRef.current.signal, source)
     } catch (err: unknown) {
       if (!(err instanceof DOMException && err.name === 'AbortError')) {
         toast.error('AI 回复失败')
@@ -125,6 +131,11 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
   }
 
   async function handleGenerate() {
+    const source = getDefaultSource()
+    if (!source) {
+      toast.error('请先在设置中选择 LLM 源')
+      return
+    }
     setPhase('generating')
     setAiDraft('')
     abortRef.current = new AbortController()
@@ -133,7 +144,7 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
       await api.streamGenerate(sectionId, (token) => {
         md += token
         setAiDraft(md)
-      }, abortRef.current.signal)
+      }, abortRef.current.signal, source)
       setPhase('done')
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') {

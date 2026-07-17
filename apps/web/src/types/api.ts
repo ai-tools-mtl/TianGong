@@ -267,14 +267,44 @@ export interface AuditLogPage {
   items: AuditLogItem[]
 }
 
-export interface UserLLMSettings {
+// ── 用户 BYOK 配置（多配置，Task 4.0）──
+
+/** GET /settings/llm 列表项 / POST、PUT 返回的单条 BYOK 配置（key 掩码）。 */
+export interface UserLLMConfig {
+  id: string
+  name: string
   provider: string
   base_url: string
   api_key_masked: string
   model: string
   embedding_model: string | null
-  is_active: boolean
 }
+
+/** POST /settings/llm 新增请求体。 */
+export interface UserLLMConfigCreate {
+  name: string
+  provider?: string
+  base_url: string
+  api_key: string
+  model: string
+  embedding_model?: string | null
+}
+
+/** PUT /settings/llm/{id} 修改请求体（全可选，api_key 留空则不变）。 */
+export interface UserLLMConfigUpdate {
+  name?: string
+  provider?: string
+  base_url?: string
+  api_key?: string
+  model?: string
+  embedding_model?: string | null
+}
+
+/**
+ * GET /settings/my-grant 返回；普通用户查自己的全局 Key 授权状态（选源器用）。
+ * 与 admin 侧 UserGrant 同构；无记录时后端返回 {is_active: false}。
+ */
+export type MyGrant = UserGrant
 
 // ── 技能开关 ──
 

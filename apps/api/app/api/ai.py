@@ -5,7 +5,7 @@ import json
 import time
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Body, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -17,7 +17,7 @@ from app.core.database import get_db
 from app.core.exceptions import ValidationError
 from app.deps import get_current_user
 from app.models import LLMCallLog, Message, Section, User
-from app.schemas.ai import ChatRequest, RewriteRequest
+from app.schemas.ai import ChatRequest, GenerateRequest, RewriteRequest
 from app.services import llm_config_service, section_service
 
 router = APIRouter(tags=["ai"])
@@ -135,8 +135,8 @@ async def chat(
         start = time.monotonic()
         status = "success"
         err = None
-        # 阶段 0：解析生效 LLM 配置（用户 BYOK > 全局），无配置则报错（断链修复：真驱动 LLM）
-        llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id)
+        # 阶段 0：解析生效 LLM 配置（按 source：global/byok/env；None 走 fallback）
+        llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id, source=payload.source)
         if llm_config is None:
             yield _sse_event("error", {"code": "no_llm_config", "message": "未配置 LLM，请先在设置中配置"})
             _log_llm_call(
@@ -194,7 +194,10 @@ async def generate_draft(
     section_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    payload: GenerateRequest | None = Body(default=None),
 ):
+    # body 可选：前端传 {source} 时解析；无 body（旧调用方）默认 source=None。
+    source = payload.source if payload else None
     section, history = _get_section_with_history(db, current_user.id, section_id)
 
     async def generate():
@@ -203,7 +206,7 @@ async def generate_draft(
         start = time.monotonic()
         status = "success"
         err = None
-        llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id)
+        llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id, source=source)
         if llm_config is None:
             yield _sse_event("error", {"code": "no_llm_config", "message": "未配置 LLM，请先在设置中配置"})
             _log_llm_call(
@@ -273,7 +276,7 @@ async def rewrite(
         start = time.monotonic()
         status = "success"
         err = None
-        llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id)
+        llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id, source=payload.source)
         if llm_config is None:
             yield _sse_event("error", {"code": "no_llm_config", "message": "未配置 LLM，请先在设置中配置"})
             _log_llm_call(
@@ -341,6 +344,7 @@ def list_messages(
 
 class CaptionRequest(BaseModel):
     descriptions: list[str]
+    source: str | None = None
 
 
 @router.post("/sections/{section_id}/caption-figures")
@@ -372,7 +376,7 @@ async def caption_figures(
         HumanMessage(content=f"以下是各图的文字描述，请生成规范图注：\n{descs}"),
     ]
 
-    llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id)
+    llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id, source=payload.source)
 
     async def generate():
         usage = {}  # 断链 C3：astream_llm 把最后一块 usage_metadata 写入此 holder

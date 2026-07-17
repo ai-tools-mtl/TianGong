@@ -20,6 +20,7 @@ import pytest
 
 from app.core.security import encrypt_value, hash_password
 from app.models import User, UserLLMConfig
+from app.services import admin_service
 from sqlalchemy import select
 
 
@@ -52,6 +53,23 @@ def _make_other_user(db_session, *, username="other", name="Other"):
     db_session.add(u)
     db_session.commit()
     db_session.refresh(u)
+    return u
+
+
+@pytest.fixture
+def admin_user(db_session):
+    """普通管理员（role=admin, is_superuser=False），用于授权操作。"""
+    u = User(
+        username="admin",
+        email="admin@example.com",
+        password_hash="x",
+        name="管理员",
+        role="admin",
+        status="active",
+        is_superuser=False,
+    )
+    db_session.add(u)
+    db_session.commit()
     return u
 
 
@@ -311,3 +329,59 @@ def test_test_endpoint_requires_auth(client):
         "api_key": "sk-test-123", "model": "m",
     })
     assert res.status_code == 401
+
+
+# ── GET /settings/my-grant（Task 4.0 Part A：普通用户查自己授权）──
+
+def test_my_grant_no_record_returns_inactive(client, logged_in_user):
+    """无授权记录 → {is_active: False}（选源器据此隐藏「全局 Key」选项）。"""
+    res = client.get("/api/v1/settings/my-grant")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["is_active"] is False
+    # 无记录时不返回 granted_at（避免误导）
+    assert body.get("granted_at") is None
+
+
+def test_my_grant_active_after_grant(client, logged_in_user, db_session, admin_user):
+    """被 admin 授权后 → {is_active: True, granted_at: ...}。"""
+    user = db_session.scalar(select(User).where(User.email == logged_in_user["email"]))
+    admin_service.grant_global_llm_access(db_session, actor=admin_user, user_id=user.id)
+
+    res = client.get("/api/v1/settings/my-grant")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["is_active"] is True
+    assert body["granted_at"] is not None
+    assert body["revoked_at"] is None
+
+
+def test_my_grant_inactive_after_revoke(client, logged_in_user, db_session, admin_user):
+    """授权后被撤销 → {is_active: False, revoked_at: ...}（保留 granted_at 留痕）。"""
+    user = db_session.scalar(select(User).where(User.email == logged_in_user["email"]))
+    admin_service.grant_global_llm_access(db_session, actor=admin_user, user_id=user.id)
+    admin_service.revoke_global_llm_access(db_session, actor=admin_user, user_id=user.id)
+
+    res = client.get("/api/v1/settings/my-grant")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["is_active"] is False
+    assert body["revoked_at"] is not None
+
+
+def test_my_grant_requires_auth(client):
+    """未登录 → 401。"""
+    res = client.get("/api/v1/settings/my-grant")
+    assert res.status_code == 401
+
+
+def test_my_grant_does_not_leak_other_users(client, logged_in_user, db_session, admin_user):
+    """A 查 my-grant 不应看到 B 的授权（行级隔离：按 current_user.id 查）。"""
+    # B 被授权
+    other = _make_other_user(db_session)
+    admin_service.grant_global_llm_access(db_session, actor=admin_user, user_id=other.id)
+
+    # A（logged_in_user）查自己的 → 应为 inactive（A 没被授权）
+    res = client.get("/api/v1/settings/my-grant")
+    assert res.status_code == 200
+    assert res.json()["is_active"] is False

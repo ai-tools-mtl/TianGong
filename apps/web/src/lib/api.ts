@@ -3,6 +3,7 @@ import type {
   DiffResponse,
   LoginRequest,
   Member,
+  MyGrant,
   Project,
   ProjectCreate,
   ProjectTag,
@@ -17,6 +18,9 @@ import type {
   TagMerge,
   TagUpdate,
   User,
+  UserLLMConfig,
+  UserLLMConfigCreate,
+  UserLLMConfigUpdate,
 } from '@/types/api'
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -158,12 +162,13 @@ export const api = {
     message: string,
     onToken: (t: string) => void,
     signal?: AbortSignal,
+    source?: string,
   ) => {
     const res = await fetch(`${BASE}/api/v1/sections/${sectionId}/chat`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, ...(source ? { source } : {}) }),
       signal,
     })
     return _consumeSSE(res, onToken)
@@ -173,10 +178,13 @@ export const api = {
     sectionId: string,
     onToken: (t: string) => void,
     signal?: AbortSignal,
+    source?: string,
   ) => {
     const res = await fetch(`${BASE}/api/v1/sections/${sectionId}/generate`, {
       method: 'POST',
       credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(source ? { source } : {}),
       signal,
     })
     return _consumeSSE(res, onToken)
@@ -280,13 +288,18 @@ export const api = {
   listAuditLogs: (page = 1, size = 50) =>
     request<import('@/types/api').AuditLogPage>(`/admin/audit-logs?page=${page}&size=${size}`),
 
-  // ── 用户设置 ──
-  getMyLLM: () => request<import('@/types/api').UserLLMSettings | null>(`/settings/llm`),
-  setMyLLM: (data: { provider?: string; base_url: string; api_key: string; model: string; embedding_model?: string }) =>
-    request<{ message: string }>(`/settings/llm`, { method: 'PUT', body: JSON.stringify(data) }),
-  deleteMyLLM: () => request<{ message: string }>(`/settings/llm`, { method: 'DELETE' }),
+  // ── 用户设置（多 BYOK 配置 CRUD，Task 4.0）──
+  listMyLLM: () => request<UserLLMConfig[]>(`/settings/llm`),
+  createMyLLM: (data: UserLLMConfigCreate) =>
+    request<UserLLMConfig>(`/settings/llm`, { method: 'POST', body: JSON.stringify(data) }),
+  updateMyLLM: (configId: string, data: UserLLMConfigUpdate) =>
+    request<UserLLMConfig>(`/settings/llm/${configId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteMyLLM: (configId: string) =>
+    request<{ message: string }>(`/settings/llm/${configId}`, { method: 'DELETE' }),
   testMyLLM: (data: { base_url: string; api_key: string; model: string }) =>
     request<{ ok: boolean; response?: string; error?: string }>(`/settings/llm/test`, { method: 'POST', body: JSON.stringify(data) }),
+  /** 普通用户查自己的全局 Key 授权状态（选源器用）。 */
+  getMyGrant: () => request<MyGrant>(`/settings/my-grant`),
 
   // ── 知识库(三域 + 审核流)──
   uploadKnowledgeFile: async (file: File) => {
