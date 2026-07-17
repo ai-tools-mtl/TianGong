@@ -180,15 +180,42 @@ export interface AdminUser {
   status: string
   project_count: number
   has_own_llm_key: boolean
+  has_global_grant: boolean
   created_at: string
 }
 
 export interface GlobalLLMSettings {
   llm_global_enabled: boolean
-  global_config: { base_url: string; api_key_masked: string; model: string } | null
+  global_config: {
+    base_url: string
+    api_key_masked: string
+    model: string
+    embedding_model: string | null
+    allowed_models: string[]
+  } | null
 }
 
-// ── LLM 调用统计（plan 13）──
+// ── 全局 Key 授权（Task 2.2）──
+
+/** GET /admin/users/{id}/global-llm-grant 返回；无记录时后端返回 {is_active: false}。 */
+export interface UserGrant {
+  granted_at: string | null
+  revoked_at: string | null
+  is_active: boolean
+}
+
+// ── 用户聚合统计（Task 3.1，仪表盘卡片）──
+
+export interface UserStats {
+  total: number
+  active: number
+  disabled: number
+  new_7d: number
+  new_30d: number
+  granted_count: number
+}
+
+// ── LLM 调用统计（plan 13 + Task 0.5.2 token 用量）──
 
 export interface LLMStatsByModel {
   model: string
@@ -196,6 +223,8 @@ export interface LLMStatsByModel {
   success: number
   failed: number
   avg_duration_ms: number | null
+  prompt_tokens: number
+  completion_tokens: number
 }
 
 export interface LLMStatsByUser {
@@ -212,6 +241,8 @@ export interface LLMStats {
   total_success: number
   total_failed: number
   avg_duration_ms: number | null
+  total_prompt_tokens: number
+  total_completion_tokens: number
   by_model: LLMStatsByModel[]
   by_user: LLMStatsByUser[]
 }

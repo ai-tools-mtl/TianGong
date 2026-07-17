@@ -250,15 +250,33 @@ export const api = {
   // ── 管理员 ──
   listUsers: () => request<import('@/types/api').AdminUser[]>(`/admin/users`),
   getGlobalLLM: () => request<import('@/types/api').GlobalLLMSettings>(`/admin/llm-config`),
-  setGlobalLLM: (data: { enabled: boolean; base_url?: string; api_key?: string; model?: string }) =>
+  setGlobalLLM: (data: {
+    enabled: boolean
+    base_url?: string
+    api_key?: string
+    model?: string
+    embedding_model?: string
+    allowed_models?: string[]
+  }) =>
     request<import('@/types/api').GlobalLLMSettings>(`/admin/llm-config`, { method: 'PUT', body: JSON.stringify(data) }),
 
   banUser: (userId: string, status: 'active' | 'disabled') =>
     request<{ id: string; status: string }>(`/admin/users/${userId}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   resetUserPassword: (userId: string, newPassword: string) =>
     request<{ ok: boolean }>(`/admin/users/${userId}/reset-password`, { method: 'POST', body: JSON.stringify({ new_password: newPassword }) }),
+
+  // 全局 Key 授权（Task 2.2）
+  getUserGrant: (userId: string) =>
+    request<import('@/types/api').UserGrant>(`/admin/users/${userId}/global-llm-grant`),
+  grantGlobalLLM: (userId: string) =>
+    request<{ message: string }>(`/admin/users/${userId}/global-llm-grant`, { method: 'POST' }),
+  revokeGlobalLLM: (userId: string) =>
+    request<{ message: string }>(`/admin/users/${userId}/global-llm-grant`, { method: 'DELETE' }),
+
   listLLMStats: (days = 7) =>
     request<import('@/types/api').LLMStats>(`/admin/stats/llm?days=${days}`),
+  listUserStats: () =>
+    request<import('@/types/api').UserStats>(`/admin/stats/users`),
   listAuditLogs: (page = 1, size = 50) =>
     request<import('@/types/api').AuditLogPage>(`/admin/audit-logs?page=${page}&size=${size}`),
 
