@@ -98,10 +98,18 @@ def get_user_llm_config(db: Session, *, user_id) -> dict | None:
 def set_user_llm_config(
     db: Session, *, user_id, provider: str, base_url: str,
     api_key: str, model: str, embedding_model: str | None = None,
+    name: str = "default",
 ) -> UserLLMConfig:
-    """设置/更新用户 LLM 配置。"""
+    """设置/更新用户 LLM 配置。
+
+    P2 过渡态：user_id 已去 unique，一个用户可有多条配置。本函数沿用旧
+    「find-one-or-create」语义——命中时更新第一条匹配行，否则新建。
+    多行场景的正式拆分（list/具名更新）见 Task 2.3。当前多数测试/接口
+    仍按单配置使用，默认 name="default"。
+    """
     cfg = db.scalar(select(UserLLMConfig).where(UserLLMConfig.user_id == user_id))
     if cfg:
+        cfg.name = name
         cfg.provider = provider
         cfg.base_url = base_url
         cfg.api_key_encrypted = encrypt_value(api_key)
@@ -110,7 +118,7 @@ def set_user_llm_config(
         cfg.is_active = True
     else:
         cfg = UserLLMConfig(
-            user_id=user_id, provider=provider, base_url=base_url,
+            user_id=user_id, name=name, provider=provider, base_url=base_url,
             api_key_encrypted=encrypt_value(api_key), model=model,
             embedding_model=embedding_model, is_active=True,
         )

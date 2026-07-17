@@ -11,7 +11,7 @@ def _make_logged_in_section(client, registered_user, db_session):
     user = db_session.scalar(select(User).where(User.email == registered_user["email"]))
     # 配 BYOK（阶段 0 strict：无配置则端点发 no_llm_config 错误）
     db_session.add(UserLLMConfig(
-        user_id=user.id, provider="custom",
+        user_id=user.id, name="test", provider="custom",
         base_url="https://test.example.com",
         api_key_encrypted=encrypt_value("sk-test-key"),
         model="test-model", embedding_model="test-embed", is_active=True,

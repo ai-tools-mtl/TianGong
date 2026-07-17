@@ -45,6 +45,7 @@ def _setup_byok_user(client, registered_user, db_session):
     # 给用户配 BYOK
     db_session.add(UserLLMConfig(
         user_id=user.id,
+        name="test",
         provider="custom",
         base_url=BYOK_BASE_URL,
         api_key_encrypted=encrypt_value(BYOK_API_KEY),
