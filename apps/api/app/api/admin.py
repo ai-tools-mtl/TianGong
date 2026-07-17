@@ -136,6 +136,15 @@ def get_llm_stats_endpoint(
     return stats_service.get_llm_stats(db, days=days)
 
 
+@router.get("/admin/stats/users")
+def get_user_stats_endpoint(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """用户聚合统计（仪表盘卡片用：总数/活跃/禁用/新增/有效授权数）。"""
+    return stats_service.get_user_stats(db)
+
+
 # ── 管理员：审计日志列表（设计 8.2⑤）──
 
 @router.get("/admin/audit-logs")

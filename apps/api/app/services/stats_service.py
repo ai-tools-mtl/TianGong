@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import case, func, select
 from sqlalchemy.orm import Session
 
-from app.models import LLMCallLog, User
+from app.models import LLMCallLog, User, UserGlobalLLMGrant
 
 
 def get_llm_stats(db: Session, *, days: int = 7) -> dict:
@@ -110,4 +110,42 @@ def get_llm_stats(db: Session, *, days: int = 7) -> dict:
         "total_completion_tokens": total_completion_tokens,
         "by_model": by_model,
         "by_user": by_user,
+    }
+
+
+def get_user_stats(db: Session) -> dict:
+    """用户聚合统计（用于 admin 仪表盘卡片，Task 3.1）。
+
+    返回：total/active/disabled/new_7d/new_30d/granted_count。
+    全部为聚合数字，无私人数据（设计 8.3 红线）。
+    """
+    now = datetime.now(timezone.utc)
+    since_7d = now - timedelta(days=7)
+    since_30d = now - timedelta(days=30)
+
+    # 总数/活跃/禁用
+    status_counts = db.execute(
+        select(User.status, func.count(User.id)).group_by(User.status)
+    ).all()
+    by_status = {row[0]: int(row[1]) for row in status_counts}
+    total = sum(by_status.values())
+    active = by_status.get("active", 0)
+    disabled = by_status.get("disabled", 0)
+
+    # 新增（按 created_at）
+    new_7d = int(db.scalar(select(func.count(User.id)).where(User.created_at >= since_7d)) or 0)
+    new_30d = int(db.scalar(select(func.count(User.id)).where(User.created_at >= since_30d)) or 0)
+
+    # 有效授权用户数（granted_count）：revoked_at 为空
+    granted_count = int(db.scalar(
+        select(func.count(UserGlobalLLMGrant.id)).where(UserGlobalLLMGrant.revoked_at.is_(None))
+    ) or 0)
+
+    return {
+        "total": total,
+        "active": active,
+        "disabled": disabled,
+        "new_7d": new_7d,
+        "new_30d": new_30d,
+        "granted_count": granted_count,
     }
