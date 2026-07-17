@@ -18,7 +18,10 @@ def get_llm_stats(db: Session, *, days: int = 7) -> dict:
       "total_success": int,
       "total_failed": int,
       "avg_duration_ms": float | None,
-      "by_model": [{"model","calls","success","failed","avg_duration_ms"}],
+      "total_prompt_tokens": int,       # 断链 C3：token_prompt 之和（None 计 0）
+      "total_completion_tokens": int,   # 断链 C3：token_completion 之和（None 计 0）
+      "by_model": [{"model","calls","success","failed","avg_duration_ms",
+                    "prompt_tokens","completion_tokens"}],
       "by_user": [{"user_id","email","calls","success","failed"}],
     }
     """
@@ -31,12 +34,17 @@ def get_llm_stats(db: Session, *, days: int = 7) -> dict:
             func.sum(case((LLMCallLog.status == "success", 1), else_=0)).label("success"),
             func.sum(case((LLMCallLog.status != "success", 1), else_=0)).label("failed"),
             func.avg(LLMCallLog.duration_ms).label("avg_duration"),
+            # 断链 C3：token 用量聚合（NULL 视作 0，不影响求和）
+            func.sum(func.coalesce(LLMCallLog.token_prompt, 0)).label("prompt_tokens"),
+            func.sum(func.coalesce(LLMCallLog.token_completion, 0)).label("completion_tokens"),
         ).where(LLMCallLog.created_at >= since)
     ).one()
     total_calls = top.total_calls or 0
     total_success = int(top.success or 0)
     total_failed = int(top.failed or 0)
     avg_duration = float(top.avg_duration) if top.avg_duration is not None else None
+    total_prompt_tokens = int(top.prompt_tokens or 0)
+    total_completion_tokens = int(top.completion_tokens or 0)
 
     # 按 model 聚合
     model_rows = db.execute(
@@ -46,6 +54,8 @@ def get_llm_stats(db: Session, *, days: int = 7) -> dict:
             func.sum(case((LLMCallLog.status == "success", 1), else_=0)).label("success"),
             func.sum(case((LLMCallLog.status != "success", 1), else_=0)).label("failed"),
             func.avg(LLMCallLog.duration_ms).label("avg_duration"),
+            func.sum(func.coalesce(LLMCallLog.token_prompt, 0)).label("prompt_tokens"),
+            func.sum(func.coalesce(LLMCallLog.token_completion, 0)).label("completion_tokens"),
         )
         .where(LLMCallLog.created_at >= since)
         .group_by(LLMCallLog.model)
@@ -58,6 +68,8 @@ def get_llm_stats(db: Session, *, days: int = 7) -> dict:
             "success": int(r.success or 0),
             "failed": int(r.failed or 0),
             "avg_duration_ms": float(r.avg_duration) if r.avg_duration is not None else None,
+            "prompt_tokens": int(r.prompt_tokens or 0),
+            "completion_tokens": int(r.completion_tokens or 0),
         }
         for r in model_rows
     ]
@@ -94,6 +106,8 @@ def get_llm_stats(db: Session, *, days: int = 7) -> dict:
         "total_success": total_success,
         "total_failed": total_failed,
         "avg_duration_ms": avg_duration,
+        "total_prompt_tokens": total_prompt_tokens,
+        "total_completion_tokens": total_completion_tokens,
         "by_model": by_model,
         "by_user": by_user,
     }

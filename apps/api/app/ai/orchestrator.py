@@ -90,21 +90,27 @@ def stream_rewrite(
 
 async def astream_chat(
     db, section: Section, history: list[Message], user_input: str,
-    *, llm_config: ResolvedLLMConfig,
+    *, llm_config: ResolvedLLMConfig, usage_sink: dict | None = None,
 ) -> AsyncIterator[str]:
-    """异步引导对话：流式回复用户问题（供 SSE 端点用）。"""
+    """异步引导对话：流式回复用户问题（供 SSE 端点用）。
+
+    usage_sink 透传给 astream_llm（断链 C3：捕获 token 用量记入 LLMCallLog）。
+    """
     summaries = get_project_summaries(db, section.project_id)
     knowledge = _retrieve_knowledge(db, section, user_input)
     messages = assemble_messages(section, history, user_input, summaries, knowledge)
-    async for token in astream_llm(messages, llm_config=llm_config):
+    async for token in astream_llm(messages, llm_config=llm_config, usage_sink=usage_sink):
         yield token
 
 
 async def astream_generate(
     db, section: Section, history: list[Message],
-    *, llm_config: ResolvedLLMConfig,
+    *, llm_config: ResolvedLLMConfig, usage_sink: dict | None = None,
 ) -> AsyncIterator[str]:
-    """异步生成草稿：基于对话历史生成本章草稿（Markdown 流式）。"""
+    """异步生成草稿：基于对话历史生成本章草稿（Markdown 流式）。
+
+    usage_sink 透传给 astream_llm（断链 C3：捕获 token 用量记入 LLMCallLog）。
+    """
     summaries = get_project_summaries(db, section.project_id)
     knowledge = _retrieve_knowledge(db, section, section.title)
     sp = get_section_prompt(section.key)
@@ -116,15 +122,18 @@ async def astream_generate(
         f"要求：{sp.output_format}。用 Markdown 格式输出。"
     )
     messages.append(HumanMessage(content=instruction))
-    async for token in astream_llm(messages, llm_config=llm_config):
+    async for token in astream_llm(messages, llm_config=llm_config, usage_sink=usage_sink):
         yield token
 
 
 async def astream_rewrite(
     section: Section, selected_text: str, instruction: str,
-    *, llm_config: ResolvedLLMConfig,
+    *, llm_config: ResolvedLLMConfig, usage_sink: dict | None = None,
 ) -> AsyncIterator[str]:
-    """异步段落重写：基于选中文字 + 指令，流式输出重写结果。"""
+    """异步段落重写：基于选中文字 + 指令，流式输出重写结果。
+
+    usage_sink 透传给 astream_llm（断链 C3：捕获 token 用量记入 LLMCallLog）。
+    """
     from langchain_core.messages import SystemMessage
 
     sp = get_section_prompt(section.key)
@@ -136,5 +145,5 @@ async def astream_rewrite(
         SystemMessage(content=system),
         HumanMessage(content=f"原文：\n{selected_text}\n\n指令：{instruction}"),
     ]
-    async for token in astream_llm(messages, llm_config=llm_config):
+    async for token in astream_llm(messages, llm_config=llm_config, usage_sink=usage_sink):
         yield token
