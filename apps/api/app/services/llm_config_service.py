@@ -99,7 +99,8 @@ def _resolve_fallback(db: Session, *, user, user_id) -> ResolvedLLMConfig | None
         if cfg:
             return cfg
 
-    # 单条 BYOK（过渡：用户可能有多条，取第一条；Task 2.3/4.0 后由 source 指定）
+    # 单条 BYOK（过渡：用户可能有多条，取第一条即最早创建的；Task 4.0 前端传 source 后 obsolete）。
+    # 多配置下取「第一条」是过渡期可接受的默认行为，正式解析走 source="byok:{id}"。
     user_cfg = db.scalar(select(UserLLMConfig).where(UserLLMConfig.user_id == user_id))
     if user_cfg:
         return ResolvedLLMConfig(
@@ -114,7 +115,17 @@ def _resolve_fallback(db: Session, *, user, user_id) -> ResolvedLLMConfig | None
 
 
 def _build_global_config(db: Session, *, source: str) -> ResolvedLLMConfig | None:
-    """从 SystemSetting 构造全局配置。全局未配返回 None。"""
+    """从 SystemSetting 构造全局配置。
+
+    I1 修复：admin 显式关闭（llm_global_enabled 存在且 enabled=False）则不可用，
+    即使配了 global_config 也返回 None。enabled 记录不存在时视为开启（兼容旧部署）。
+    全局未配返回 None。
+    """
+    # enabled 开关（I1：admin 关闭全局则不可用；记录不存在视为开启，兼容旧部署）
+    enabled_setting = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_enabled"))
+    if enabled_setting and enabled_setting.value and enabled_setting.value.get("enabled") is False:
+        return None  # admin 显式关闭
+
     global_cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_config"))
     if global_cfg and global_cfg.value and global_cfg.value.get("api_key_encrypted"):
         v = global_cfg.value
@@ -155,59 +166,95 @@ def _get_user_config_by_id(db: Session, *, user_id, config_id) -> UserLLMConfig 
     return cfg
 
 
-# ── 用户 BYOK ──
+# ── 用户 BYOK（多配置 CRUD，Task 2.3）──
 
-def get_user_llm_config(db: Session, *, user_id) -> dict | None:
-    """获取用户 LLM 配置（掩码 key）。"""
-    cfg = db.scalar(select(UserLLMConfig).where(UserLLMConfig.user_id == user_id))
-    if not cfg:
-        return None
+def list_user_llm_configs(db: Session, *, user_id) -> list[dict]:
+    """列出用户所有 BYOK 配置（key 掩码）。按创建时间升序。"""
+    cfgs = db.scalars(
+        select(UserLLMConfig)
+        .where(UserLLMConfig.user_id == user_id)
+        .order_by(UserLLMConfig.created_at)
+    ).all()
+    return [config_to_dict(c) for c in cfgs]
+
+
+def create_user_llm_config(
+    db: Session, *, user_id, name: str, provider: str, base_url: str,
+    api_key: str, model: str, embedding_model: str | None = None,
+) -> UserLLMConfig:
+    """新增一条 BYOK 配置。"""
+    cfg = UserLLMConfig(
+        user_id=user_id, name=name, provider=provider, base_url=base_url,
+        api_key_encrypted=encrypt_value(api_key), model=model,
+        embedding_model=embedding_model,
+    )
+    db.add(cfg)
+    db.commit()
+    db.refresh(cfg)
+    return cfg
+
+
+def update_user_llm_config(
+    db: Session, *, user_id, config_id, name: str | None = None,
+    provider: str | None = None, base_url: str | None = None,
+    api_key: str | None = None, model: str | None = None,
+    embedding_model: str | None = None,
+) -> UserLLMConfig:
+    """修改指定 BYOK 配置。仅提供才更新。越权/不存在 NotFoundError。
+
+    注意 embedding_model 用 `is not None`，支持传空串清空（与 I2 一致）。
+    """
+    cfg = _get_owned_config(db, user_id=user_id, config_id=config_id)  # 越权 NotFound
+    if name is not None:
+        cfg.name = name
+    if provider is not None:
+        cfg.provider = provider
+    if base_url is not None:
+        cfg.base_url = base_url
+    if api_key is not None:
+        cfg.api_key_encrypted = encrypt_value(api_key)
+    if model is not None:
+        cfg.model = model
+    if embedding_model is not None:
+        cfg.embedding_model = embedding_model
+    db.commit()
+    db.refresh(cfg)
+    return cfg
+
+
+def delete_user_llm_config(db: Session, *, user_id, config_id) -> None:
+    """删除指定 BYOK 配置。越权/不存在 NotFoundError。"""
+    cfg = _get_owned_config(db, user_id=user_id, config_id=config_id)
+    db.delete(cfg)
+    db.commit()
+
+
+def _get_owned_config(db: Session, *, user_id, config_id) -> UserLLMConfig:
+    """查配置并校验归属。越权/不存在 NotFoundError（防探测，不泄露存在性）。
+
+    与 resolve_llm_config 的 byok 分支共用 _get_user_config_by_id 的 NotFound 语义。
+    """
+    try:
+        cid = uuid.UUID(config_id) if isinstance(config_id, str) else config_id
+    except (ValueError, AttributeError):
+        raise NotFoundError("LLM 配置不存在")
+    cfg = db.get(UserLLMConfig, cid)
+    if cfg is None or cfg.user_id != user_id:
+        raise NotFoundError("LLM 配置不存在")
+    return cfg
+
+
+def config_to_dict(cfg: UserLLMConfig) -> dict:
+    """BYOK 配置 → dict（key 掩码）。API 层和 service list 共用。"""
     return {
+        "id": str(cfg.id),
+        "name": cfg.name,
         "provider": cfg.provider,
         "base_url": cfg.base_url,
         "api_key_masked": _mask_key(decrypt_value(cfg.api_key_encrypted)),
         "model": cfg.model,
         "embedding_model": cfg.embedding_model,
     }
-
-
-def set_user_llm_config(
-    db: Session, *, user_id, provider: str, base_url: str,
-    api_key: str, model: str, embedding_model: str | None = None,
-    name: str = "default",
-) -> UserLLMConfig:
-    """设置/更新用户 LLM 配置。
-
-    P2 过渡态：user_id 已去 unique，一个用户可有多条配置。本函数沿用旧
-    「find-one-or-create」语义——命中时更新第一条匹配行，否则新建。
-    多行场景的正式拆分（list/具名更新）见 Task 2.3。当前多数测试/接口
-    仍按单配置使用，默认 name="default"。
-    """
-    cfg = db.scalar(select(UserLLMConfig).where(UserLLMConfig.user_id == user_id))
-    if cfg:
-        cfg.name = name
-        cfg.provider = provider
-        cfg.base_url = base_url
-        cfg.api_key_encrypted = encrypt_value(api_key)
-        cfg.model = model
-        cfg.embedding_model = embedding_model
-    else:
-        cfg = UserLLMConfig(
-            user_id=user_id, name=name, provider=provider, base_url=base_url,
-            api_key_encrypted=encrypt_value(api_key), model=model,
-            embedding_model=embedding_model,
-        )
-        db.add(cfg)
-    db.commit()
-    db.refresh(cfg)
-    return cfg
-
-
-def delete_user_llm_config(db: Session, *, user_id) -> None:
-    cfg = db.scalar(select(UserLLMConfig).where(UserLLMConfig.user_id == user_id))
-    if cfg:
-        db.delete(cfg)
-        db.commit()
 
 
 # ── 全局配置（管理员）──
@@ -247,18 +294,22 @@ def set_global_llm_settings(
     else:
         db.add(SystemSetting(key="llm_global_enabled", value={"enabled": enabled}))
 
-    # 配置：有任一字段提供则更新（含 allowed_models 显式提供空 list 的清空场景）
-    if base_url or api_key or model or embedding_model or allowed_models is not None:
+    # 配置：有任一字段提供则更新（含 allowed_models 显式空 list / embedding_model 空串清空场景）。
+    # 注意 embedding_model 用 `is not None`，否则 "" 无法清空（I2）。
+    if (base_url or api_key or model
+            or embedding_model is not None
+            or allowed_models is not None):
         cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_config"))
         current = cfg.value if cfg else {}
         new_value = {
             "base_url": base_url or current.get("base_url", ""),
             "model": model or current.get("model", ""),
         }
-        # embedding_model: 提供则更新，否则保留现有（补断链 A2：get 分支读但 set 从不写）
-        if embedding_model:
+        # embedding_model: 提供则更新（含空串清空，I2 修复），否则保留现有。
+        # 注意用 `is not None` 而非 truthiness，否则 "" 无法清空。
+        if embedding_model is not None:
             new_value["embedding_model"] = embedding_model
-        elif current.get("embedding_model"):
+        elif current.get("embedding_model") is not None:
             new_value["embedding_model"] = current["embedding_model"]
         # allowed_models: 提供则覆盖（含空 list），否则保留现有
         if allowed_models is not None:

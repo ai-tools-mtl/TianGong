@@ -226,9 +226,30 @@ def set_global_llm(
     return result
 
 
-# ── 用户：自有 LLM 配置（BYOK）──
+# ── 用户：自有 LLM 配置（BYOK 多配置 CRUD，Task 2.3）──
 
-class UserLLMRequest(BaseModel):
+class UserLLMCreateRequest(BaseModel):
+    """新增 BYOK 配置。name 为配置名（如「公司Key」）。"""
+    name: str
+    provider: str = "custom"
+    base_url: str
+    api_key: str
+    model: str
+    embedding_model: str | None = None
+
+
+class UserLLMUpdateRequest(BaseModel):
+    """修改 BYOK 配置。所有字段可选，仅提供才更新（api_key 留空则不变）。"""
+    name: str | None = None
+    provider: str | None = None
+    base_url: str | None = None
+    api_key: str | None = None
+    model: str | None = None
+    embedding_model: str | None = None
+
+
+class UserLLMTestRequest(BaseModel):
+    """测试 LLM 连通性（不落库）。"""
     provider: str = "custom"
     base_url: str
     api_key: str
@@ -241,38 +262,59 @@ def get_my_llm(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """获取当前用户的 LLM 配置（掩码 key）。"""
-    return llm_config_service.get_user_llm_config(db, user_id=current_user.id)
+    """列出当前用户的所有 BYOK 配置（key 掩码）。空时返回 []。"""
+    return llm_config_service.list_user_llm_configs(db, user_id=current_user.id)
 
 
-@router.put("/settings/llm")
-def set_my_llm(
-    payload: UserLLMRequest,
+@router.post("/settings/llm")
+def create_my_llm(
+    payload: UserLLMCreateRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """设置/更新用户自有 LLM 配置。"""
-    llm_config_service.set_user_llm_config(
+    """新增一条 BYOK 配置。返回新建的配置（含 id，key 掩码）。"""
+    cfg = llm_config_service.create_user_llm_config(
         db, user_id=current_user.id,
-        provider=payload.provider, base_url=payload.base_url,
+        name=payload.name, provider=payload.provider, base_url=payload.base_url,
         api_key=payload.api_key, model=payload.model,
         embedding_model=payload.embedding_model,
     )
-    return {"message": "LLM 配置已更新"}
+    return llm_config_service.config_to_dict(cfg)
 
 
-@router.delete("/settings/llm")
-def delete_my_llm(
+@router.put("/settings/llm/{config_id}")
+def update_my_llm(
+    config_id: str,
+    payload: UserLLMUpdateRequest,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    llm_config_service.delete_user_llm_config(db, user_id=current_user.id)
-    return {"message": "已清除，将使用全局配置"}
+    """修改指定 BYOK 配置（校验归属，越权/不存在 404，防探测）。"""
+    cfg = llm_config_service.update_user_llm_config(
+        db, user_id=current_user.id, config_id=config_id,
+        name=payload.name, provider=payload.provider, base_url=payload.base_url,
+        api_key=payload.api_key, model=payload.model,
+        embedding_model=payload.embedding_model,
+    )
+    return llm_config_service.config_to_dict(cfg)
+
+
+@router.delete("/settings/llm/{config_id}")
+def delete_my_llm(
+    config_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """删除指定 BYOK 配置（校验归属，越权/不存在 404）。"""
+    llm_config_service.delete_user_llm_config(
+        db, user_id=current_user.id, config_id=config_id,
+    )
+    return {"message": "已删除"}
 
 
 @router.post("/settings/llm/test")
 def test_my_llm(
-    payload: UserLLMRequest,
+    payload: UserLLMTestRequest,
     current_user: User = Depends(get_current_user),
 ):
     """测试 LLM 连通性（不存库，直接用传入配置测试）。"""

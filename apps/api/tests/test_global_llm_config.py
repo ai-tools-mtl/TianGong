@@ -1,4 +1,4 @@
-"""全局 LLM 配置增强测试（Task 2.2 Part B）。
+"""全局 LLM 配置增强测试（Task 2.2 Part B + Task 2.3 I1/I2）。
 
 覆盖 allowed_models + embedding_model 的 set/get：
 - set 同时带 allowed_models + embedding_model → get 返回两字段
@@ -7,6 +7,14 @@
 - allowed_models 显式空 list → 清空
 - 审计 detail 含 allowed_models / embedding_model，不含 api_key 明文
 - get 无配置时返回空 allowed_models / None embedding_model
+
+Task 2.3 I1（llm_global_enabled 接入 resolution）：
+- enabled=False → source=global 返回 None（即使配了 global config）
+- enabled=False → admin 也返回 None
+- enabled 记录不存在 → 视为开启（兼容旧部署）
+
+Task 2.3 I2（embedding_model 可清空）：
+- embedding_model="" 能清空（is not None 而非 truthiness）
 """
 
 import pytest
@@ -116,6 +124,109 @@ def test_embedding_model_flows_into_resolve(db_session, admin_user_for_svc):
     cfg = resolve_llm_config(db_session, user_id=u.id, source="global")
     assert cfg.embedding_model == "embedding-3"
     assert cfg.source == "global"
+
+
+# ── I1：llm_global_enabled 接入 resolution（Task 2.3 Part B）──
+
+def test_global_disabled_returns_none_even_when_configured(db_session, admin_user_for_svc):
+    """I1：admin 关闭 enabled=False → source=global 返回 None（即使配了 global config）。
+
+    _build_global_config 先看 enabled 开关，显式 False 则不可用。
+    """
+    # 配全局 + 开启
+    llm_config_service.set_global_llm_settings(
+        db_session, enabled=True, api_key="sk-global-1234567890",
+        model="glm-4-flash", embedding_model="embedding-3",
+    )
+    # 关闭
+    llm_config_service.set_global_llm_settings(db_session, enabled=False)
+
+    from app.models import User, UserGlobalLLMGrant
+    from app.services.llm_config_service import resolve_llm_config
+    # 非 admin 即使有 grant，global 也应返回 None
+    u = User(username="u-dis", password_hash="x", name="U", role="user")
+    db_session.add(u); db_session.commit(); db_session.refresh(u)
+    db_session.add(UserGlobalLLMGrant(user_id=u.id)); db_session.commit()
+
+    cfg = resolve_llm_config(db_session, user_id=u.id, source="global")
+    assert cfg is None, "admin 关闭全局后 source=global 应返回 None（I1）"
+
+
+def test_global_disabled_returns_none_for_admin(db_session, admin_user_for_svc):
+    """I1：admin 关闭后，admin 自己 source=global 也返回 None（admin 关了就是关了）。"""
+    llm_config_service.set_global_llm_settings(
+        db_session, enabled=True, api_key="sk-global-1234567890", model="glm-4-flash",
+    )
+    llm_config_service.set_global_llm_settings(db_session, enabled=False)
+
+    from app.models import User
+    from app.services.llm_config_service import resolve_llm_config
+    admin = User(username="admin-dis", password_hash="x", name="A", role="admin")
+    db_session.add(admin); db_session.commit(); db_session.refresh(admin)
+
+    cfg = resolve_llm_config(db_session, user_id=admin.id, source="global")
+    assert cfg is None
+
+
+def test_global_enabled_record_absent_treated_as_open(db_session, admin_user_for_svc):
+    """I1：enabled 记录不存在时视为开启（兼容旧部署未设开关）。
+
+    只配 llm_global_config，不配 llm_global_enabled → 仍可用。
+    """
+    from app.models import SystemSetting, User
+    from app.services.llm_config_service import resolve_llm_config
+
+    # 只写 global_config，不写 enabled 开关
+    from app.core.security import encrypt_value
+    db_session.add(SystemSetting(
+        key="llm_global_config",
+        value={
+            "base_url": "https://g.example.com",
+            "api_key_encrypted": encrypt_value("sk-old-deploy-1234567890"),
+            "model": "glm-4",
+        },
+    ))
+    db_session.commit()
+
+    admin = User(username="admin-old", password_hash="x", name="A", role="admin")
+    db_session.add(admin); db_session.commit(); db_session.refresh(admin)
+
+    cfg = resolve_llm_config(db_session, user_id=admin.id, source="global")
+    assert cfg is not None, "enabled 记录不存在应视为开启（兼容）"
+    assert cfg.source == "admin"
+
+
+def test_global_enabled_true_then_global_usable(db_session, admin_user_for_svc):
+    """I1 正向：enabled=True（显式开）→ global 可用。"""
+    llm_config_service.set_global_llm_settings(
+        db_session, enabled=True, api_key="sk-global-1234567890", model="glm-4-flash",
+    )
+    from app.models import User
+    from app.services.llm_config_service import resolve_llm_config
+    admin = User(username="admin-on", password_hash="x", name="A", role="admin")
+    db_session.add(admin); db_session.commit(); db_session.refresh(admin)
+
+    cfg = resolve_llm_config(db_session, user_id=admin.id, source="global")
+    assert cfg is not None
+    assert cfg.source == "admin"
+
+
+# ── I2：embedding_model 用 is not None（可空串清空）──
+
+def test_embedding_model_empty_string_clears(db_session, admin_user_for_svc):
+    """I2：embedding_model="" 能清空（is not None 而非 truthiness）。"""
+    # 先设非空
+    llm_config_service.set_global_llm_settings(
+        db_session, enabled=True, api_key="sk-test-1234567890",
+        embedding_model="embedding-3",
+    )
+    assert llm_config_service.get_global_llm_settings(db_session)["global_config"]["embedding_model"] == "embedding-3"
+    # 显式传空串清空
+    llm_config_service.set_global_llm_settings(
+        db_session, enabled=True, embedding_model="",
+    )
+    cfg = llm_config_service.get_global_llm_settings(db_session)["global_config"]
+    assert cfg["embedding_model"] in (None, ""), "空串应清空 embedding_model（I2）"
 
 
 @pytest.fixture
