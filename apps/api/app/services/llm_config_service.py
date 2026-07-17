@@ -99,9 +99,13 @@ def _resolve_fallback(db: Session, *, user, user_id) -> ResolvedLLMConfig | None
         if cfg:
             return cfg
 
-    # 单条 BYOK（过渡：用户可能有多条，取第一条即最早创建的；Task 4.0 前端传 source 后 obsolete）。
-    # 多配置下取「第一条」是过渡期可接受的默认行为，正式解析走 source="byok:{id}"。
-    user_cfg = db.scalar(select(UserLLMConfig).where(UserLLMConfig.user_id == user_id))
+    # 单条 BYOK（过渡：用户可能有多条，取最早创建的；Task 4.0 前端传 source 后 obsolete）。
+    # 显式 order_by(created_at) 保证确定性选择（I-2：避免无序查询选到任意一条）。
+    user_cfg = db.scalar(
+        select(UserLLMConfig)
+        .where(UserLLMConfig.user_id == user_id)
+        .order_by(UserLLMConfig.created_at)
+    )
     if user_cfg:
         return ResolvedLLMConfig(
             base_url=user_cfg.base_url,
