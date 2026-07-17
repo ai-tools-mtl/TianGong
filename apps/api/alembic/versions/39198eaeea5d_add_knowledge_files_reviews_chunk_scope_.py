@@ -1,9 +1,11 @@
 """add knowledge_files reviews + chunk scope/file_id/review_status + parse_job source_filename
 
 Revision ID: 39198eaeea5d
-Revises: d08c8546464c
+Revises: 4ab0b6e7413c
 Create Date: 2026-07-16 17:52:00.019658
 
+合并修复:原 down_revision 指向 d08c8546464c,与远端协作系统迁移 4ab0b6e7413c
+形成分叉(两者都指向 d08c)。改指 4ab0b6e7413c 使链线性化。
 """
 from typing import Sequence, Union
 
@@ -12,7 +14,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '39198eaeea5d'
-down_revision: Union[str, Sequence[str], None] = 'd08c8546464c'
+down_revision: Union[str, Sequence[str], None] = '4ab0b6e7413c'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

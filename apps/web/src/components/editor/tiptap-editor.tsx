@@ -16,10 +16,11 @@ interface TiptapEditorProps {
   content?: object | null
   onChange?: (json: object) => void
   editable?: boolean
+  sectionId?: string
 }
 
 export const TiptapEditor = forwardRef<TiptapEditorRef, TiptapEditorProps>(
-  function TiptapEditor({ content, onChange, editable = true }, ref) {
+  function TiptapEditor({ content, onChange, editable = true, sectionId = '' }, ref) {
     const editor = useEditor({
       extensions: [
         StarterKit,
@@ -43,10 +44,10 @@ export const TiptapEditor = forwardRef<TiptapEditorRef, TiptapEditorProps>(
 
     return (
       <div className="overflow-hidden rounded-lg border bg-card">
-        <Toolbar editor={editor} />
+        {editable && <Toolbar editor={editor} sectionId={sectionId} />}
         <EditorContent
           editor={editor}
-          className="prose prose-sm tiptap max-w-none p-5 min-h-[400px] focus:outline-none"
+          className="prose prose-sm tiptap max-w-none px-5 py-4 focus:outline-none"
         />
       </div>
     )
