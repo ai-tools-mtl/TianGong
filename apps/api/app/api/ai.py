@@ -68,7 +68,9 @@ def _log_llm_call(
 ) -> None:
     """写一条 LLM 调用元数据日志（设计 8.3 红线：只存元数据，不存内容）。
 
-    MVP 简化：token 先记 None（精确 usage 需透传 LangChain chunk.usage_metadata）。
+    tokens（断链 C3）：可选 dict {"prompt": int, "completion": int}，
+    由各端点从流的 usage_metadata（astream_llm 的 usage_sink）捕获；
+    无值时落 None（如未开 stream_usage 或 provider 未回传 usage 的情形）。
     """
     try:
         log = LLMCallLog(
@@ -129,6 +131,7 @@ async def chat(
 
     async def generate():
         full_response = ""
+        usage = {}  # 断链 C3：astream_llm 把最后一块 usage_metadata 写入此 holder
         start = time.monotonic()
         status = "success"
         err = None
@@ -145,7 +148,8 @@ async def chat(
             return
         try:
             async for kind, text in _yield_with_heartbeat(
-                astream_chat(db, section, history, payload.message, llm_config=llm_config)
+                astream_chat(db, section, history, payload.message,
+                             llm_config=llm_config, usage_sink=usage)
             ):
                 if kind == "heartbeat":
                     yield _sse_event("heartbeat", {})
@@ -177,6 +181,7 @@ async def chat(
                 model=_resolve_model(llm_config),
                 provider=_resolve_provider(llm_config),
                 status=status,
+                tokens=usage or None,
                 duration_ms=int((time.monotonic() - start) * 1000),
                 error=err,
             )
@@ -194,6 +199,7 @@ async def generate_draft(
 
     async def generate():
         full_md = ""
+        usage = {}  # 断链 C3：astream_llm 把最后一块 usage_metadata 写入此 holder
         start = time.monotonic()
         status = "success"
         err = None
@@ -209,7 +215,7 @@ async def generate_draft(
             return
         try:
             async for kind, text in _yield_with_heartbeat(
-                astream_generate(db, section, history, llm_config=llm_config)
+                astream_generate(db, section, history, llm_config=llm_config, usage_sink=usage)
             ):
                 if kind == "heartbeat":
                     yield _sse_event("heartbeat", {})
@@ -245,6 +251,7 @@ async def generate_draft(
                 model=_resolve_model(llm_config),
                 provider=_resolve_provider(llm_config),
                 status=status,
+                tokens=usage or None,
                 duration_ms=int((time.monotonic() - start) * 1000),
                 error=err,
             )
@@ -262,6 +269,7 @@ async def rewrite(
     section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
 
     async def generate():
+        usage = {}  # 断链 C3：astream_llm 把最后一块 usage_metadata 写入此 holder
         start = time.monotonic()
         status = "success"
         err = None
@@ -277,7 +285,8 @@ async def rewrite(
             return
         try:
             async for kind, text in _yield_with_heartbeat(
-                astream_rewrite(section, payload.selected_text, payload.instruction, llm_config=llm_config)
+                astream_rewrite(section, payload.selected_text, payload.instruction,
+                                llm_config=llm_config, usage_sink=usage)
             ):
                 if kind == "heartbeat":
                     yield _sse_event("heartbeat", {})
@@ -301,6 +310,7 @@ async def rewrite(
                 model=_resolve_model(llm_config),
                 provider=_resolve_provider(llm_config),
                 status=status,
+                tokens=usage or None,
                 duration_ms=int((time.monotonic() - start) * 1000),
                 error=err,
             )
@@ -343,6 +353,7 @@ async def caption_figures(
     """图注润色：基于文字描述生成规范图注（设计 9.5，仅文本非多模态）。
 
     直接用 astream_llm 流式生成（不走 heartbeat 包装，简化文本生成）。
+    与其它 LLM 端点一致：成功/失败均写 LLMCallLog（含 token 用量，断链 C3）。
     """
     section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
     # 仅附图章节可用
@@ -364,16 +375,43 @@ async def caption_figures(
     llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id)
 
     async def generate():
+        usage = {}  # 断链 C3：astream_llm 把最后一块 usage_metadata 写入此 holder
+        start = time.monotonic()
+        status = "success"
+        err = None
         if llm_config is None:
             yield _sse_event("error", {"code": "no_llm_config", "message": "未配置 LLM，请先在设置中配置"})
+            _log_llm_call(
+                db, user_id=current_user.id, project_id=section.project_id, action="caption",
+                model=_resolve_model(llm_config), provider=_resolve_provider(llm_config),
+                status="failed", duration_ms=int((time.monotonic() - start) * 1000),
+                error="no_llm_config",
+            )
             return
         try:
-            async for token in astream_llm(messages, llm_config=llm_config):
+            async for token in astream_llm(messages, llm_config=llm_config, usage_sink=usage):
                 yield _sse_event("token", {"text": token})
             yield _sse_event("done", {})
         except asyncio.CancelledError:
+            status = "failed"
+            err = "client_cancelled"
             raise
         except Exception as e:
+            status = "failed"
+            err = e
             yield _sse_event("error", {"code": "llm_error", "message": str(e)[:200]})
+        finally:
+            _log_llm_call(
+                db,
+                user_id=current_user.id,
+                project_id=section.project_id,
+                action="caption",
+                model=_resolve_model(llm_config),
+                provider=_resolve_provider(llm_config),
+                status=status,
+                tokens=usage or None,
+                duration_ms=int((time.monotonic() - start) * 1000),
+                error=err,
+            )
 
     return StreamingResponse(generate(), media_type="text/event-stream")
