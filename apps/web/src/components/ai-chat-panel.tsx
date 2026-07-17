@@ -371,7 +371,7 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
       )}
 
       {/* 内容区 */}
-      <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto px-3 py-3">
+      <div ref={scrollRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-3">
         {phase === 'generating' || phase === 'done' ? (
           // 生成草稿的 markdown 预览
           <div className="space-y-3">
