@@ -37,7 +37,7 @@ def test_chat_endpoint_emits_done_event_with_heartbeat_support(client, registere
     section = _make_logged_in_section(client, registered_user, db_session)
 
     # mock astream_chat 返回固定 token
-    async def fake_astream_chat(db, section, history, msg):
+    async def fake_astream_chat(db, section, history, msg, **kwargs):
         yield "hello"
 
     monkeypatch.setattr("app.api.ai.astream_chat", fake_astream_chat)
@@ -55,7 +55,7 @@ def test_generate_saves_draft_on_completion(client, registered_user, db_session,
     section = _make_logged_in_section(client, registered_user, db_session)
     assert section.content is None  # 初始为空
 
-    async def fake_astream_generate(db, sec, history):
+    async def fake_astream_generate(db, sec, history, **kwargs):
         yield "# 标题"
 
     monkeypatch.setattr("app.api.ai.astream_generate", fake_astream_generate)
@@ -87,7 +87,7 @@ def test_heartbeat_does_not_kill_slow_stream(client, registered_user, db_session
     # 把心跳间隔改小，让测试跑得快
     monkeypatch.setattr(ai_module, "HEARTBEAT_INTERVAL", 0.3)
 
-    async def slow_astream_chat(db, sec, history, msg):
+    async def slow_astream_chat(db, sec, history, msg, **kwargs):
         yield "first"
         await asyncio.sleep(0.6)  # > 心跳间隔，触发心跳
         yield "second"  # 心跳后这个 token 必须仍能到达（原 bug 会丢失）
@@ -108,7 +108,7 @@ def test_chat_writes_llm_call_log_on_success(client, registered_user, db_session
     """chat 端点成功完成时写一条 LLMCallLog（status=success）。"""
     section = _make_logged_in_section(client, registered_user, db_session)
 
-    async def fake_astream_chat(db, sec, history, msg):
+    async def fake_astream_chat(db, sec, history, msg, **kwargs):
         yield "hello"
 
     monkeypatch.setattr("app.api.ai.astream_chat", fake_astream_chat)
@@ -137,7 +137,7 @@ def test_generate_writes_llm_call_log_on_success(client, registered_user, db_ses
     """generate 端点成功完成时写一条 LLMCallLog。"""
     section = _make_logged_in_section(client, registered_user, db_session)
 
-    async def fake_astream_generate(db, sec, history):
+    async def fake_astream_generate(db, sec, history, **kwargs):
         yield "# 标题"
 
     monkeypatch.setattr("app.api.ai.astream_generate", fake_astream_generate)
@@ -157,7 +157,7 @@ def test_chat_writes_llm_call_log_on_failure(client, registered_user, db_session
     """chat 端点 LLM 异常时写一条 LLMCallLog（status=failed, error 记原因）。"""
     section = _make_logged_in_section(client, registered_user, db_session)
 
-    async def fake_astream_chat(db, sec, history, msg):
+    async def fake_astream_chat(db, sec, history, msg, **kwargs):
         raise RuntimeError("boom")
         yield  # 让它成为 async generator
 
@@ -175,3 +175,80 @@ def test_chat_writes_llm_call_log_on_failure(client, registered_user, db_session
     assert log.status == "failed"
     assert log.error is not None
     assert "boom" in log.error
+
+
+# ── Fix 2: list_messages 必须按 conversation_id 隔离（防串历史）──
+
+def test_list_messages_requires_conversation_id(client, registered_user, db_session):
+    """list_messages 缺省 conversation_id 时应拒绝（422），
+    避免前端漏传时把 section 下所有会话的消息混在一起（串历史 bug 根因）。
+    """
+    section = _make_logged_in_section(client, registered_user, db_session)
+
+    # 不传 conversation_id
+    res = client.get(f"/api/v1/sections/{section.id}/messages")
+    assert res.status_code == 422, f"缺省 conversation_id 应 422，实际 {res.status_code}: {res.text}"
+
+
+def test_list_messages_isolated_by_conversation(client, registered_user, db_session):
+    """两个会话的消息互不串：传 A 的 conversation_id 只看到 A 的消息。"""
+    section = _make_logged_in_section(client, registered_user, db_session)
+
+    # 建两个会话
+    conv_a = client.post(f"/api/v1/sections/{section.id}/conversations", json={"title": "A"}).json()
+    conv_b = client.post(f"/api/v1/sections/{section.id}/conversations", json={"title": "B"}).json()
+
+    # 直接写消息（绕过 LLM）；conversation_id 列是 UUID，需转回 UUID
+    import uuid as _uuid
+    from app.models import Message
+    db_session.add(Message(section_id=section.id, conversation_id=_uuid.UUID(conv_a["id"]), role="user", content="msg-in-A"))
+    db_session.add(Message(section_id=section.id, conversation_id=_uuid.UUID(conv_b["id"]), role="user", content="msg-in-B"))
+    db_session.commit()
+
+    res_a = client.get(f"/api/v1/sections/{section.id}/messages?conversation_id={conv_a['id']}")
+    assert res_a.status_code == 200
+    contents_a = [m["content"] for m in res_a.json()]
+    assert contents_a == ["msg-in-A"], f"会话 A 不应包含 B 的消息，实际 {contents_a}"
+
+
+# ── Fix 5: get_llm 透传 BYOK / 全局配置 ──
+
+def test_get_llm_uses_resolved_config_over_defaults(monkeypatch):
+    """get_llm 传入 base_url/api_key/model 时应优先使用，而非 settings 默认值。"""
+    from app.ai.llm_client import get_llm
+
+    captured = {}
+
+    class _FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("app.ai.llm_client.ChatOpenAI", _FakeChatOpenAI)
+
+    get_llm(
+        base_url="https://user.byok.example/v1",
+        api_key="sk-user-key",
+        model="user-model-x",
+    )
+
+    assert captured["base_url"] == "https://user.byok.example/v1"
+    assert captured["api_key"] == "sk-user-key"
+    assert captured["model"] == "user-model-x"
+
+
+def test_get_llm_falls_back_to_settings_when_no_config(monkeypatch):
+    """get_llm 无参调用时回退 settings（保持向后兼容）。"""
+    from app.ai.llm_client import get_llm
+
+    captured = {}
+
+    class _FakeChatOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("app.ai.llm_client.ChatOpenAI", _FakeChatOpenAI)
+
+    get_llm()
+    s = __import__("app.core.config", fromlist=["get_settings"]).get_settings()
+    assert captured["base_url"] == s.glm_base_url
+    assert captured["model"] == s.glm_model

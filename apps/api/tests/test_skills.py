@@ -258,7 +258,7 @@ def test_run_review_uses_one_run_when_consistency_check_disabled(db, monkeypatch
     calls = {"n": 0}
 
     import app.services.review_service as rs
-    def counting_score(criterion, sections):
+    def counting_score(db, user_id, criterion, sections):
         calls["n"] += 1
         return (80, "ev", "sug")
 
