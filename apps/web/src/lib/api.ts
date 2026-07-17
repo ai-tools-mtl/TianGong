@@ -171,6 +171,7 @@ export const api = {
       body: JSON.stringify({ message, ...(source ? { source } : {}) }),
       signal,
     })
+    if (!res.ok) throw await _sseHttpError(res)
     return _consumeSSE(res, onToken)
   },
 
@@ -187,6 +188,7 @@ export const api = {
       body: JSON.stringify(source ? { source } : {}),
       signal,
     })
+    if (!res.ok) throw await _sseHttpError(res)
     return _consumeSSE(res, onToken)
   },
 
@@ -399,6 +401,32 @@ export const api = {
 
   getSharedInfo: (token: string) =>
     request<SharedInfo>(`/shared/${token}`),
+}
+
+/**
+ * SSE 端点（streamChat/streamGenerate/...）的初始 POST 非 2xx 时的错误归一化。
+ *
+ * 后端 AppError 经全局异常处理器序列化为 {code, message}（见 exceptions.py），
+ * 与 request() 的 ApiError 形态一致。这里把 HTTP 状态码挂到 Error 上，
+ * 方便调用方按 status（403/404/...）分支处理。
+ *
+ * 例如全局 Key 授权被撤销：后端 resolve_llm_config 抛 ForbiddenError →
+ * HTTP 403 + {code:"forbidden", message:"未授权使用全局 Key..."}。
+ */
+async function _sseHttpError(res: Response): Promise<Error & { status: number; code?: string }> {
+  let body: { code?: string; message?: string } | null = null
+  try {
+    body = (await res.json()) as { code?: string; message?: string }
+  } catch {
+    body = null
+  }
+  const err = new Error(body?.message || `HTTP ${res.status}`) as Error & {
+    status: number
+    code?: string
+  }
+  err.status = res.status
+  if (body?.code) err.code = body.code
+  return err
 }
 
 async function _consumeSSE(res: Response, onToken: (t: string) => void): Promise<void> {

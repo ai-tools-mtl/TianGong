@@ -129,14 +129,17 @@ async def chat(
     db.add(user_msg)
     db.commit()
 
+    # 阶段 0：解析生效 LLM 配置（在 StreamingResponse 构造前解析，确保
+    # ForbiddenError（如全局 Key 被撤销）能被全局异常处理器转成真正的 HTTP 403，
+    # 而不是在 SSE 流已发出 200 头之后才抛出 → 客户端只能看到空响应）。
+    llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id, source=payload.source)
+
     async def generate():
         full_response = ""
         usage = {}  # 断链 C3：astream_llm 把最后一块 usage_metadata 写入此 holder
         start = time.monotonic()
         status = "success"
         err = None
-        # 阶段 0：解析生效 LLM 配置（按 source：global/byok/env；None 走 fallback）
-        llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id, source=payload.source)
         if llm_config is None:
             yield _sse_event("error", {"code": "no_llm_config", "message": "未配置 LLM，请先在设置中配置"})
             _log_llm_call(
@@ -200,13 +203,17 @@ async def generate_draft(
     source = payload.source if payload else None
     section, history = _get_section_with_history(db, current_user.id, section_id)
 
+    # 阶段 0：解析生效 LLM 配置（在 StreamingResponse 构造前解析，确保
+    # ForbiddenError（如全局 Key 被撤销）能被全局异常处理器转成真正的 HTTP 403，
+    # 而不是在 SSE 流已发出 200 头之后才抛出 → 客户端只能看到空响应）。
+    llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id, source=source)
+
     async def generate():
         full_md = ""
         usage = {}  # 断链 C3：astream_llm 把最后一块 usage_metadata 写入此 holder
         start = time.monotonic()
         status = "success"
         err = None
-        llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id, source=source)
         if llm_config is None:
             yield _sse_event("error", {"code": "no_llm_config", "message": "未配置 LLM，请先在设置中配置"})
             _log_llm_call(
