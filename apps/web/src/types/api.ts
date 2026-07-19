@@ -182,6 +182,28 @@ export interface AdminUser {
   has_own_llm_key: boolean
   has_global_grant: boolean
   created_at: string
+  // 后端 listUsers 补回（refactor/admin-ia-phase1），登录时由 auth_service 写入；可能为 null。
+  last_login_at: string | null
+}
+
+// ── 落地页聚合（refactor/admin-ia-phase1）──
+
+/** GET /admin/users/recent-logins | /admin/users/recent-creations 列表项。 */
+export interface RecentUser {
+  id: string
+  username: string
+  email: string | null
+  /** ISO 时间字符串：recent-logins 取 last_login_at，recent-creations 取 created_at。 */
+  ts: string | null
+}
+
+/** GET /admin/stats/llm/health 返回；失败率超阈值时 status='warning'。 */
+export interface LLMHealth {
+  days: number
+  total: number
+  failed: number
+  failure_rate: number
+  status: 'ok' | 'warning'
 }
 
 export interface GlobalLLMSettings {
