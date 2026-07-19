@@ -7,6 +7,10 @@ from sqlalchemy.orm import Session
 
 from app.models import LLMCallLog, User, UserGlobalLLMGrant
 
+# 落地页 LLM 健康卡判定阈值：近 7 天失败率 <= 5% 视为健康。
+# 模块级常量方便后续挪到 config；当前由 admin 落地页使用（plan refactor/admin-ia-phase1）。
+LLM_HEALTH_FAILURE_THRESHOLD = 0.05
+
 
 def get_llm_stats(db: Session, *, days: int = 7) -> dict:
     """聚合近 N 天 LLM 调用。
@@ -110,6 +114,40 @@ def get_llm_stats(db: Session, *, days: int = 7) -> dict:
         "total_completion_tokens": total_completion_tokens,
         "by_model": by_model,
         "by_user": by_user,
+    }
+
+
+def get_llm_health(db: Session, *, days: int = 7) -> dict:
+    """近 N 天 LLM 调用健康摘要（admin 落地页 LLM 健康卡片用）。
+
+    返回结构（聚合数字 + 健康判定，无内容）：
+    {
+      "days": 7,
+      "total": int,
+      "failed": int,
+      "failure_rate": float,   # 0.0~1.0，total=0 时为 0.0
+      "status": "ok"|"warning", # failure_rate <= LLM_HEALTH_FAILURE_THRESHOLD → ok
+    }
+
+    失败聚合口径与 get_llm_stats 一致：status != "success" 全计为 failed。
+    """
+    since = datetime.now(timezone.utc) - timedelta(days=days)
+    row = db.execute(
+        select(
+            func.count(LLMCallLog.id).label("total"),
+            func.sum(case((LLMCallLog.status != "success", 1), else_=0)).label("failed"),
+        ).where(LLMCallLog.created_at >= since)
+    ).one()
+    total = int(row.total or 0)
+    failed = int(row.failed or 0)
+    failure_rate = failed / total if total > 0 else 0.0
+    status = "ok" if failure_rate <= LLM_HEALTH_FAILURE_THRESHOLD else "warning"
+    return {
+        "days": days,
+        "total": total,
+        "failed": failed,
+        "failure_rate": failure_rate,
+        "status": status,
     }
 
 
