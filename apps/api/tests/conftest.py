@@ -150,10 +150,11 @@ def client(app_obj):
 def registered_user(db_session) -> dict:
     """注册一个普通用户，返回 {id, email, password}。"""
     u = User(
+        username="testuser",
         email="test@example.com",
         password_hash=hash_password("Pass1234!"),
         name="测试用户",
     )
     db_session.add(u)
     db_session.commit()
-    return {"id": str(u.id), "email": u.email, "password": "Pass1234!"}
+    return {"id": str(u.id), "username": u.username, "email": u.email, "password": "Pass1234!"}

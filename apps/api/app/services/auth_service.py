@@ -8,11 +8,14 @@ from app.core.security import hash_password, verify_password
 from app.models import User
 
 
-def register_user(db: Session, *, email: str, password: str, name: str) -> User:
-    existing = db.scalar(select(User).where(User.email == email))
+def register_user(
+    db: Session, *, username: str, password: str, name: str, email: str | None = None
+) -> User:
+    existing = db.scalar(select(User).where(User.username == username))
     if existing:
-        raise ConflictError(f"邮箱 {email} 已注册")
+        raise ConflictError(f"用户名 {username} 已注册")
     user = User(
+        username=username,
         email=email,
         password_hash=hash_password(password),
         name=name,
@@ -23,8 +26,8 @@ def register_user(db: Session, *, email: str, password: str, name: str) -> User:
     return user
 
 
-def authenticate_user(db: Session, *, email: str, password: str) -> User | None:
-    user = db.scalar(select(User).where(User.email == email))
+def authenticate_user(db: Session, *, username: str, password: str) -> User | None:
+    user = db.scalar(select(User).where(User.username == username))
     if user is None:
         return None
     if user.status != "active":

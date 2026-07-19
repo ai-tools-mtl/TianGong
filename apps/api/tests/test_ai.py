@@ -1,17 +1,26 @@
 def _make_logged_in_section(client, registered_user, db_session):
-    """登录 + 建项目 + 返回第一个 section 对象（含真实 id）。"""
+    """登录 + 建项目 + 给用户配 BYOK（阶段 0 strict：端点要求生效 LLM 配置）+ 返回第一个 section。"""
     from app.services.seed_service import ensure_default_template
     from app.services.project_service import create_project
     from app.services.section_service import list_sections
-    from app.models import User
+    from app.models import User, UserLLMConfig
+    from app.core.security import encrypt_value
     from sqlalchemy import select
 
     ensure_default_template(db_session)
     user = db_session.scalar(select(User).where(User.email == registered_user["email"]))
+    # 配 BYOK（阶段 0 strict：无配置则端点发 no_llm_config 错误）
+    db_session.add(UserLLMConfig(
+        user_id=user.id, name="test", provider="custom",
+        base_url="https://test.example.com",
+        api_key_encrypted=encrypt_value("sk-test-key"),
+        model="test-model", embedding_model="test-embed",
+    ))
+    db_session.commit()
     p = create_project(db_session, user=user, title="测试发明")
     sections = list_sections(db_session, user_id=user.id, project_id=str(p.id))
     client.post("/api/v1/auth/login", json={
-        "email": registered_user["email"], "password": registered_user["password"],
+        "username": registered_user["username"], "password": registered_user["password"],
     })
     return sections[0]
 
@@ -212,10 +221,14 @@ def test_list_messages_isolated_by_conversation(client, registered_user, db_sess
 
 
 # ── Fix 5: get_llm 透传 BYOK / 全局配置 ──
+# 本地 P2 设计：get_llm(llm_config: ResolvedLLMConfig) —— 接收已解析的配置对象，
+# 不做 settings 回退（调用方负责先 resolve_llm_config 并处理 None）。
+# 下面两个测试验证该契约：传入的 ResolvedLLMConfig 字段直接驱动 ChatOpenAI 构造。
 
-def test_get_llm_uses_resolved_config_over_defaults(monkeypatch):
-    """get_llm 传入 base_url/api_key/model 时应优先使用，而非 settings 默认值。"""
+def test_get_llm_uses_resolved_config_fields(monkeypatch):
+    """get_llm(llm_config) 应把 ResolvedLLMConfig 的 base_url/api_key/model 透传给 ChatOpenAI。"""
     from app.ai.llm_client import get_llm
+    from app.services.llm_config_service import ResolvedLLMConfig
 
     captured = {}
 
@@ -225,20 +238,23 @@ def test_get_llm_uses_resolved_config_over_defaults(monkeypatch):
 
     monkeypatch.setattr("app.ai.llm_client.ChatOpenAI", _FakeChatOpenAI)
 
-    get_llm(
+    cfg = ResolvedLLMConfig(
         base_url="https://user.byok.example/v1",
         api_key="sk-user-key",
         model="user-model-x",
+        source="user",
     )
+    get_llm(cfg)
 
     assert captured["base_url"] == "https://user.byok.example/v1"
     assert captured["api_key"] == "sk-user-key"
     assert captured["model"] == "user-model-x"
 
 
-def test_get_llm_falls_back_to_settings_when_no_config(monkeypatch):
-    """get_llm 无参调用时回退 settings（保持向后兼容）。"""
+def test_get_llm_streaming_enables_stream_usage(monkeypatch):
+    """streaming=True 时同步开启 stream_usage（断链 C3：流式回传 token 用量给 usage_sink）。"""
     from app.ai.llm_client import get_llm
+    from app.services.llm_config_service import ResolvedLLMConfig
 
     captured = {}
 
@@ -248,10 +264,21 @@ def test_get_llm_falls_back_to_settings_when_no_config(monkeypatch):
 
     monkeypatch.setattr("app.ai.llm_client.ChatOpenAI", _FakeChatOpenAI)
 
-    get_llm()
-    s = __import__("app.core.config", fromlist=["get_settings"]).get_settings()
-    assert captured["base_url"] == s.glm_base_url
-    assert captured["model"] == s.glm_model
+    cfg = ResolvedLLMConfig(
+        base_url="https://global.example/v1",
+        api_key="sk-global",
+        model="global-model",
+        source="global",
+    )
+    get_llm(cfg, streaming=True)
+    assert captured["streaming"] is True
+    assert captured["stream_usage"] is True
+
+    # 非 streaming 时两者均 False
+    captured.clear()
+    get_llm(cfg, streaming=False)
+    assert captured["streaming"] is False
+    assert captured["stream_usage"] is False
 
 
 # ── 草稿会话 + LLM 标题总结 ──

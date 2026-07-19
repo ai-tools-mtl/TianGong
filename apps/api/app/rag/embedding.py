@@ -2,23 +2,27 @@
 
 from langchain_openai import OpenAIEmbeddings
 
-from app.core.config import get_settings
+from app.services.llm_config_service import ResolvedLLMConfig
 
 
-def get_embedder() -> OpenAIEmbeddings:
-    s = get_settings()
+def get_embedder(embed_config: ResolvedLLMConfig) -> OpenAIEmbeddings:
+    if embed_config.embedding_model is None:
+        raise ValueError(
+            "当前 LLM 配置未指定 embedding 模型，无法构造 embedder。"
+            "请在配置中补充 embedding_model 字段。"
+        )
     return OpenAIEmbeddings(
-        model=s.glm_embedding_model,
-        base_url=s.glm_base_url,
-        api_key=s.glm_api_key,
+        model=embed_config.embedding_model,
+        base_url=embed_config.base_url,
+        api_key=embed_config.api_key,
     )
 
 
-def embed_text(text: str) -> list[float]:
+def embed_text(text: str, *, embed_config: ResolvedLLMConfig) -> list[float]:
     """单文本向量化。"""
-    return get_embedder().embed_query(text)
+    return get_embedder(embed_config).embed_query(text)
 
 
-def embed_texts(texts: list[str]) -> list[list[float]]:
+def embed_texts(texts: list[str], *, embed_config: ResolvedLLMConfig) -> list[list[float]]:
     """批量向量化。"""
-    return get_embedder().embed_documents(texts)
+    return get_embedder(embed_config).embed_documents(texts)

@@ -1,7 +1,7 @@
 """add conversations table + messages.conversation_id
 
 Revision ID: e7f8a9b0c1d2
-Revises: 4ab0b6e7413c
+Revises: d2b3c4d5e6f7 (re-parented from 39198eaeea5d onto local P2 head during origin/main merge)
 Create Date: 2026-07-17 00:00:00.000000
 """
 from typing import Sequence, Union
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 
 
 revision: str = 'e7f8a9b0c1d2'
-down_revision: Union[str, Sequence[str], None] = '39198eaeea5d'
+down_revision: Union[str, Sequence[str], None] = 'd2b3c4d5e6f7'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -26,7 +26,7 @@ def test_render_tiptap_to_docx_handles_image(db_session, monkeypatch):
     from docx.document import Document as DocClass
 
     # 造 user + project + attachment,storage_path 指向 mock 的 key
-    u = User(email="img@example.com", password_hash=hash_password("P1!"), name="I")
+    u = User(username="img", email="img@example.com", password_hash=hash_password("P1!"), name="I")
     db_session.add(u)
     db_session.flush()
     p = Project(user_id=u.id, title="t")

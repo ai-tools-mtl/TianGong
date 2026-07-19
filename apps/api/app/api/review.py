@@ -6,7 +6,7 @@ from app.core.database import get_db
 from app.deps import get_current_user
 from app.models import ReviewRecord, User
 from app.schemas.review import RubricOut, RubricUpdate
-from app.services import review_service, rubric_service
+from app.services import project_service, review_service, rubric_service
 
 router = APIRouter(tags=["review"])
 
@@ -42,9 +42,12 @@ def list_reviews(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    # 校验项目归属：越权/不存在一律返回 404（防探测，设计 13.1）。
+    # 用 project.id（UUID）查询，避免路径 str 直接绑定 Uuid 列导致的类型错误。
+    project = project_service.get_project(db, user=current_user, project_id=project_id)
     records = list(db.scalars(
         select(ReviewRecord)
-        .where(ReviewRecord.project_id == project_id)
+        .where(ReviewRecord.project_id == project.id)
         .order_by(ReviewRecord.created_at.desc())
     ))
     return [_record_to_dict(r) for r in records]

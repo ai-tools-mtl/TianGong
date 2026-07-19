@@ -12,6 +12,7 @@ from app.models import User
 def admin_and_login(client, db_session):
     """创建管理员并登录，返回 admin user。"""
     admin = User(
+        username="admin",
         email="admin@example.com",
         password_hash=hash_password("Admin1234!"),
         name="管理员",
@@ -22,7 +23,7 @@ def admin_and_login(client, db_session):
     db_session.add(admin)
     db_session.commit()
     client.post("/api/v1/auth/login", json={
-        "email": "admin@example.com", "password": "Admin1234!",
+        "username": "admin", "password": "Admin1234!",
     })
     return admin
 
@@ -30,6 +31,7 @@ def admin_and_login(client, db_session):
 @pytest.fixture
 def target_user(db_session):
     u = User(
+        username="target",
         email="target@example.com",
         password_hash=hash_password("OldPass1!"),
         name="目标用户",
@@ -87,6 +89,7 @@ def test_cannot_reset_self_returns_403(client, admin_and_login):
 
 def test_cannot_ban_superuser_returns_403(client, admin_and_login, db_session):
     superadmin = User(
+        username="root",
         email="root@example.com",
         password_hash="x",
         name="超管",
@@ -102,6 +105,7 @@ def test_cannot_ban_superuser_returns_403(client, admin_and_login, db_session):
 
 def test_cannot_ban_other_admin_returns_403(client, admin_and_login, db_session):
     other_admin = User(
+        username="admin2",
         email="admin2@example.com",
         password_hash="x",
         name="管理员2",
@@ -122,7 +126,7 @@ def test_patch_status_user_not_found_404(client, admin_and_login):
 
 def test_normal_user_cannot_access_ban(client, registered_user, target_user):
     client.post("/api/v1/auth/login", json={
-        "email": registered_user["email"], "password": registered_user["password"],
+        "username": registered_user["username"], "password": registered_user["password"],
     })
     res = _patch_status(client, target_user.id, "disabled")
     assert res.status_code == 403
@@ -152,7 +156,7 @@ def test_set_global_llm_writes_audit_without_api_key(client, admin_and_login, db
     assert detail.get("model") == "glm-4-flash"
     assert detail.get("base_url") == "https://open.bigmodel.cn/api/paas/v4"
     assert detail.get("enabled") is True
-    assert log.actor_email == admin_and_login.email
+    assert log.actor_username == admin_and_login.username
     assert log.target_type == "system_setting"
 
 
@@ -182,7 +186,7 @@ def test_get_llm_stats_endpoint_admin_ok(client, admin_and_login, db_session):
 def test_get_llm_stats_endpoint_normal_user_forbidden(client, registered_user):
     """普通用户 403。"""
     client.post("/api/v1/auth/login", json={
-        "email": registered_user["email"], "password": registered_user["password"],
+        "username": registered_user["username"], "password": registered_user["password"],
     })
     res = client.get("/api/v1/admin/stats/llm")
     assert res.status_code == 403

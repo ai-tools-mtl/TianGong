@@ -5,60 +5,56 @@ from collections.abc import AsyncIterator, Iterator
 from langchain_core.messages import BaseMessage
 from langchain_openai import ChatOpenAI
 
-from app.core.config import get_settings
+from app.services.llm_config_service import ResolvedLLMConfig
 
 
-def get_llm(
-    streaming: bool = False,
-    *,
-    base_url: str | None = None,
-    api_key: str | None = None,
-    model: str | None = None,
-) -> ChatOpenAI:
-    """构造 LLM 实例。
+def get_llm(llm_config: ResolvedLLMConfig, *, streaming: bool = False) -> ChatOpenAI:
+    """构造 LLM 实例。用解析后的配置（用户自配/全局/admin）。
 
-    配置优先级：显式参数 > settings.glm_*。
-    显式参数由调用方从 llm_config_service.resolve_llm_config() 解析后传入
-    （用户 BYOK > 全局 SystemSetting），让 BYOK / 全局配置真正生效。
-    无显式参数时回退 settings（保持向后兼容）。
+    streaming=True 时同时开 stream_usage：LangChain 在流的最后一块
+    AIMessageChunk 上回填 usage_metadata（input_tokens/output_tokens），
+    供 astream_llm 侧捕获用于 LLMCallLog 记账（断链 C3）。
     """
-    s = get_settings()
     return ChatOpenAI(
-        model=model or s.glm_model,
-        base_url=base_url or s.glm_base_url,
-        api_key=api_key or s.glm_api_key,
+        model=llm_config.model,
+        base_url=llm_config.base_url,
+        api_key=llm_config.api_key,
         streaming=streaming,
+        stream_usage=streaming,  # 流式时随流回传 token 用量（仅最后一块带）
         temperature=0.7,
     )
 
 
-def stream_llm(
-    messages: list[BaseMessage],
-    *,
-    base_url: str | None = None,
-    api_key: str | None = None,
-    model: str | None = None,
-) -> Iterator[str]:
+def stream_llm(messages: list[BaseMessage], *, llm_config: ResolvedLLMConfig) -> Iterator[str]:
     """流式调用 LLM，逐 token yield 文本。"""
-    llm = get_llm(streaming=True, base_url=base_url, api_key=api_key, model=model)
+    llm = get_llm(llm_config, streaming=True)
     for chunk in llm.stream(messages):
         if chunk.content:
             yield chunk.content
 
 
 async def astream_llm(
-    messages: list[BaseMessage],
-    *,
-    base_url: str | None = None,
-    api_key: str | None = None,
-    model: str | None = None,
+    messages: list[BaseMessage], *, llm_config: ResolvedLLMConfig,
+    usage_sink: dict | None = None,
 ) -> AsyncIterator[str]:
     """异步流式调用 LLM，逐 token yield 文本。
 
     用于 SSE 端点：客户端断开时 generator 被取消，底层 httpx 连接关闭，
     真正停止从 LLM API 拉取（不浪费 token）。
+
+    usage_sink（断链 C3）：可选的可变 dict；流式过程中若 chunk 携带
+    usage_metadata（LangChain 在 stream_usage=True 时于最后一块回填），
+    把 input_tokens/output_tokens 写入 usage_sink，供调用方在流结束后
+    记入 LLMCallLog。generator 无法 return 侧值，故用 holder 透传。
     """
-    llm = get_llm(streaming=True, base_url=base_url, api_key=api_key, model=model)
+    llm = get_llm(llm_config, streaming=True)
     async for chunk in llm.astream(messages):
         if chunk.content:
             yield chunk.content
+        # 捕获 token 用量：usage_metadata 仅出现在最后一块（trailing chunk），
+        # 中间块不带；故每块都尝试读（last-wins，实际只有末块命中）。
+        # 异常/客户端取消未到末块时 sink 为空，token 落 None（正确：未完成调用）。
+        usage = getattr(chunk, "usage_metadata", None)
+        if usage and usage_sink is not None:
+            usage_sink["prompt"] = usage.get("input_tokens")
+            usage_sink["completion"] = usage.get("output_tokens")

@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { ConversationList } from '@/components/conversation-list'
 import { DiffReviewPanel } from '@/components/diff-review-panel'
 import { api } from '@/lib/api'
+import { clearDefaultSource, getDefaultSource } from '@/lib/llm-source'
 import {
   queryKeys,
   useApplyDiff,
@@ -26,6 +27,26 @@ import type { Conversation, Hunk, Section } from '@/types/api'
 interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
+}
+
+/**
+ * 判定错误是否为“LLM 源失效”（全局 Key 授权被撤销 / 选中的 BYOK 被删）。
+ *
+ * streamChat/streamGenerate 在初始 POST !res.ok 时抛出的 Error 携带 .status
+ * 与 .code（见 api.ts _sseHttpError）；后端 ForbiddenError 序列化为
+ * {code:"forbidden", message:...}（HTTP 403）。这里三路兜底：status / code / message。
+ */
+function isForbiddenSourceError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  if ((err as { status?: number }).status === 403) return true
+  if ((err as { code?: string }).code === 'forbidden') return true
+  return /未授权|全局 Key|授权/.test(err.message)
+}
+
+/** 选定的 LLM 源失效：清默认源 + 引导用户去设置重选。 */
+function handleStaleSourceError() {
+  clearDefaultSource()
+  toast.error('当前 LLM 源已失效（授权被撤销或配置已删除），已清除默认源，请前往「设置」重新选择')
 }
 
 type AIPhase = 'idle' | 'chatting' | 'generating' | 'done' | 'diff-review'
@@ -151,6 +172,11 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
 
   async function handleSend() {
     if (!input.trim() || phase === 'chatting' || phase === 'generating') return
+    const source = getDefaultSource()
+    if (!source) {
+      toast.error('请先在设置中选择 LLM 源')
+      return
+    }
     // 草稿会话已由 handleNewConversation 建好；若无选中会话则提示
     if (!currentConvId) {
       toast.error('会话未准备好，请稍候')
@@ -176,6 +202,7 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
           })
         },
         abortRef.current.signal,
+        source,
         currentConvId,
         (doneData) => {
           // done 事件：草稿会话首条对话后，后端总结标题并转 active，回传新 title
@@ -187,6 +214,16 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') {
         // 用户主动停止：保留已生成的半截内容，不弹错
+      } else if (isForbiddenSourceError(err)) {
+        // LLM 源失效（全局 Key 授权被撤销 / BYOK 被删）：清默认源 + 引导重选
+        handleStaleSourceError()
+        setMessages((m) => {
+          const last = m[m.length - 1]
+          if (last && last.role === 'assistant' && !last.content) {
+            return m.slice(0, -1)
+          }
+          return m
+        })
       } else {
         // SSE error 事件抛出的 ApiError 带 message；其它异常降级提示
         const e = err as { message?: string }
@@ -226,6 +263,11 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
   }
 
   async function handleGenerate() {
+    const source = getDefaultSource()
+    if (!source) {
+      toast.error('请先在设置中选择 LLM 源')
+      return
+    }
     setPhase('generating')
     setAiDraft('')
     abortRef.current = new AbortController()
@@ -234,12 +276,16 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
       await api.streamGenerate(sectionId, (token) => {
         md += token
         setAiDraft(md)
-      }, abortRef.current.signal)
+      }, abortRef.current.signal, source)
       setPhase('done')
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') {
         // 已有部分内容则进 done 态供审查；否则回 idle
         setPhase(md ? 'done' : 'idle')
+      } else if (isForbiddenSourceError(err)) {
+        // LLM 源失效：清默认源 + 引导重选
+        handleStaleSourceError()
+        setPhase('idle')
       } else {
         const e = err as { message?: string }
         toast.error(e?.message || '生成失败')

@@ -5,7 +5,7 @@ import json
 import time
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Body, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -17,7 +17,13 @@ from app.core.database import get_db
 from app.core.exceptions import ValidationError
 from app.deps import get_current_user
 from app.models import Conversation, ConversationStatus, LLMCallLog, Message, Section, User
-from app.schemas.ai import ChatRequest, ConversationCreate, ConversationUpdate, RewriteRequest
+from app.schemas.ai import (
+    ChatRequest,
+    ConversationCreate,
+    ConversationUpdate,
+    GenerateRequest,
+    RewriteRequest,
+)
 from app.services import conversation_service, llm_config_service, section_service
 
 router = APIRouter(tags=["ai"])
@@ -67,47 +73,25 @@ def _get_or_create_conversation(db: Session, section: Section, conversation_id: 
     return conv
 
 
-def _resolve_provider(db: Session, user_id) -> str:
-    """判断本次 LLM 调用走用户自配还是全局配置（用于日志 provider 字段）。"""
-    try:
-        cfg = llm_config_service.resolve_llm_config(db, user_id=user_id)
-        if cfg is not None:
-            return cfg.source  # "user" / "global"
-    except Exception:
-        pass
-    return "global"
+def _resolve_provider(llm_config) -> str:
+    """从已解析配置取 provider（用于日志 provider 字段）。无配置返回 'none'。
 
-
-def _resolve_model(db: Session, user_id) -> str:
-    """取生效 model 名（用于日志 model 字段）。失败回退 settings.glm_model。"""
-    try:
-        cfg = llm_config_service.resolve_llm_config(db, user_id=user_id)
-        if cfg is not None and cfg.model:
-            return cfg.model
-    except Exception:
-        pass
-    from app.core.config import get_settings
-    return get_settings().glm_model
-
-
-def _resolve_llm(db: Session, user_id):
-    """一次性解析 LLM 配置，供本次请求复用。
-
-    返回 (llm_config, provider, model)：
-    - llm_config: ResolvedLLMConfig | None —— 透传给 orchestrator/astream_llm，
-      让用户 BYOK / 全局配置真正生效（而非永远走 settings 默认）。
-    - provider / model: 用于 LLMCallLog 日志字段。
-    无可用配置时 llm_config=None（回退 settings），provider='global'，
-    model=settings.glm_model。
+    复用上游已 resolve 的 config（I1：避免日志侧二次/三次 resolve 浪费 DB 查询）；
+    无配置时返回 'none' 而非 'global'（I2：如实标注失败路径）。
     """
-    try:
-        cfg = llm_config_service.resolve_llm_config(db, user_id=user_id)
-    except Exception:
-        cfg = None
-    if cfg is not None:
-        return cfg, cfg.source, cfg.model
-    from app.core.config import get_settings
-    return None, "global", get_settings().glm_model
+    if llm_config is None:
+        return "none"
+    return llm_config.source  # "user" / "global" / "env"
+
+
+def _resolve_model(llm_config) -> str:
+    """从已解析配置取 model（用于日志 model 字段）。无配置返回空串。
+
+    复用上游已 resolve 的 config（I1），无配置时返回空串（I2）。
+    """
+    if llm_config is None:
+        return ""
+    return llm_config.model or ""
 
 
 def _log_llm_call(
@@ -117,7 +101,9 @@ def _log_llm_call(
 ) -> None:
     """写一条 LLM 调用元数据日志（设计 8.3 红线：只存元数据，不存内容）。
 
-    MVP 简化：token 先记 None（精确 usage 需透传 LangChain chunk.usage_metadata）。
+    tokens（断链 C3）：可选 dict {"prompt": int, "completion": int}，
+    由各端点从流的 usage_metadata（astream_llm 的 usage_sink）捕获；
+    无值时落 None（如未开 stream_usage 或 provider 未回传 usage 的情形）。
     """
     try:
         log = LLMCallLog(
@@ -177,17 +163,31 @@ async def chat(
     db.add(user_msg)
     db.commit()
 
-    # 一次性解析 LLM 配置（用户 BYOK > 全局 > settings 默认）
-    llm_config, provider, model = _resolve_llm(db, current_user.id)
+    # 阶段 0：解析生效 LLM 配置（在 StreamingResponse 构造前解析，确保
+    # ForbiddenError（如全局 Key 被撤销）能被全局异常处理器转成真正的 HTTP 403，
+    # 而不是在 SSE 流已发出 200 头之后才抛出 → 客户端只能看到空响应）。
+    # source 由前端传入（"global" / "byok:{id}" / "env"），None 走 fallback。
+    llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id, source=payload.source)
 
     async def generate():
         full_response = ""
+        usage = {}  # 断链 C3：astream_llm 把最后一块 usage_metadata 写入此 holder
         start = time.monotonic()
         status = "success"
         err = None
+        if llm_config is None:
+            yield _sse_event("error", {"code": "no_llm_config", "message": "未配置 LLM，请先在设置中配置"})
+            _log_llm_call(
+                db, user_id=current_user.id, project_id=section.project_id, action="chat",
+                model=_resolve_model(llm_config), provider=_resolve_provider(llm_config),
+                status="failed", duration_ms=int((time.monotonic() - start) * 1000),
+                error="no_llm_config",
+            )
+            return
         try:
             async for kind, text in _yield_with_heartbeat(
-                astream_chat(db, section, history, payload.message, llm_config=llm_config)
+                astream_chat(db, section, history, payload.message,
+                             llm_config=llm_config, usage_sink=usage)
             ):
                 if kind == "heartbeat":
                     yield _sse_event("heartbeat", {})
@@ -230,9 +230,10 @@ async def chat(
                 user_id=current_user.id,
                 project_id=section.project_id,
                 action="chat",
-                model=model,
-                provider=provider,
+                model=_resolve_model(llm_config),
+                provider=_resolve_provider(llm_config),
                 status=status,
+                tokens=usage or None,
                 duration_ms=int((time.monotonic() - start) * 1000),
                 error=err,
             )
@@ -245,19 +246,35 @@ async def generate_draft(
     section_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
+    payload: GenerateRequest | None = Body(default=None),
 ):
+    # body 可选：前端传 {source} 时解析；无 body（旧调用方）默认 source=None。
+    source = payload.source if payload else None
     section, history = _get_section_with_history(db, current_user.id, section_id)
 
-    llm_config, provider, model = _resolve_llm(db, current_user.id)
+    # 阶段 0：解析生效 LLM 配置（在 StreamingResponse 构造前解析，确保
+    # ForbiddenError（如全局 Key 被撤销）能被全局异常处理器转成真正的 HTTP 403，
+    # 而不是在 SSE 流已发出 200 头之后才抛出 → 客户端只能看到空响应）。
+    llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id, source=source)
 
     async def generate():
         full_md = ""
+        usage = {}  # 断链 C3：astream_llm 把最后一块 usage_metadata 写入此 holder
         start = time.monotonic()
         status = "success"
         err = None
+        if llm_config is None:
+            yield _sse_event("error", {"code": "no_llm_config", "message": "未配置 LLM，请先在设置中配置"})
+            _log_llm_call(
+                db, user_id=current_user.id, project_id=section.project_id, action="generate",
+                model=_resolve_model(llm_config), provider=_resolve_provider(llm_config),
+                status="failed", duration_ms=int((time.monotonic() - start) * 1000),
+                error="no_llm_config",
+            )
+            return
         try:
             async for kind, text in _yield_with_heartbeat(
-                astream_generate(db, section, history, llm_config=llm_config)
+                astream_generate(db, section, history, llm_config=llm_config, usage_sink=usage)
             ):
                 if kind == "heartbeat":
                     yield _sse_event("heartbeat", {})
@@ -290,9 +307,10 @@ async def generate_draft(
                 user_id=current_user.id,
                 project_id=section.project_id,
                 action="generate",
-                model=model,
-                provider=provider,
+                model=_resolve_model(llm_config),
+                provider=_resolve_provider(llm_config),
                 status=status,
+                tokens=usage or None,
                 duration_ms=int((time.monotonic() - start) * 1000),
                 error=err,
             )
@@ -309,15 +327,28 @@ async def rewrite(
 ):
     section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
 
-    llm_config, provider, model = _resolve_llm(db, current_user.id)
+    # 在 StreamingResponse 构造前解析，确保 ForbiddenError（如全局 Key 被撤销）能被
+    # 全局异常处理器转成真正的 HTTP 403，而非 SSE 流已发 200 头后才抛（Task 4.1 同款修复）。
+    llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id, source=payload.source)
 
     async def generate():
+        usage = {}  # 断链 C3：astream_llm 把最后一块 usage_metadata 写入此 holder
         start = time.monotonic()
         status = "success"
         err = None
+        if llm_config is None:
+            yield _sse_event("error", {"code": "no_llm_config", "message": "未配置 LLM，请先在设置中配置"})
+            _log_llm_call(
+                db, user_id=current_user.id, project_id=section.project_id, action="rewrite",
+                model=_resolve_model(llm_config), provider=_resolve_provider(llm_config),
+                status="failed", duration_ms=int((time.monotonic() - start) * 1000),
+                error="no_llm_config",
+            )
+            return
         try:
             async for kind, text in _yield_with_heartbeat(
-                astream_rewrite(section, payload.selected_text, payload.instruction, llm_config=llm_config)
+                astream_rewrite(section, payload.selected_text, payload.instruction,
+                                llm_config=llm_config, usage_sink=usage)
             ):
                 if kind == "heartbeat":
                     yield _sse_event("heartbeat", {})
@@ -338,9 +369,10 @@ async def rewrite(
                 user_id=current_user.id,
                 project_id=section.project_id,
                 action="rewrite",
-                model=model,
-                provider=provider,
+                model=_resolve_model(llm_config),
+                provider=_resolve_provider(llm_config),
                 status=status,
+                tokens=usage or None,
                 duration_ms=int((time.monotonic() - start) * 1000),
                 error=err,
             )
@@ -493,6 +525,7 @@ def delete_conversation(
 
 class CaptionRequest(BaseModel):
     descriptions: list[str]
+    source: str | None = None
 
 
 @router.post("/sections/{section_id}/caption-figures")
@@ -505,6 +538,7 @@ async def caption_figures(
     """图注润色：基于文字描述生成规范图注（设计 9.5，仅文本非多模态）。
 
     直接用 astream_llm 流式生成（不走 heartbeat 包装，简化文本生成）。
+    与其它 LLM 端点一致：成功/失败均写 LLMCallLog（含 token 用量，断链 C3）。
     """
     section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
     # 仅附图章节可用
@@ -513,7 +547,8 @@ async def caption_figures(
 
     from langchain_core.messages import HumanMessage, SystemMessage
 
-    llm_config, _, _ = _resolve_llm(db, current_user.id)
+    # source 由前端传入；在 StreamingResponse 构造前解析，与其它端点保持一致
+    llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id, source=payload.source)
 
     descs = "\n".join(f"- {d}" for d in payload.descriptions)
     system = (
@@ -526,17 +561,43 @@ async def caption_figures(
     ]
 
     async def generate():
+        usage = {}  # 断链 C3：astream_llm 把最后一块 usage_metadata 写入此 holder
+        start = time.monotonic()
+        status = "success"
+        err = None
+        if llm_config is None:
+            yield _sse_event("error", {"code": "no_llm_config", "message": "未配置 LLM，请先在设置中配置"})
+            _log_llm_call(
+                db, user_id=current_user.id, project_id=section.project_id, action="caption",
+                model=_resolve_model(llm_config), provider=_resolve_provider(llm_config),
+                status="failed", duration_ms=int((time.monotonic() - start) * 1000),
+                error="no_llm_config",
+            )
+            return
         try:
-            async for token in astream_llm(messages, **({
-                "base_url": llm_config.base_url or None,
-                "api_key": llm_config.api_key or None,
-                "model": llm_config.model or None,
-            } if llm_config else {})):
+            async for token in astream_llm(messages, llm_config=llm_config, usage_sink=usage):
                 yield _sse_event("token", {"text": token})
             yield _sse_event("done", {})
         except asyncio.CancelledError:
+            status = "failed"
+            err = "client_cancelled"
             raise
         except Exception as e:
+            status = "failed"
+            err = e
             yield _sse_event("error", {"code": "llm_error", "message": str(e)[:200]})
+        finally:
+            _log_llm_call(
+                db,
+                user_id=current_user.id,
+                project_id=section.project_id,
+                action="caption",
+                model=_resolve_model(llm_config),
+                provider=_resolve_provider(llm_config),
+                status=status,
+                tokens=usage or None,
+                duration_ms=int((time.monotonic() - start) * 1000),
+                error=err,
+            )
 
     return StreamingResponse(generate(), media_type="text/event-stream")

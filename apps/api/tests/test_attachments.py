@@ -25,7 +25,7 @@ def _setup_project(client, registered_user, db_session):
 
     ensure_default_template(db_session)
     client.post("/api/v1/auth/login", json={
-        "email": registered_user["email"], "password": registered_user["password"],
+        "username": registered_user["username"], "password": registered_user["password"],
     })
     res = client.post("/api/v1/projects", json={"title": "测试发明"})
     project_id = res.json()["id"]
@@ -67,7 +67,7 @@ def test_upload_other_user_section_404(client, registered_user, db_session):
     from app.models import User
 
     # 建第二个用户的项目
-    other = User(email="other@example.com", password_hash="x", name="other")
+    other = User(username="other", email="other@example.com", password_hash="x", name="other")
     db_session.add(other)
     db_session.commit()
 

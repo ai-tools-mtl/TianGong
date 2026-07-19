@@ -23,7 +23,9 @@ from app.services import project_service as ps
 # ── fixtures ──
 
 def _make_user(db, email="owner@tiangong.dev", name="所有者"):
-    u = User(email=email, password_hash=hash_password("Pass1234!"), name=name)
+    # username 从 email local-part 派生（P2 改造：username 必填，email 可选）
+    username = email.split("@")[0]
+    u = User(username=username, email=email, password_hash=hash_password("Pass1234!"), name=name)
     db.add(u)
     db.commit()
     return u
@@ -375,7 +377,9 @@ def test_verify_share_link_no_expiry_never_expires(db_session):
 # ── API: 成员管理（owner-only）──
 
 def _login(client, email, password="Pass1234!"):
-    res = client.post("/api/v1/auth/login", json={"email": email, "password": password})
+    # P2 改造：登录用 username（从 email local-part 派生，与 _make_user 一致）
+    username = email.split("@")[0]
+    res = client.post("/api/v1/auth/login", json={"username": username, "password": password})
     assert res.status_code == 200, res.text
 
 

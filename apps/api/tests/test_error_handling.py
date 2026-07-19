@@ -1,6 +1,6 @@
 def test_not_found_returns_404(client, registered_user):
     client.post("/api/v1/auth/login", json={
-        "email": registered_user["email"],
+        "username": registered_user["username"],
         "password": registered_user["password"],
     })
     res = client.get("/api/v1/projects/00000000-0000-0000-0000-000000000000")
@@ -17,7 +17,7 @@ def test_unauthorized_returns_401_without_detail(client):
 
 def test_validation_error_returns_422(client, registered_user):
     client.post("/api/v1/auth/login", json={
-        "email": registered_user["email"],
+        "username": registered_user["username"],
         "password": registered_user["password"],
     })
     # 空标题违反 min_length
