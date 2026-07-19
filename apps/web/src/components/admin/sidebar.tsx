@@ -37,15 +37,15 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
   {
     label: '',
     items: [
-      { href: '/admin', label: 'Overview', icon: LayoutDashboard },
-      { href: '/admin/users', label: 'Users', icon: Users },
-      { href: '/admin/content', label: 'Content', icon: FileText },
-      { href: '/admin/review', label: 'Review', icon: CheckCircle, showPendingBadge: true },
+      { href: '/admin', label: '概览', icon: LayoutDashboard },
+      { href: '/admin/users', label: '用户', icon: Users },
+      { href: '/admin/content', label: '内容', icon: FileText },
+      { href: '/admin/review', label: '审核', icon: CheckCircle, showPendingBadge: true },
     ],
   },
   {
     label: '系统',
-    items: [{ href: '/admin/console', label: 'Console', icon: Settings }],
+    items: [{ href: '/admin/console', label: '控制台', icon: Settings }],
   },
 ]
 
