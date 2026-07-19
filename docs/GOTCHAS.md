@@ -45,6 +45,17 @@
   - 测试用户用 `xxx@test.com` / `xxx@example.com` 这类 email-validator 接受的
 - **影响任务**：计划 1 任务 8 + 登录验证
 
+### G5: pgvector 扩展在新库未创建，迁移必报 "type vector does not exist" ⚠️
+
+- **现象**：新库（`docker compose down -v` 后重起）跑 `alembic upgrade head`，到第 5 个迁移 `ee50036c9e86_add_knowledge_chunks_with_pgvector` 报 `psycopg.errors.UndefinedObject: type "vector" does not exist`，前 4 个迁移被 PostgreSQL 事务性 DDL 整体回滚，库里一张表都没留下
+- **根因**：迁移文件用 `pgvector.sqlalchemy.VECTOR(dim=2048)` 定义 `embedding` 列，但**整个迁移没有 `CREATE EXTENSION vector`**。`pgvector/pgvector:pg16` 镜像只提供扩展二进制，扩展不会自动安装到数据库——必须显式 `CREATE EXTENSION`。迁移作者默认扩展已存在，新库初始化必踩
+- **修复**：在 `ee50036c9e86` 的 `upgrade()` 开头加 `op.execute('CREATE EXTENSION IF NOT EXISTS vector')`（`IF NOT EXISTS` 保证已装环境幂等）；`downgrade()` 不删扩展，避免误伤其他用途。配合 `scripts/init_db.py` 一条命令完成初始化
+- **预防**：
+  - 任何迁移用到 PostgreSQL 扩展专属类型（pgvector / PostGIS / pg_trgm 等），**迁移自身必须负责 `CREATE EXTENSION IF NOT EXISTS`**，不能假定扩展已存在
+  - `pgvector/pgvector` 镜像 ≠ 扩展已启用，两者是两回事
+  - 用 `scripts/init_db.py`（而非手动一条条敲）做初始化，扩展依赖已在迁移内闭环
+- **影响任务**：计划 6（知识库 RAG，建 knowledge_chunks 表）+ 全员本地初始化
+
 ---
 
 ## 前端（apps/web）

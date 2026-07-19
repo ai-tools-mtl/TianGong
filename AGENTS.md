@@ -39,19 +39,24 @@ cd apps/api && uv run alembic upgrade head  # 迁移
 cd apps/api && uv run pytest          # 测试
 cd apps/api && uv run uvicorn app.main:app --reload  # 启动
 
+# 数据库初始化（建表 + 可选建 admin，幂等，见 GOTCHAS G5）
+cd apps/api && uv run python -m scripts.init_db
+cd apps/api && uv run python -m scripts.init_db --admin-username admin --admin-password '***' --admin-email admin@tiangong.dev
+
 # 前端
 cd apps/web && pnpm install
 cd apps/web && pnpm dev
 cd apps/web && pnpm build
 
-# 管理员
-cd apps/api && uv run python -m scripts.create_admin --email admin@tiangong.dev --password XXX
+# 管理员（P2 后 username 必填，登录用 username 不是 email）
+cd apps/api && uv run python -m scripts.create_admin --username admin --password '***' --email admin@tiangong.dev
 ```
 
 ## 关键约定
 
 - **测试账号**：邮箱用合法域名（`@tiangong.dev` / `@test.com`），**别用 `.local`**（见 GOTCHAS G4）
 - **数据库测试**：用 SQLite 内存库 + `JSONB().with_variant(JSON, "sqlite")`（见 GOTCHAS G2）
+- **数据库初始化**：用 `scripts/init_db.py`（幂等），别手动一条条敲；pgvector 扩展已在迁移内 `CREATE EXTENSION`（见 GOTCHAS G5）
 - **密码**：用 bcrypt 库直接调用，不用 passlib（见 GOTCHAS G1）
 - **shadcn/ui**：锁 3.x，不用 4.x（见 GOTCHAS F1）
 - **开发端口**：后端 8000、前端 3000，都用 `localhost`（不用 127.0.0.1，见 GOTCHAS F4）
