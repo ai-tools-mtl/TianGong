@@ -61,6 +61,11 @@ export function Navbar() {
     (i) => (!i.adminOnly || user?.role === 'admin') && (!i.userOnly || user?.role !== 'admin'),
   )
 
+  // admin 工作区有独立 sidebar，顶栏不再承担页面切换——nav items 整体隐藏，
+  // 顶栏只保留 Logo（品牌）+ 右侧用户菜单/主题切换。管理员要离开 admin 工作区
+  // 通过 sidebar 底部的「返回主应用」入口。
+  const isAdminArea = pathname === '/admin' || pathname.startsWith('/admin/')
+
   return (
     <header className="sticky top-0 z-40 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/75">
       <div className="flex h-14 items-center justify-between px-6">
@@ -69,28 +74,30 @@ export function Navbar() {
           <Link href="/dashboard" className="flex items-center">
             <Logo />
           </Link>
-          <nav className="flex items-center gap-0.5">
-            {items.map((item) => {
-              const active =
-                pathname === item.href || pathname.startsWith(`${item.href}/`)
-              const Icon = item.icon
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(
-                    'flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-colors',
-                    active
-                      ? 'bg-accent text-accent-foreground'
-                      : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
-                  )}
-                >
-                  <Icon className="size-3.5" />
-                  {item.label}
-                </Link>
-              )
-            })}
-          </nav>
+          {!isAdminArea && (
+            <nav className="flex items-center gap-0.5">
+              {items.map((item) => {
+                const active =
+                  pathname === item.href || pathname.startsWith(`${item.href}/`)
+                const Icon = item.icon
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className={cn(
+                      'flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-colors',
+                      active
+                        ? 'bg-accent text-accent-foreground'
+                        : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+                    )}
+                  >
+                    <Icon className="size-3.5" />
+                    {item.label}
+                  </Link>
+                )
+              })}
+            </nav>
+          )}
         </div>
 
         {/* 右：主题 + 用户 */}
