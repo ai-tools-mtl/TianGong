@@ -46,6 +46,7 @@ def list_users(
             "has_own_llm_key": (has_own_key or 0) > 0,
             "has_global_grant": u.id in active_grant_ids,
             "created_at": u.created_at.isoformat(),
+            "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
         })
     return result
 
@@ -58,6 +59,71 @@ class UserStatusUpdate(BaseModel):
 
 class PasswordReset(BaseModel):
     new_password: str
+
+
+# ── 管理员：落地页聚合（refactor/admin-ia-phase1）──
+
+@router.get("/admin/users/recent-logins")
+def list_recent_logins(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """最近登录的 5 个用户（按 last_login_at 倒序）。
+
+    数据来源是 User.last_login_at（登录时由 auth_service.update_last_login 写入），
+    不依赖 AuditLog——当前 auth 不写审计，避免落地页与审计耦合。
+    """
+    users = list(db.scalars(
+        select(User)
+        .where(User.last_login_at.is_not(None))
+        .order_by(User.last_login_at.desc())
+        .limit(5)
+    ))
+    return [
+        {
+            "id": str(u.id),
+            "username": u.username,
+            "email": u.email,
+            "ts": u.last_login_at.isoformat() if u.last_login_at else None,
+        }
+        for u in users
+    ]
+
+
+@router.get("/admin/users/recent-creations")
+def list_recent_creations(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """最近注册的 5 个用户（按 created_at 倒序）。"""
+    users = list(db.scalars(
+        select(User).order_by(User.created_at.desc()).limit(5)
+    ))
+    return [
+        {
+            "id": str(u.id),
+            "username": u.username,
+            "email": u.email,
+            "ts": u.created_at.isoformat() if u.created_at else None,
+        }
+        for u in users
+    ]
+
+
+@router.get("/admin/stats/llm/health")
+def get_llm_health_endpoint(
+    days: int = 7,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """LLM 调用健康摘要（admin 落地页 LLM 健康卡片用）。
+
+    返回 {days, total, failed, failure_rate, status}。阈值由
+    stats_service.LLM_HEALTH_FAILURE_THRESHOLD（当前 5%）决定 status=ok/warning。
+    """
+    if days < 1 or days > 90:
+        days = 7
+    return stats_service.get_llm_health(db, days=days)
 
 
 @router.patch("/admin/users/{user_id}/status")
