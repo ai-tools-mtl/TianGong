@@ -331,6 +331,17 @@ export const api = {
   listAuditLogs: (page = 1, size = 50) =>
     request<import('@/types/api').AuditLogPage>(`/admin/audit-logs?page=${page}&size=${size}`),
 
+  // 落地页聚合（refactor/admin-ia-phase1）
+  /** 最近登录 5 个用户（按 last_login_at 倒序）。 */
+  listRecentLogins: () =>
+    request<import('@/types/api').RecentUser[]>(`/admin/users/recent-logins`),
+  /** 最近注册 5 个用户（按 created_at 倒序）。 */
+  listRecentCreations: () =>
+    request<import('@/types/api').RecentUser[]>(`/admin/users/recent-creations`),
+  /** LLM 调用健康摘要（落地页 LLM 健康卡用，返回 status=ok/warning）。 */
+  getLLMHealth: (days = 7) =>
+    request<import('@/types/api').LLMHealth>(`/admin/stats/llm/health?days=${days}`),
+
   // ── 用户设置（多 BYOK 配置 CRUD，Task 4.0）──
   listMyLLM: () => request<UserLLMConfig[]>(`/settings/llm`),
   createMyLLM: (data: UserLLMConfigCreate) =>
