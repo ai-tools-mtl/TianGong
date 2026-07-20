@@ -40,6 +40,11 @@ export const queryKeys = {
     all: ['admin'] as const,
     users: ['admin', 'users'] as const,
     userDetail: (id: string) => ['admin', 'users', id] as const,
+    // Console 域（refactor/admin-ia-phase2 切片 2）
+    llmConfig: ['admin', 'llm-config'] as const,
+    llmStats: (days: number) => ['admin', 'llm-stats', days] as const,
+    auditLogs: (page: number, size: number) =>
+      ['admin', 'audit-logs', page, size] as const,
   },
 }
 
@@ -479,5 +484,58 @@ export function useResetUserPassword() {
     onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: queryKeys.admin.userDetail(vars.userId) })
     },
+  })
+}
+
+// ── Admin：Console 域（refactor/admin-ia-phase2 切片 2）──
+// LLM 配置 / 调用统计 / 审计日志。同样不在 hook 内 toast，由调用方处理。
+
+import type {
+  AuditLogPage,
+  GlobalLLMSettings,
+  LLMStats,
+} from '@/types/api'
+
+/** 全局 LLM 配置（GET /admin/llm-config）。 */
+export function useGlobalLLMConfig() {
+  return useQuery<GlobalLLMSettings>({
+    queryKey: queryKeys.admin.llmConfig,
+    queryFn: () => api.getGlobalLLM(),
+  })
+}
+
+/** 保存全局 LLM 配置（PUT /admin/llm-config）。失效配置缓存 + 审计（保存会写一条审计）。 */
+export function useSaveGlobalLLM() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: {
+      enabled: boolean
+      base_url?: string
+      api_key?: string
+      model?: string
+      embedding_model?: string
+      allowed_models?: string[]
+    }) => api.setGlobalLLM(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.admin.llmConfig })
+      // 保存会写审计日志（admin_service._audit action=set_global_llm）
+      qc.invalidateQueries({ queryKey: ['admin', 'audit-logs'] })
+    },
+  })
+}
+
+/** LLM 调用统计（GET /admin/stats/llm?days=）。 */
+export function useLLMStats(days: number) {
+  return useQuery<LLMStats>({
+    queryKey: queryKeys.admin.llmStats(days),
+    queryFn: () => api.listLLMStats(days),
+  })
+}
+
+/** 审计日志分页（GET /admin/audit-logs?page=&size=）。 */
+export function useAuditLogs(page: number, size: number) {
+  return useQuery<AuditLogPage>({
+    queryKey: queryKeys.admin.auditLogs(page, size),
+    queryFn: () => api.listAuditLogs(page, size),
   })
 }
