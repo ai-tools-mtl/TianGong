@@ -113,6 +113,10 @@ export function useTemplates() {
   return useQuery<TemplateSummary[]>({
     queryKey: queryKeys.templates,
     queryFn: api.listTemplates,
+    // 路由切回 /templates 时无条件 refetch，绕过全局 staleTime=30s 限制。
+    // 解决「admin 上线模板后，普通用户切走再切回仍看不到」——必须刷新才生效的问题。
+    // 全局 refetchOnWindowFocus=false 不够：用户在同一 tab 内路由切换不会触发它。
+    refetchOnMount: 'always',
   })
 }
 
@@ -563,21 +567,34 @@ export function useUploadAdminTemplate() {
   })
 }
 
-/** 改模板状态（状态机校验在后端 service 层）。 */
+/**
+ * 改模板状态（状态机校验在后端 service 层）。
+ * 同时失效 admin 列表 + 普通用户视角的 ['templates']，
+ * 这样同 tab 内 admin 改完后切到 /templates 也能看到新状态。
+ */
 export function useSetAdminTemplateStatus() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: ({ id, status }: { id: string; status: TemplateStatus }) =>
       api.setAdminTemplateStatus(id, status),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.admin.adminTemplates }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.admin.adminTemplates })
+      qc.invalidateQueries({ queryKey: queryKeys.templates })
+    },
   })
 }
 
-/** 删除系统模板（published 必须先下线，后端拒删 409）。 */
+/**
+ * 删除系统模板（published 必须先下线，后端拒删 409）。
+ * 同步失效普通用户视角的 ['templates']（同 useSetAdminTemplateStatus）。
+ */
 export function useDeleteAdminTemplate() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => api.deleteAdminTemplate(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.admin.adminTemplates }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.admin.adminTemplates })
+      qc.invalidateQueries({ queryKey: queryKeys.templates })
+    },
   })
 }
