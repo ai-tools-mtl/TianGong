@@ -18,8 +18,13 @@ from app.models import ParseJob, Template
 
 def create_parse_job(
     db: Session, *, storage: Storage, user_id, filename: str, file_bytes: bytes,
+    is_system: bool = False,
 ) -> ParseJob:
-    """上传文件存 minio + 创建 ParseJob。"""
+    """上传文件存 minio + 创建 ParseJob。
+
+    is_system=True 时（admin 上传内置模板），run_parse_job 解析后会建出
+    Template(is_system=True, status='draft', user_id=user_id)。默认 False（普通用户）。
+    """
     object_key = f"templates/{user_id}/{uuid.uuid4()}.docx"
     storage.put(
         "personal", object_key, file_bytes,
@@ -29,6 +34,7 @@ def create_parse_job(
     job = ParseJob(
         user_id=user_id, source_path=object_key,
         source_filename=filename, status="pending",
+        is_system=is_system,
     )
     db.add(job)
     db.commit()
@@ -79,6 +85,9 @@ def run_parse_job(db: Session, *, storage: Storage, job_id: str) -> ParseJob:
             structure=structure,
             styles=parsed.styles,
             numbering=parsed.numbering,
+            # admin 上传的内置模板：is_system=True + status='draft'（待发布）
+            is_system=job.is_system,
+            status="draft" if job.is_system else "published",
         )
         db.add(template)
         db.flush()  # 触发 Python 端 default=uuid.uuid4，让 template.id 就位
