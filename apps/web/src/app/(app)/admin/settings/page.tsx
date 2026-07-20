@@ -1,11 +1,14 @@
-import { UnderConstruction } from '@/components/admin/under-construction'
+import { redirect } from 'next/navigation'
 
 /**
- * /admin/settings 占位页（refactor/admin-ia-phase1 第 1 轮）。
+ * /admin/settings redirect 到控制台 LLM 配置（refactor/admin-ia-phase3）。
  *
- * 第 2 轮会抽取 ByokSettings 共享组件，与 /settings 共用同一份 BYOK 表单。
- * 当前先占位，避免 sidebar 上的「我的设置」点击 404。
+ * 产品立场：admin 强制使用全局 Key（无 BYOK 自配），LLM 配置统一走「控制台 > LLM 配置」。
+ * 本路由保留用于兼容老书签/历史链接，避免 admin 工作区出现 404。
+ *
+ * 用 server component 的 redirect() 而非 client router.replace，
+ * 无中间渲染、浏览器直接收到 307。
  */
 export default function AdminSettingsPage() {
-  return <UnderConstruction title="我的设置" description="admin 自身 BYOK 配置（与 /settings 共用）" />
+  redirect('/admin/console/llm')
 }

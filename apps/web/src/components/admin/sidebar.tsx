@@ -6,7 +6,6 @@ import {
   FileText,
   LayoutDashboard,
   Settings,
-  Settings2,
   Users,
 } from 'lucide-react'
 import Link from 'next/link'
@@ -21,8 +20,9 @@ import { useQuery } from '@tanstack/react-query'
 /**
  * Admin 区域左侧导航（refactor/admin-ia-phase1）。
  *
- * 设计参照 Linear：业务域在上（概览/用户/内容/审核），系统域在下（控制台/我的设置），
+ * 设计参照 Linear：业务域在上（概览/用户/内容/审核），系统域在下（控制台），
  * 主轴「系统控制台」刻意排在业务项之下（低频配置沉底，主轴是产品立场而非排序）。
+ * admin 强制使用全局 Key（无 BYOK），故无「我的设置」入口——admin 改 LLM 走控制台。
  *
  * 待审工单徽标：在所有 admin 子页都渲染（用户在 /admin/users 也能看到提示），
  * 故 sidebar 独立请求 pendingReviews，不依赖落地页的 query 缓存。
@@ -50,10 +50,7 @@ const NAV_GROUPS: { label: string; items: NavItem[] }[] = [
   },
   {
     label: '系统',
-    items: [
-      { href: '/admin/console', label: '控制台', icon: Settings },
-      { href: '/admin/settings', label: '我的设置', icon: Settings2 },
-    ],
+    items: [{ href: '/admin/console', label: '控制台', icon: Settings }],
   },
 ]
 
