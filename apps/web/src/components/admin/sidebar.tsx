@@ -1,7 +1,6 @@
 'use client'
 
 import {
-  ArrowLeft,
   CheckCircle,
   FileText,
   LayoutDashboard,
@@ -27,8 +26,9 @@ import { useQuery } from '@tanstack/react-query'
  * 待审工单徽标：在所有 admin 子页都渲染（用户在 /admin/users 也能看到提示），
  * 故 sidebar 独立请求 pendingReviews，不依赖落地页的 query 缓存。
  *
- * 底部「返回主应用」：admin 工作区与普通用户区隔离——顶部 Navbar 在 /admin/* 下
- * 隐藏 nav items，故退出 admin 工作区的入口放这里。
+ * admin 工作区完全闭环（纯管理）：顶部 Navbar 在 /admin/* 下隐藏 nav items，
+ * sidebar 也不提供「返回主应用」出口——admin 是独立工作空间，要访问普通用户视角
+ * （写交底书等）需手敲 /dashboard 等路径。责任交给用户，UI 保持纯净。
  */
 type NavItem = {
   href: string
@@ -73,62 +73,49 @@ export function AdminSidebar() {
   const pendingCount = pending?.length ?? 0
 
   return (
-    <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-56 shrink-0 border-r bg-muted/30 md:flex md:flex-col">
-      {/* 主导航：业务域 + 系统域 */}
-      <nav className="flex-1 space-y-4 overflow-y-auto px-3 py-4">
-        {NAV_GROUPS.map((group, gi) => (
-          <div key={gi} className="space-y-0.5">
-            {group.label && (
-              <div className="px-2.5 pb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-                {group.label}
-              </div>
-            )}
-            {group.items.map((item) => {
-              const active = isActive(pathname, item.href)
-              const Icon = item.icon
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(
-                    'flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-colors',
-                    active
-                      ? 'bg-accent text-accent-foreground'
-                      : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
-                  )}
-                >
-                  <span className="flex items-center gap-2">
-                    <Icon className="size-3.5" />
-                    {item.label}
-                  </span>
-                  {item.showPendingBadge &&
-                    (pendingLoading ? (
-                      <Skeleton className="h-4 w-5" />
-                    ) : pendingCount > 0 ? (
-                      <Badge
-                        variant="secondary"
-                        className="h-4 min-w-[1.25rem] px-1 text-[10px]"
-                      >
-                        {pendingCount}
-                      </Badge>
-                    ) : null)}
-                </Link>
-              )
-            })}
-          </div>
-        ))}
-      </nav>
-
-      {/* 底部：返回主应用（退出 admin 工作区） */}
-      <div className="border-t px-3 py-3">
-        <Link
-          href="/dashboard"
-          className="flex items-center gap-2 rounded-md px-2.5 py-1.5 text-[13px] font-medium text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
-        >
-          <ArrowLeft className="size-3.5" />
-          返回主应用
-        </Link>
-      </div>
+    <aside className="sticky top-14 hidden h-[calc(100vh-3.5rem)] w-56 shrink-0 overflow-y-auto border-r bg-muted/30 px-3 py-4 md:block">
+      {/* 主导航：业务域 + 系统域（admin 工作区完全闭环，无底部出口） */}
+      {NAV_GROUPS.map((group, gi) => (
+        <div key={gi} className={gi > 0 ? 'mt-4 space-y-0.5' : 'space-y-0.5'}>
+          {group.label && (
+            <div className="px-2.5 pb-1 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+              {group.label}
+            </div>
+          )}
+          {group.items.map((item) => {
+            const active = isActive(pathname, item.href)
+            const Icon = item.icon
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={cn(
+                  'flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-[13px] font-medium transition-colors',
+                  active
+                    ? 'bg-accent text-accent-foreground'
+                    : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground',
+                )}
+              >
+                <span className="flex items-center gap-2">
+                  <Icon className="size-3.5" />
+                  {item.label}
+                </span>
+                {item.showPendingBadge &&
+                  (pendingLoading ? (
+                    <Skeleton className="h-4 w-5" />
+                  ) : pendingCount > 0 ? (
+                    <Badge
+                      variant="secondary"
+                      className="h-4 min-w-[1.25rem] px-1 text-[10px]"
+                    >
+                      {pendingCount}
+                    </Badge>
+                  ) : null)}
+              </Link>
+            )
+          })}
+        </div>
+      ))}
     </aside>
   )
 }
