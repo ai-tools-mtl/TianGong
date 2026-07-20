@@ -58,5 +58,5 @@ cd apps/api && uv run python -m scripts.create_admin --username admin --password
 - **数据库测试**：用 SQLite 内存库 + `JSONB().with_variant(JSON, "sqlite")`（见 GOTCHAS G2）
 - **数据库初始化**：用 `scripts/init_db.py`（幂等），别手动一条条敲；pgvector 扩展已在迁移内 `CREATE EXTENSION`（见 GOTCHAS G5）
 - **密码**：用 bcrypt 库直接调用，不用 passlib（见 GOTCHAS G1）
-- **shadcn/ui**：锁 3.x，不用 4.x（见 GOTCHAS F1）
+- **shadcn/ui**：锁 3.x，不用 4.x（见 GOTCHAS F1）；CLI 与 MCP SDK 冲突装不了组件，要新组件**手写**（见 GOTCHAS F8）
 - **开发端口**：后端 8000、前端 3000，都用 `localhost`（不用 127.0.0.1，见 GOTCHAS F4）

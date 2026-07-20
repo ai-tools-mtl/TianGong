@@ -84,6 +84,18 @@
 - **预防**：所有 useQuery 都加显式泛型 `useQuery<T[]>(...)`，别依赖推断
 - **影响任务**：计划 2 任务 1/5
 
+**变种（refactor/admin-ia-phase2 踩到）**：即便 hook 写了泛型 `useQuery<AuditLogPage>`，下面这种写法 map 参数仍然 any：
+```ts
+const items = auditData?.items ?? []   // ❌ TS 推不出 AuditLogItem[]
+items.map((a) => ...)                  //    a: any
+```
+**根因**：`?? []` 里的空数组字面量是 `never[]`，与 `AuditLogItem[] | undefined` 联合后退化为 `any[]`。同理 `stats.by_model.map((m) => ...)` 也会触发。
+**修复二选一**：
+1. 给解构变量显式标注：`const items: AuditLogItem[] = auditData?.items ?? []`
+2. 给 map 回调参数显式标注：`stats.by_model.map((m: LLMStatsByModel) => ...)`
+
+推荐方式 2（更局部、不影响其它使用点）。
+
 ### F4: httpOnly cookie 跨 host 不传递（TestClient / curl）
 
 - **现象**：登录成功（200）但后续请求 cookie 没带上，返回 401
@@ -115,6 +127,20 @@
 - **修复**：删组件内联 style 和自带 border，宽度完全交给 grid 列；border 交给 grid 间隔处理
 - **预防**：组件放进 grid 时，**宽度声明只能在一处**——要么 grid 列模板、要么组件自身，不能两边都写
 - **影响任务**：计划 8 阶段 2
+
+### F8: shadcn CLI 与 MCP SDK 冲突，无法 `add` 组件 ⚠️
+
+- **现象**：`pnpm dlx shadcn@latest add skeleton`（或 table/select/switch 等）直接报错退出：
+  ```
+  Error [ERR_PACKAGE_PATH_NOT_EXPORTED]: Package subpath './v3' is not defined by "exports"
+  in .../@modelcontextprotocol/sdk/.../node_modules/zod/package.json imported from
+  .../@modelcontextprotocol/sdk/.../dist/esm/server/zod-compat.js
+  ```
+- **根因**：项目装了 `@modelcontextprotocol/sdk`（MCP server 用），它对 `zod` 子路径 `./v3` 的 import 与 shadcn CLI 内部用的 zod 版本不兼容。shadcn CLI 启动时加载 MCP SDK 触发 zod 解析失败，整个 CLI 直接挂掉，连 `add` 子命令都进不去。
+- **修复**：**手写 shadcn 等价件**。shadcn 大部分组件（skeleton / table / etc.）就是纯 className 封装，去 [ui.shadcn.com/docs](https://ui.shadcn.com/docs/components/) 复制对应组件源码到 `apps/web/src/components/ui/<name>.tsx`，改 import 路径即可（保持 API 一致，未来修好 CLI 能无缝替换）。
+  - 已手写的：`skeleton.tsx`（refactor/admin-ia-phase1）、`table.tsx`（refactor/admin-ia-phase2 切片 1）
+- **预防**：不要在装了 MCP SDK 的项目里直接跑 `shadcn add`；遇到要装的组件先查官方源码，能手写就手写（5-100 行），别耗在 CLI 上
+- **影响任务**：refactor/admin-ia-phase1（skeleton）+ phase2 切片 1（table）
 
 ---
 
