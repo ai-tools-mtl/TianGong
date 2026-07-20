@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.exceptions import NotFoundError
 from app.deps import get_current_user, require_admin
 from app.models import AuditLog, Project, User, UserGlobalLLMGrant, UserLLMConfig
 from app.services import admin_service, llm_config_service, stats_service
@@ -38,6 +39,7 @@ def list_users(
         )
         result.append({
             "id": str(u.id),
+            "username": u.username,
             "email": u.email,
             "name": u.name,
             "role": u.role,
@@ -108,6 +110,45 @@ def list_recent_creations(
         }
         for u in users
     ]
+
+
+# 注意路由顺序：本路由 {user_id} 必须排在 /admin/users/recent-logins 和
+# /admin/users/recent-creations 之后，否则 "recent-logins" 会被当成 user_id 匹配。
+@router.get("/admin/users/{user_id}")
+def get_user_detail(
+    user_id: str,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """单用户详情（聚合信息 + 全局 Key 授权状态）。
+
+    字段与 list_users 对齐，额外返回 grant_detail（{granted_at, revoked_at, is_active} or None）。
+    用户不存在返回 404。
+    """
+    u = db.scalar(select(User).where(User.id == _uuid.UUID(user_id)))
+    if not u:
+        raise NotFoundError("用户不存在")
+    project_count = db.scalar(
+        select(func.count(Project.id)).where(Project.user_id == u.id)
+    ) or 0
+    has_own_key = db.scalar(
+        select(func.count(UserLLMConfig.id)).where(UserLLMConfig.user_id == u.id)
+    ) or 0
+    grant = admin_service.get_user_grant(db, user_id=u.id)
+    return {
+        "id": str(u.id),
+        "username": u.username,
+        "email": u.email,
+        "name": u.name,
+        "role": u.role,
+        "status": u.status,
+        "project_count": project_count,
+        "has_own_llm_key": has_own_key > 0,
+        "has_global_grant": bool(grant and grant.get("is_active")),
+        "grant_detail": grant,
+        "created_at": u.created_at.isoformat(),
+        "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
+    }
 
 
 @router.get("/admin/stats/llm/health")
