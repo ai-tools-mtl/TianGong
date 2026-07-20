@@ -19,3 +19,6 @@ class Template(Base, IdMixin, TimestampMixin):
     numbering: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     is_system: Mapped[bool] = mapped_column(Boolean, default=False)
+    # 状态机（refactor/admin-ia-phase3 切片 B）：draft=草稿 / published=已发布 / offline=已下线
+    # 系统模板默认 published（对齐迁移前的行为）；admin 上传新模板默认 draft
+    status: Mapped[str] = mapped_column(String(20), default="published")
