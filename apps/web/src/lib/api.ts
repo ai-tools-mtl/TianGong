@@ -326,6 +326,9 @@ export const api = {
 
   listLLMStats: (days = 7) =>
     request<import('@/types/api').LLMStats>(`/admin/stats/llm?days=${days}`),
+  /** GET /admin/users/{id} 单用户详情（含 grant_detail）。 */
+  getUserDetail: (userId: string) =>
+    request<import('@/types/api').UserDetail>(`/admin/users/${userId}`),
   listUserStats: () =>
     request<import('@/types/api').UserStats>(`/admin/stats/users`),
   listAuditLogs: (page = 1, size = 50) =>

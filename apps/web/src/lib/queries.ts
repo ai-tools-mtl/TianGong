@@ -35,6 +35,12 @@ export const queryKeys = {
   shareLinks: (projectId: string) => ['share-links', projectId] as const,
   messages: (sectionId: string, conversationId?: string) =>
     ['messages', sectionId, conversationId ?? null] as const,
+  // admin 域（refactor/admin-ia-phase1 切片 1）。all 用于一刀切失效所有 admin 缓存。
+  admin: {
+    all: ['admin'] as const,
+    users: ['admin', 'users'] as const,
+    userDetail: (id: string) => ['admin', 'users', id] as const,
+  },
 }
 
 // ── 项目 ──
@@ -407,5 +413,71 @@ export function useDeleteConversation(sectionId: string) {
   return useMutation({
     mutationFn: (conversationId: string) => api.deleteConversation(sectionId, conversationId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['conversations', sectionId] }),
+  })
+}
+
+// ── Admin：用户管理（refactor/admin-ia-phase1 切片 1）──
+// 注：本组 hook 与项目其它 hook 一致，mutation 内部只做缓存失效，
+// 不在 onSuccess/onError 里弹 toast——toast 由调用方处理（参考 review-workbench.tsx）。
+
+import type { AdminUser, UserDetail } from '@/types/api'
+
+/** 用户列表。 */
+export function useUsers() {
+  return useQuery<AdminUser[]>({
+    queryKey: queryKeys.admin.users,
+    queryFn: () => api.listUsers(),
+  })
+}
+
+/** 单用户详情。 */
+export function useUserDetail(userId: string) {
+  return useQuery<UserDetail>({
+    queryKey: queryKeys.admin.userDetail(userId),
+    queryFn: () => api.getUserDetail(userId),
+    enabled: !!userId,
+  })
+}
+
+/** 封禁/解禁。onSuccess 同时失效列表 + 该用户详情缓存。 */
+export function useBanUser() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ userId, status }: { userId: string; status: 'active' | 'disabled' }) =>
+      api.banUser(userId, status),
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: queryKeys.admin.users })
+      qc.invalidateQueries({ queryKey: queryKeys.admin.userDetail(vars.userId) })
+    },
+  })
+}
+
+/** 授权使用全局 Key。grant/revoke 都一刀切失效 admin 缓存（统计/列表/详情都受影响）。 */
+export function useGrantGlobalLLM() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (userId: string) => api.grantGlobalLLM(userId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.admin.all }),
+  })
+}
+
+/** 撤销全局 Key 授权。 */
+export function useRevokeGlobalLLM() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (userId: string) => api.revokeGlobalLLM(userId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.admin.all }),
+  })
+}
+
+/** 重置用户密码。仅失效该用户详情（密码不返字段，列表不显示）。 */
+export function useResetUserPassword() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ userId, newPassword }: { userId: string; newPassword: string }) =>
+      api.resetUserPassword(userId, newPassword),
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: queryKeys.admin.userDetail(vars.userId) })
+    },
   })
 }

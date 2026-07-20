@@ -186,6 +186,12 @@ export interface AdminUser {
   last_login_at: string | null
 }
 
+/** GET /admin/users/{id} 返回。比 AdminUser 多 grant_detail（详情页授权区块用）。 */
+export interface UserDetail extends AdminUser {
+  /** 全局 Key 授权详情（granted_at/revoked_at/is_active）；无记录为 null。 */
+  grant_detail: UserGrant | null
+}
+
 // ── 落地页聚合（refactor/admin-ia-phase1）──
 
 /** GET /admin/users/recent-logins | /admin/users/recent-creations 列表项。 */
