@@ -59,11 +59,16 @@ export interface TemplateSection {
   level: number
 }
 
+/** 模板状态机（refactor/admin-ia-phase3 切片 B）：draft/published/offline。 */
+export type TemplateStatus = 'draft' | 'published' | 'offline'
+
 export interface TemplateSummary {
   id: string
   name: string
   is_default: boolean
   is_system: boolean
+  /** 模板状态（admin 上传默认 draft，普通用户视角只看到 published）。 */
+  status: TemplateStatus
   section_count: number
 }
 

@@ -45,6 +45,8 @@ export const queryKeys = {
     llmStats: (days: number) => ['admin', 'llm-stats', days] as const,
     auditLogs: (page: number, size: number) =>
       ['admin', 'audit-logs', page, size] as const,
+    // 内置模板管理（refactor/admin-ia-phase3 切片 B）
+    adminTemplates: ['admin', 'content', 'templates'] as const,
   },
 }
 
@@ -537,5 +539,45 @@ export function useAuditLogs(page: number, size: number) {
   return useQuery<AuditLogPage>({
     queryKey: queryKeys.admin.auditLogs(page, size),
     queryFn: () => api.listAuditLogs(page, size),
+  })
+}
+
+// ── Admin：内置模板管理（refactor/admin-ia-phase3 切片 B）──
+
+import type { TemplateStatus } from '@/types/api'
+
+/** 系统模板列表（admin 视角，含 draft/offline）。 */
+export function useAdminTemplates() {
+  return useQuery<TemplateSummary[]>({
+    queryKey: queryKeys.admin.adminTemplates,
+    queryFn: () => api.listAdminTemplates(),
+  })
+}
+
+/** 上传 admin 模板（docx）。onSuccess 失效列表，前端轮询 parse_job 状态。 */
+export function useUploadAdminTemplate() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (file: File) => api.uploadAdminTemplate(file),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.admin.adminTemplates }),
+  })
+}
+
+/** 改模板状态（状态机校验在后端 service 层）。 */
+export function useSetAdminTemplateStatus() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, status }: { id: string; status: TemplateStatus }) =>
+      api.setAdminTemplateStatus(id, status),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.admin.adminTemplates }),
+  })
+}
+
+/** 删除系统模板（published 必须先下线，后端拒删 409）。 */
+export function useDeleteAdminTemplate() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.deleteAdminTemplate(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.admin.adminTemplates }),
   })
 }

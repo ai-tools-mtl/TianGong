@@ -135,6 +135,35 @@ export const api = {
   setDefaultTemplate: (id: string) =>
     request<import('@/types/api').TemplateSummary>(`/templates/${id}/default`, { method: 'POST' }),
 
+  // ── Admin：内置模板管理（refactor/admin-ia-phase3 切片 B）──
+  listAdminTemplates: () =>
+    request<import('@/types/api').TemplateSummary[]>(`/admin/content/templates`),
+  uploadAdminTemplate: async (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(`${BASE}/api/v1/admin/content/templates/upload`, {
+      method: 'POST',
+      credentials: 'include',
+      body: form,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: `HTTP ${res.status}` }))
+      throw err
+    }
+    return res.json() as Promise<{ parse_job_id: string; status: string }>
+  },
+  getAdminParseJob: (jobId: string) =>
+    request<{ id: string; status: string; template_id: string | null; error_message: string | null }>(
+      `/admin/content/templates/parse-jobs/${jobId}`,
+    ),
+  setAdminTemplateStatus: (id: string, status: 'draft' | 'published' | 'offline') =>
+    request<import('@/types/api').TemplateSummary>(
+      `/admin/content/templates/${id}/status`,
+      { method: 'POST', body: JSON.stringify({ status }) },
+    ),
+  deleteAdminTemplate: (id: string) =>
+    request<void>(`/admin/content/templates/${id}`, { method: 'DELETE' }),
+
   // ── 技能开关 ──
   listSkills: (projectId: string) =>
     request<import('@/types/api').AgentSkill[]>(`/projects/${projectId}/skills`),
