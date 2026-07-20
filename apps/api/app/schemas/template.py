@@ -12,6 +12,8 @@ class TemplateOut(BaseModel):
     numbering: dict | None
     is_default: bool
     is_system: bool
+    # refactor/admin-ia-phase3 切片 B：模板状态机字段
+    status: str = "published"
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -23,6 +25,8 @@ class TemplateSummary(BaseModel):
     name: str
     is_default: bool
     is_system: bool
+    # refactor/admin-ia-phase3 切片 B：模板状态机字段
+    status: str = "published"
     section_count: int
 
     model_config = {"from_attributes": True}
