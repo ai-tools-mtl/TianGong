@@ -36,6 +36,18 @@ async function request<T>(
   })
 
   if (!res.ok) {
+    // 全局拦截 401：JWT 过期或被踢下线。清登录态 + 硬跳转 /login。
+    // login 接口本身返回 401（密码错）不跳转——已在 /login 页时跳转会死循环，
+    // 由 login 页自己处理错误提示。
+    if (
+      res.status === 401 &&
+      typeof window !== 'undefined' &&
+      !window.location.pathname.startsWith('/login')
+    ) {
+      const { useAuthStore } = await import('@/stores/auth')
+      useAuthStore.getState().setUser(null)
+      window.location.href = '/login'
+    }
     let err: ApiError
     try {
       err = (await res.json()) as ApiError
