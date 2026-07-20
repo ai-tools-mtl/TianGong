@@ -29,6 +29,9 @@ export const TiptapEditor = forwardRef<TiptapEditorRef, TiptapEditorProps>(
       ],
       content: content || undefined,
       editable,
+      // Tiptap v3 起默认 false 以避免 SSR hydration mismatch。
+      // 本组件已 'use client'，仅在客户端渲染，显式传 true 消除警告并让编辑器首帧即可用。
+      immediatelyRender: true,
       onUpdate: ({ editor }) => {
         onChange?.(editor.getJSON())
       },
