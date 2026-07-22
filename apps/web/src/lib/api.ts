@@ -176,15 +176,6 @@ export const api = {
   deleteAdminTemplate: (id: string) =>
     request<void>(`/admin/content/templates/${id}`, { method: 'DELETE' }),
 
-  // ── 技能开关 ──
-  listSkills: (projectId: string) =>
-    request<import('@/types/api').AgentSkill[]>(`/projects/${projectId}/skills`),
-
-  updateSkill: (projectId: string, skillKey: string, data: { enabled: boolean; config?: object | null }) =>
-    request<import('@/types/api').AgentSkill>(`/projects/${projectId}/skills/${skillKey}`, {
-      method: 'PUT', body: JSON.stringify(data),
-    }),
-
   // ── 章节 ──
   listSections: (projectId: string) =>
     request<import('@/types/api').Section[]>(`/projects/${projectId}/sections`),

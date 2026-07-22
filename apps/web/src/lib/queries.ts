@@ -26,7 +26,6 @@ export const queryKeys = {
   templates: ['templates'] as const,
   sections: (id: string) => ['sections', id] as const,
   attachments: (projectId: string) => ['attachments', projectId] as const,
-  skills: (id: string) => ['skills', id] as const,
   tags: ['tags'] as const,
   knowledgePersonal: ['knowledge', 'personal'] as const,
   knowledgeGlobal: ['knowledge', 'global'] as const,
@@ -169,24 +168,6 @@ export function useDeleteAttachment() {
   return useMutation({
     mutationFn: (id: string) => api.deleteAttachment(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['attachments'] }),
-  })
-}
-
-// ── 技能 ──
-export function useSkills(projectId: string) {
-  return useQuery<import('@/types/api').AgentSkill[]>({
-    queryKey: queryKeys.skills(projectId),
-    queryFn: () => api.listSkills(projectId),
-    enabled: !!projectId,
-  })
-}
-
-export function useUpdateSkill(projectId: string) {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: ({ skillKey, enabled, config }: { skillKey: string; enabled: boolean; config?: object | null }) =>
-      api.updateSkill(projectId, skillKey, { enabled, config }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.skills(projectId) }),
   })
 }
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { Archive, CheckCircle2, Eye, History, MoreHorizontal, PanelLeft, PanelRight, Search, Send, Share2, Sparkles } from 'lucide-react'
+import { Archive, CheckCircle2, Eye, History, MoreHorizontal, PanelLeft, PanelRight, Search, Send, Share2 } from 'lucide-react'
 import { useParams } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
@@ -14,7 +14,6 @@ import { TiptapEditor } from '@/components/editor/tiptap-editor'
 import type { TiptapEditorRef } from '@/components/editor/tiptap-editor'
 import { VersionDrawer } from '@/components/version-drawer'
 import { ShareDialog } from '@/components/share-dialog'
-import { SkillsDialog } from '@/components/skills-dialog'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { api } from '@/lib/api'
@@ -40,7 +39,6 @@ export default function ProjectDetailPage() {
   const [currentId, setCurrentId] = useState<string | null>(null)
   const [current, setCurrent] = useState<Section | null>(null)
   const [versionOpen, setVersionOpen] = useState(false)
-  const [skillsOpen, setSkillsOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const editorRef = useRef<TiptapEditorRef>(null)
@@ -232,10 +230,6 @@ export default function ProjectDetailPage() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => setSkillsOpen(true)}>
-                    <Sparkles className="size-3.5" />
-                    技能
-                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setShareOpen(true)}>
                     <Share2 className="size-3.5" />
                     分享
@@ -336,12 +330,6 @@ export default function ProjectDetailPage() {
           onOpenChange={setVersionOpen}
         />
       )}
-
-      <SkillsDialog
-        projectId={projectId}
-        open={skillsOpen}
-        onOpenChange={setSkillsOpen}
-      />
 
       <ShareDialog
         projectId={projectId}
