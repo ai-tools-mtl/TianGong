@@ -7,8 +7,7 @@ from app.core.exceptions import ValidationError
 from app.deps import get_current_user
 from app.models import Project, Section, User
 from app.schemas.project import ProjectCreate, ProjectOut, ProjectUpdate
-from app.schemas.skill import SkillOut, SkillUpdate
-from app.services import archive_service, project_service, skill_service, tag_service
+from app.services import archive_service, project_service, tag_service
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -103,37 +102,3 @@ def archive(project_id: str, current_user: User = Depends(get_current_user), db:
 
     # archive_service.archive 内部二次校验归属并调 rag/archiver（幂等：先删旧 chunk 再重生）
     return archive_service.archive(db, user_id=current_user.id, project_id=project_id)
-
-
-@router.get("/{project_id}/skills", response_model=list[SkillOut])
-def list_skills(
-    project_id: str,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """列出项目所有技能（builtin + 覆盖）。"""
-    project = project_service.get_project(db, user=current_user, project_id=project_id)
-    rows = skill_service.list_skills(db, project_id=project.id)
-    return [SkillOut(**r) for r in rows]
-
-
-@router.put("/{project_id}/skills/{skill_key}", response_model=SkillOut)
-def update_skill(
-    project_id: str,
-    skill_key: str,
-    payload: SkillUpdate,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """更新项目技能开关。"""
-    project = project_service.get_project(db, user=current_user, project_id=project_id)
-    skill_service.set_skill(
-        db, project_id=project.id, skill_key=skill_key,
-        enabled=payload.enabled, config=payload.config,
-    )
-    # 用 list_skills 取合并后的视图（含 builtin name/description）
-    row = next(
-        r for r in skill_service.list_skills(db, project_id=project.id)
-        if r["skill_key"] == skill_key
-    )
-    return SkillOut(**row)

@@ -1,4 +1,3 @@
-from app.models.agent_skill import AgentSkill
 from app.models.skill import Skill
 from app.models.attachment import Attachment
 from app.models.audit_log import AuditLog
@@ -33,7 +32,6 @@ __all__ = [
     "KnowledgeChunk", "KnowledgeFile", "KnowledgeReview",
     "ReviewRubric", "ReviewRecord", "UserLLMConfig",
     "UserGlobalLLMGrant",
-    "AgentSkill",
     "Skill",
     "LLMCallLog",
     "AuditLog",

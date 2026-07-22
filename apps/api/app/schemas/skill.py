@@ -1,17 +1,5 @@
-from pydantic import BaseModel
+# apps/api/app/schemas/skill.py
+"""Skill schemas（spec 合规版，Task 6 重建）。
 
-
-class SkillOut(BaseModel):
-    """技能定义 + 项目覆盖状态。"""
-    skill_key: str
-    name: str
-    description: str
-    enabled: bool
-    config: dict | None = None
-    is_builtin: bool
-    is_overridden: bool
-
-
-class SkillUpdate(BaseModel):
-    enabled: bool
-    config: dict | None = None
+旧 SkillOut/SkillUpdate 已随 agent_skills 表删除。本文件在 Task 6 重建。
+"""

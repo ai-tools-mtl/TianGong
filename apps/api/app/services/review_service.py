@@ -17,9 +17,8 @@ from app.core.exceptions import NotFoundError, ValidationError
 from app.models import Project, ReviewRecord, Section
 from app.services.llm_config_service import ResolvedLLMConfig, resolve_llm_config
 from app.services.rubric_service import get_effective_rubric
-from app.services.skill_service import is_skill_enabled
 
-CONSISTENCY_RUNS = 2  # 自一致性：每维度评分次数（consistency_check 启用）
+CONSISTENCY_RUNS = 2  # 自一致性：每维度评分次数（旧 consistency_check skill 已删除，默认开启）
 
 
 def run_review(db: Session, *, user_id, project_id: str) -> ReviewRecord:
@@ -33,13 +32,9 @@ def run_review(db: Session, *, user_id, project_id: str) -> ReviewRecord:
     if project is None or project.user_id != user_id:
         raise NotFoundError("项目不存在")
 
-    # 设计 7.4：rubric_review 禁用则拒绝审查
-    if not is_skill_enabled(db, project_id=pid, skill_key="rubric_review"):
-        raise ValidationError("已禁用 Rubric 审查技能")
-    # consistency_check 禁用则每维度只跑一次
-    runs = CONSISTENCY_RUNS if is_skill_enabled(
-        db, project_id=pid, skill_key="consistency_check"
-    ) else 1
+    # 旧 project-scoped skill 开关已删除（spec Q5 解耦）。
+    # rubric_review / consistency_check 默认全开；后续按 spec 用全局/用户级 Skill 重建（Task 6+）。
+    runs = CONSISTENCY_RUNS
 
     # ① load
     rubric = get_effective_rubric(db, user_id=user_id)

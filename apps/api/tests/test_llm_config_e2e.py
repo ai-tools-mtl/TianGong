@@ -205,12 +205,8 @@ def test_review_raises_when_no_llm_config(db_session):
     db_session.add(p)
     db_session.commit()
 
-    # mock 掉上游依赖（rubric/skill），让流程走到 resolve_llm_config 检查
-    from app.models import AgentSkill
-    db_session.add(AgentSkill(project_id=p.id, skill_key="rubric_review", enabled=True))
-    db_session.add(AgentSkill(project_id=p.id, skill_key="consistency_check", enabled=False))
-    db_session.commit()
-
+    # mock 掉上游依赖（rubric），让流程走到 resolve_llm_config 检查
+    # 旧 project-scoped skill 开关已删除（Task 3），review 默认全开
     with patch("app.services.review_service.get_effective_rubric") as gr:
         class FakeRubric:
             criteria = [{"key": "k", "name": "N", "weight": 1.0}]
