@@ -4,6 +4,32 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * ── 阴影 token：双层柔和（Apple 标志，never one hard shadow）──
+ * 在 @theme inline 之外声明，供组件直接 var() 引用。
+ */
+:root {
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.05);
+  --shadow-panel: 0 1px 3px rgba(0, 0, 0, 0.05), 0 14px 40px rgba(0, 0, 0, 0.05);
+  --shadow-lift: 0 12px 32px rgba(0, 0, 0, 0.1);
+  --shadow-cta: 0 20px 54px rgba(0, 0, 0, 0.22);
+  --shadow-overlay: 0 2px 8px rgba(0, 0, 0, 0.1), 0 30px 80px rgba(0, 0, 0, 0.24);
+  /* 进度条/开关轨道：可见但安静的填充灰 */
+  --track: #e8e8ed;
+  /* Apple 标志性发丝线 */
+  --hairline: rgba(0, 0, 0, 0.07);
+}
+
+.dark {
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-panel: 0 1px 3px rgba(0, 0, 0, 0.3), 0 14px 40px rgba(0, 0, 0, 0.4);
+  --shadow-lift: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --shadow-cta: 0 20px 54px rgba(0, 0, 0, 0.5);
+  --shadow-overlay: 0 2px 8px rgba(0, 0, 0, 0.4), 0 30px 80px rgba(0, 0, 0, 0.6);
+  --track: #3a3a3f;
+  --hairline: rgba(255, 255, 255, 0.1);
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -50,22 +76,25 @@
   --color-warning-foreground: var(--warning-foreground);
   --color-info: var(--info);
   --color-info-foreground: var(--info-foreground);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
+  /* 圆角语义层级（Apple tier，不发明中间值）*/
+  --radius-sm: calc(var(--radius) - 5px);
+  --radius-md: calc(var(--radius) - 3px);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --radius-xl: calc(var(--radius) + 3px);
+  --radius-2xl: 22px; /* panel */
 }
 
 /*
- * 天工主题契约（grill-me 结论）
- * - 锚点：GitHub/Figma 工具感，冷灰底
- * - 产品态归墨色（primary 接近黑），无独立品牌色
+ * 天工主题契约（Apple Liquid Glass 结构 × 墨黑配色）
+ * - 配色锚点：GitHub/Figma 工具感，冷灰底；产品态归墨色（primary 近黑），无独立品牌色
+ * - 结构锚点（来自 apple-liquid-glass 技能）：大圆角 / 双层柔影 / 玻璃 nav / pill 控件
+ *   / 统一白面 + 发丝线 / 滚动边缘渐显 / 标题负字距 / 数字 tabular-nums
+ * - 玻璃只在层叠处：sticky nav / overlay / CTA；普通内容块用实色白 + 双层柔影
  * - AI 专属紫，严格只用于对话气泡/AI 建议/光晕/✨ 图标
  * - 亮色默认，暗色可选
- * 所有色相用冷调（hue 240 蓝灰方向），保持"工具感"而非"博客感"
  */
 :root {
-  --radius: 0.5rem;
+  --radius: 0.6875rem; /* 11px 基准 → sm/md/lg/xl 由 calc 派生 */
   /* 画布：微冷白 + 冷墨 */
   --background: oklch(0.992 0.002 240);
   --foreground: oklch(0.18 0.005 240);
@@ -73,7 +102,7 @@
   --card-foreground: oklch(0.18 0.005 240);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.18 0.005 240);
-  /* 产品态：墨色（不引入品牌色） */
+  /* 产品态：墨黑（无品牌色，工具重力）*/
   --primary: oklch(0.22 0.005 240);
   --primary-foreground: oklch(0.985 0 0);
   --secondary: oklch(0.965 0.003 240);
@@ -84,6 +113,7 @@
   --accent-foreground: oklch(0.22 0.005 240);
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.985 0 0);
+  /* 发丝线（Apple 标志）*/
   --border: oklch(0.915 0.003 240);
   --input: oklch(0.915 0.003 240);
   --ring: oklch(0.55 0.01 240);
@@ -166,7 +196,80 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-optical-sizing: auto;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
+  /* 数字等宽（Apple 细节）*/
+  tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/*
+ * ── 玻璃配方（Apple Liquid Glass，只在 nav/overlay/CTA 用）──
+ */
+.glass-nav {
+  background: rgba(245, 245, 247, 0.72);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+.glass-nav.nav-scrolled {
+  border-bottom-color: var(--hairline);
+  box-shadow: 0 1px 12px rgba(0, 0, 0, 0.04);
+}
+.dark .glass-nav {
+  background: rgba(28, 28, 32, 0.72);
+}
+
+.glass-overlay {
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+}
+.dark .glass-overlay {
+  background: rgba(38, 38, 42, 0.82);
+}
+
+/* 滚动边缘渐显：sticky nav 在顶部无边框，滚动后才出现发丝线 */
+.nav-scroll-edge {
+  border-bottom: 1px solid transparent;
+  transition: border-color 0.3s, box-shadow 0.3s;
+}
+.nav-scroll-edge.nav-scrolled {
+  border-bottom-color: var(--hairline);
+  box-shadow: 0 1px 12px rgba(0, 0, 0, 0.04);
+}
+
+/* 卡片悬浮抬升（Apple：translateY + 更深柔影）*/
+.apple-lift {
+  transition: transform 0.2s var(--ease-out-quart, cubic-bezier(0.25, 1, 0.5, 1)),
+    box-shadow 0.2s var(--ease-out-quart, cubic-bezier(0.25, 1, 0.5, 1));
+}
+.apple-lift:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-lift);
+}
+
+/* live/online 脉冲点 */
+@keyframes pulse-dot {
+  0% {
+    box-shadow: 0 0 0 0 rgba(48, 209, 88, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(48, 209, 88, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(48, 209, 88, 0);
+  }
+}
+
+/* 动画缓动（spring-like）*/
+:root {
+  --ease-spring: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
 }
 
 /*
@@ -181,14 +284,12 @@
 }
 
 /*
- * GitHub 风 prose：紧凑、克制、无装饰。
- * 手写而非 @tailwindcss/typography 插件——避免 Turbopack + pnpm symlink
- * 下 @plugin 解析 npm 包名的失败，且更贴合本项目调性。
+ * prose：克制、无装饰。骨架沿用，颜色校准到 Apple 色温。
  */
 .prose {
   color: var(--foreground);
   font-size: 0.95rem;
-  line-height: 1.75;
+  line-height: 1.85;
 }
 .prose :where(h1, h2, h3, h4, h5, h6) {
   color: var(--foreground);
@@ -196,12 +297,15 @@
   line-height: 1.3;
   margin-top: 1.6em;
   margin-bottom: 0.6em;
+  letter-spacing: -0.01em;
 }
 .prose :where(h1) {
   font-size: 1.5em;
+  letter-spacing: -0.03em;
 }
 .prose :where(h2) {
   font-size: 1.3em;
+  letter-spacing: -0.02em;
 }
 .prose :where(h3) {
   font-size: 1.15em;
@@ -236,25 +340,25 @@
   font-weight: 600;
 }
 .prose :where(blockquote) {
-  border-left: 3px solid var(--border);
+  border-left: 3px solid var(--hairline);
   padding-left: 1em;
   color: var(--muted-foreground);
   font-style: normal;
 }
 .prose :where(hr) {
   border: 0;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--hairline);
   margin: 2em 0;
 }
 .prose :where(code) {
-  background: var(--muted);
+  background: var(--track);
   padding: 0.1em 0.35em;
   border-radius: var(--radius-sm);
   font-size: 0.875em;
   font-family: var(--font-geist-mono), monospace;
 }
 .prose :where(pre) {
-  background: var(--muted);
+  background: var(--track);
   padding: 0.85em 1em;
   border-radius: var(--radius-md);
   overflow-x: auto;
@@ -271,7 +375,7 @@
   font-size: 0.9em;
 }
 .prose :where(th, td) {
-  border: 1px solid var(--border);
+  border: 1px solid var(--hairline);
   padding: 0.4em 0.7em;
   text-align: left;
 }
@@ -280,7 +384,7 @@
   font-weight: 600;
 }
 
-/* AI 生成光晕（用于 AI 正在工作时的发光态） */
+/* AI 生成光晕（用于 AI 正在工作时的发光态）*/
 @keyframes ai-glow {
   0%,
   100% {
