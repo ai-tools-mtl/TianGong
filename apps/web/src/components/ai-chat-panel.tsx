@@ -177,11 +177,9 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
       toast.error('请先在设置中选择 LLM 源')
       return
     }
-    // 草稿会话已由 handleNewConversation 建好；若无选中会话则提示
-    if (!currentConvId) {
-      toast.error('会话未准备好，请稍候')
-      return
-    }
+    // currentConvId 为空也放行：后端 streamChat 会兜底建会话，
+    // 并在 done 事件回传真实 conversation_id（见下方 onDone 回填）。
+    // 全新 section 列表为 []、自动选中 effect 不触发时，靠这条路首条对话即可建会话。
     const userMsg: ChatMessage = { role: 'user', content: input }
     setMessages((m) => [...m, userMsg, { role: 'assistant', content: '' }])
     setInput('')
@@ -203,12 +201,14 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
         },
         abortRef.current.signal,
         source,
-        currentConvId,
+        currentConvId ?? undefined,
         (doneData) => {
-          // done 事件：草稿会话首条对话后，后端总结标题并转 active，回传新 title
-          if (doneData.title) {
-            qc.invalidateQueries({ queryKey: ['conversations', sectionId] })
+          // done 事件：后端兜底新建会话时回传 conversation_id（currentConvId 为空的场景），
+          // 这里回填 + 刷新会话列表，避免后续每条消息各建一个新会话。
+          if (doneData.conversation_id && doneData.conversation_id !== currentConvId) {
+            setCurrentConvId(doneData.conversation_id)
           }
+          qc.invalidateQueries({ queryKey: ['conversations', sectionId] })
         },
       )
     } catch (err: unknown) {
@@ -505,7 +505,7 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
               placeholder="问 AI...（Shift+Enter 换行）"
               disabled={busy}
               rows={1}
-              className="flex-1 resize-none rounded-lg border bg-background px-3 py-2 text-[13px] leading-relaxed outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex-1 resize-none rounded-xl border bg-background px-3 py-2 text-[13px] leading-relaxed outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
               style={{ minHeight: '36px', maxHeight: '120px' }}
             />
             {phase === 'chatting' ? (

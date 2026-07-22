@@ -31,7 +31,7 @@ export function RubricEditor() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold">{rubric.name}</h1>
+          <h1 className="text-xl font-bold tracking-tight">{rubric.name}</h1>
           <p className="text-sm text-muted-foreground">
             {rubric.is_customized ? '已自定义' : '系统默认'}
           </p>
@@ -43,7 +43,7 @@ export function RubricEditor() {
 
       <div className="space-y-3">
         {criteria.map((c) => (
-          <div key={c.key} className="rounded-lg border p-4">
+          <div key={c.key} className="rounded-xl border p-4">
             <div className="flex items-center gap-2">
               <span className="font-medium">{c.name}</span>
               <Badge variant="secondary">权重 {Math.round(c.weight * 100)}%</Badge>

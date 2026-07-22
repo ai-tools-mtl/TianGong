@@ -1,6 +1,6 @@
 'use client'
 
-import { Archive, CheckCircle2, Eye, History, PanelLeft, PanelRight, Search, Send, Share2, Sparkles } from 'lucide-react'
+import { Archive, CheckCircle2, Eye, History, MoreHorizontal, PanelLeft, PanelRight, Search, Send, Share2, Sparkles } from 'lucide-react'
 import { useParams } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
@@ -16,6 +16,7 @@ import { VersionDrawer } from '@/components/version-drawer'
 import { ShareDialog } from '@/components/share-dialog'
 import { SkillsDialog } from '@/components/skills-dialog'
 import { Button } from '@/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { api } from '@/lib/api'
 import { queryKeys, useArchiveProject, useProject, useSections, useUpdateSection } from '@/lib/queries'
 import { cn } from '@/lib/utils'
@@ -190,7 +191,7 @@ export default function ProjectDetailPage() {
       <section className="flex min-w-0 flex-col overflow-hidden">
         <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b px-4">
           <div className="flex items-center gap-2">
-            <h1 className="truncate text-[15px] font-semibold">
+            <h1 className="truncate text-[15px] font-semibold tracking-tight">
               {current?.title ?? '未选择章节'}
             </h1>
             {saveState === 'saving' && (
@@ -215,42 +216,6 @@ export default function ProjectDetailPage() {
                 </a>
               </Button>
               <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 gap-1.5"
-                onClick={() => setSkillsOpen(true)}
-              >
-                <Sparkles className="size-3.5" />
-                技能
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 gap-1.5"
-                onClick={() => setShareOpen(true)}
-              >
-                <Share2 className="size-3.5" />
-                分享
-              </Button>
-              <Button variant="ghost" size="sm" className="h-8 gap-1.5" asChild>
-                <a
-                  href={api.exportDocxUrl(projectId)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  导出 Word
-                </a>
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 gap-1.5"
-                onClick={() => setVersionOpen(true)}
-              >
-                <History className="size-3.5" />
-                版本
-              </Button>
-              <Button
                 size="sm"
                 className="h-8 gap-1.5"
                 onClick={handleConfirm}
@@ -259,28 +224,53 @@ export default function ProjectDetailPage() {
                 <CheckCircle2 className="size-3.5" />
                 确认完成
               </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 gap-1.5"
-                onClick={handleArchive}
-                disabled={archiveMutation.isPending}
-              >
-                <Archive className="size-3.5" />
-                {project?.status === 'archived' ? '更新知识库' : '归档到知识库'}
-              </Button>
-              {project?.status === 'archived' && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 gap-1.5"
-                  onClick={() => submitDisclosure.mutate()}
-                  disabled={submitDisclosure.isPending}
-                >
-                  <Send className="size-3.5" />
-                  {submitDisclosure.isPending ? '上报中...' : '上报到全局库'}
-                </Button>
-              )}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" size="sm" className="h-8 gap-1.5">
+                    <MoreHorizontal className="size-3.5" />
+                    更多
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onClick={() => setSkillsOpen(true)}>
+                    <Sparkles className="size-3.5" />
+                    技能
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setShareOpen(true)}>
+                    <Share2 className="size-3.5" />
+                    分享
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <a
+                      href={api.exportDocxUrl(projectId)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      导出 Word
+                    </a>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => setVersionOpen(true)}>
+                    <History className="size-3.5" />
+                    版本
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onClick={handleArchive}
+                    disabled={archiveMutation.isPending}
+                  >
+                    <Archive className="size-3.5" />
+                    {project?.status === 'archived' ? '更新知识库' : '归档到知识库'}
+                  </DropdownMenuItem>
+                  {project?.status === 'archived' && (
+                    <DropdownMenuItem
+                      onClick={() => submitDisclosure.mutate()}
+                      disabled={submitDisclosure.isPending}
+                    >
+                      <Send className="size-3.5" />
+                      {submitDisclosure.isPending ? '上报中...' : '上报到全局库'}
+                    </DropdownMenuItem>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
               {rightCollapsed && (
                 <>
                   <span className="mx-1 h-4 w-px bg-border" />
@@ -329,7 +319,9 @@ export default function ProjectDetailPage() {
             side="left"
             onResize={(delta) => setRightWidth(rightWidth + delta)}
           />
-          <aside className="flex min-h-0 min-w-0 flex-col overflow-hidden bg-background">
+          {/* flex-1 必需：让 aside 撑满 grid item（列宽随 rightWidth 变化），
+              否则宽度会被内容自然宽度钉死、拖拽无效 */}
+          <aside className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
             <div className="flex min-h-0 flex-1 overflow-hidden">
               <AIChatPanel sectionId={current.id} section={current} projectId={projectId} />
             </div>
@@ -341,7 +333,7 @@ export default function ProjectDetailPage() {
         <VersionDrawer
           sectionId={current.id}
           open={versionOpen}
-          onClose={() => setVersionOpen(false)}
+          onOpenChange={setVersionOpen}
         />
       )}
 

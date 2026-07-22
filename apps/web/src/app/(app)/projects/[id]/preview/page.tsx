@@ -38,7 +38,7 @@ export default function PreviewPage() {
       </Button>
 
       <div className="space-y-1 border-b pb-6">
-        <h1 className="prose-headings:text-2xl text-2xl font-bold">{data.title}</h1>
+        <h1 className="prose-headings:text-2xl text-2xl font-bold tracking-tight">{data.title}</h1>
         {data.metadata?.inventors && (
           <p className="text-sm text-muted-foreground">
             发明人：{(data.metadata.inventors as string[]).join('、')}
@@ -49,7 +49,7 @@ export default function PreviewPage() {
       <div className="prose max-w-none space-y-8 py-6">
         {sections.map((s) => (
           <section key={s.order} className="space-y-2">
-            <h2 className="text-lg font-semibold">{s.title}</h2>
+            <h2 className="text-lg font-semibold tracking-tight">{s.title}</h2>
             {s.content ? (
               <TiptapEditor content={s.content} editable={false} />
             ) : (

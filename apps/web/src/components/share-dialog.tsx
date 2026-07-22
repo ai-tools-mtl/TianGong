@@ -12,7 +12,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
 import {
@@ -125,14 +127,12 @@ function MembersTab({ projectId }: { projectId: string }) {
             加载中...
           </div>
         ) : members.length === 0 ? (
-          <div className="rounded-md border border-dashed px-3 py-6 text-center text-[13px] text-muted-foreground">
-            暂无协作者
-          </div>
+          <EmptyState description="暂无协作者" />
         ) : (
           members.map((m) => (
             <div
               key={m.id}
-              className="flex items-center justify-between rounded-md border px-3 py-2"
+              className="flex items-center justify-between rounded-lg border px-3 py-2"
             >
               <div className="flex min-w-0 items-center gap-2">
                 <span className="grid size-7 shrink-0 place-items-center rounded-full bg-muted text-[11px] font-medium">
@@ -214,14 +214,14 @@ function LinksTab({ projectId }: { projectId: string }) {
       <div className="flex items-end gap-2">
         <div className="flex-1 space-y-1">
           <label className="text-[11px] text-muted-foreground">权限</label>
-          <select
+          <Select
             value={permissions}
             onChange={(e) => setPermissions(e.target.value as 'comment' | 'readonly')}
-            className="h-8 w-full rounded-md border bg-background px-2 text-[13px] outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+            className="h-8 px-2 text-[13px]"
           >
             <option value="comment">可批注</option>
             <option value="readonly">只读</option>
-          </select>
+          </Select>
         </div>
         <Button
           size="sm"
@@ -242,19 +242,17 @@ function LinksTab({ projectId }: { projectId: string }) {
             加载中...
           </div>
         ) : links.length === 0 ? (
-          <div className="rounded-md border border-dashed px-3 py-6 text-center text-[13px] text-muted-foreground">
-            暂无分享链接
-          </div>
+          <EmptyState description="暂无分享链接" />
         ) : (
           links.map((link) => (
-            <div key={link.id} className="rounded-md border px-3 py-2">
+            <div key={link.id} className="rounded-lg border px-3 py-2">
               <div className="flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-2">
                   <span
                     className={cn(
                       'rounded px-1.5 py-0.5 text-[10px] font-medium',
                       link.permissions === 'comment'
-                        ? 'bg-info/15 text-info'
+                        ? 'bg-info/10 text-info'
                         : 'bg-muted text-muted-foreground',
                     )}
                   >

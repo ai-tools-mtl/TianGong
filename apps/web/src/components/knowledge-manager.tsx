@@ -133,7 +133,10 @@ export function KnowledgeManager() {
           {loading ? (
             <p className="text-sm text-muted-foreground">加载中...</p>
           ) : files.length === 0 ? (
-            <div className="rounded-lg border border-dashed p-12 text-center text-sm text-muted-foreground">
+            <div
+              className="rounded-2xl border border-black/[0.07] bg-card p-12 text-center text-sm text-muted-foreground dark:border-white/10"
+              style={{ boxShadow: 'var(--shadow-card)' }}
+            >
               {tab === 'personal'
                 ? '个人库为空,上传 docx/pdf 素材开始'
                 : '全局库暂无共享内容'}

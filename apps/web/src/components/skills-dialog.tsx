@@ -55,7 +55,7 @@ export function SkillsDialog({ projectId, open, onOpenChange }: SkillsDialogProp
             {skills.map((s) => (
               <div
                 key={s.skill_key}
-                className="flex items-center justify-between rounded-lg border p-3"
+                className="flex items-center justify-between rounded-xl border p-3"
               >
                 <div className="min-w-0 flex-1 pr-3">
                   <div className="flex items-center gap-2">

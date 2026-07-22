@@ -8,6 +8,7 @@ import { PageHeader, PageShell } from '@/components/page-shell'
 import { ProjectCard } from '@/components/project-card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useProjects, useTags } from '@/lib/queries'
@@ -108,11 +109,13 @@ export function ProjectList() {
         ) : isError ? (
           <p className="text-sm text-destructive">加载失败，请重试</p>
         ) : filtered.length === 0 ? (
-          <div className="rounded-lg border border-dashed p-12 text-center text-sm text-muted-foreground">
-            {projects.length === 0
-              ? '还没有项目，点击右上角「新建项目」开始你的第一份交底书'
-              : '没有符合条件的项目'}
-          </div>
+          <EmptyState
+            description={
+              projects.length === 0
+                ? '还没有项目，点击右上角「新建项目」开始你的第一份交底书'
+                : '没有符合条件的项目'
+            }
+          />
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {filtered.map((p) => (

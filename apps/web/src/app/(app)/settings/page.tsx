@@ -14,6 +14,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { api } from '@/lib/api'
@@ -119,33 +120,35 @@ function SourceSelector({ configs, grantActive, selectedSource, onSelect }: Sour
       <CardHeader className="pb-3">
         <CardTitle className="text-[15px]">默认 LLM 源</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-2">
-        {!hasAnyOption && (
-          <p className="text-[13px] text-muted-foreground">
-            暂无可选项。请在下方添加 BYOK 配置，或联系管理员授权全局 Key。
-          </p>
+      <CardContent className="space-y-3">
+        {!hasAnyOption ? (
+          <EmptyState description="暂无可选项。请在下方添加 BYOK 配置，或联系管理员授权全局 Key。" />
+        ) : (
+          <div className="overflow-hidden rounded-2xl border border-black/[0.07] bg-card dark:border-white/10"
+               style={{ boxShadow: 'var(--shadow-card)' }}>
+            {grantActive && (
+              <SourceOption
+                value="global"
+                label="全局 Key"
+                description="使用管理员配置的全局 Key（需被授权）"
+                selected={selectedSource === 'global'}
+                onSelect={onSelect}
+              />
+            )}
+            {configs.map((c) => (
+              <SourceOption
+                key={c.id}
+                value={`byok:${c.id}`}
+                label={c.name}
+                description={`${c.model} · ${c.api_key_masked}`}
+                selected={selectedSource === `byok:${c.id}`}
+                onSelect={onSelect}
+              />
+            ))}
+          </div>
         )}
-        {grantActive && (
-          <SourceOption
-            value="global"
-            label="全局 Key"
-            description="使用管理员配置的全局 Key（需被授权）"
-            selected={selectedSource === 'global'}
-            onSelect={onSelect}
-          />
-        )}
-        {configs.map((c) => (
-          <SourceOption
-            key={c.id}
-            value={`byok:${c.id}`}
-            label={c.name}
-            description={`${c.model} · ${c.api_key_masked}`}
-            selected={selectedSource === `byok:${c.id}`}
-            onSelect={onSelect}
-          />
-        ))}
         {hasAnyOption && selectedSource === null && (
-          <p className="pt-1 text-[12px] text-amber-600 dark:text-amber-500">
+          <p className="px-1 text-[12px] text-warning">
             尚未选择默认源，AI 助手将无法调用。请选择一项。
           </p>
         )}
@@ -168,10 +171,8 @@ function SourceOption({ value, label, description, selected, onSelect }: SourceO
       type="button"
       onClick={() => onSelect(value)}
       className={cn(
-        'flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors',
-        selected
-          ? 'border-primary bg-primary/5 ring-1 ring-primary'
-          : 'border-border hover:bg-muted/50',
+        'flex w-full items-center gap-3 border-t border-black/[0.07] px-3 py-2.5 text-left transition-colors first:border-t-0 dark:border-white/10',
+        selected ? 'bg-accent' : 'hover:bg-muted/50',
       )}
     >
       <span
@@ -221,7 +222,7 @@ function ConfigList({ configs }: ConfigListProps) {
           <CardTitle className="text-[15px]">我的 BYOK 配置</CardTitle>
         </CardHeader>
         <CardContent>
-          <p className="text-[13px] text-muted-foreground">暂无配置，在下方新增第一条。</p>
+          <EmptyState description="暂无配置，在下方新增第一条。" />
         </CardContent>
       </Card>
     )
@@ -232,39 +233,44 @@ function ConfigList({ configs }: ConfigListProps) {
       <CardHeader className="pb-3">
         <CardTitle className="text-[15px]">我的 BYOK 配置（{configs.length}）</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-2">
-        {configs.map((c) => (
-          <div
-            key={c.id}
-            className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2.5"
-          >
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-[13px] font-medium">{c.name}</p>
-              <p className="truncate text-[12px] text-muted-foreground">
-                {c.model} · {c.api_key_masked}
-              </p>
-              {c.embedding_model && (
-                <p className="truncate text-[11px] text-muted-foreground">
-                  embed: {c.embedding_model}
+      <CardContent>
+        <div
+          className="overflow-hidden rounded-2xl border border-black/[0.07] bg-card dark:border-white/10"
+          style={{ boxShadow: 'var(--shadow-card)' }}
+        >
+          {configs.map((c) => (
+            <div
+              key={c.id}
+              className="flex items-center justify-between gap-3 border-t border-black/[0.07] px-3 py-2.5 transition-colors first:border-t-0 hover:bg-muted/40 dark:border-white/10"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[13px] font-medium">{c.name}</p>
+                <p className="truncate text-[12px] text-muted-foreground">
+                  {c.model} · {c.api_key_masked}
                 </p>
-              )}
+                {c.embedding_model && (
+                  <p className="truncate text-[11px] text-muted-foreground">
+                    embed: {c.embedding_model}
+                  </p>
+                )}
+              </div>
+              <div className="flex shrink-0 gap-1">
+                <Button size="xs" variant="outline" onClick={() => setEditing(c)}>
+                  编辑
+                </Button>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  className="text-destructive hover:text-destructive"
+                  disabled={deleteMutation.isPending}
+                  onClick={() => deleteMutation.mutate(c.id)}
+                >
+                  删除
+                </Button>
+              </div>
             </div>
-            <div className="flex shrink-0 gap-1">
-              <Button size="xs" variant="outline" onClick={() => setEditing(c)}>
-                编辑
-              </Button>
-              <Button
-                size="xs"
-                variant="ghost"
-                className="text-destructive hover:text-destructive"
-                disabled={deleteMutation.isPending}
-                onClick={() => deleteMutation.mutate(c.id)}
-              >
-                删除
-              </Button>
-            </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </CardContent>
 
       {editing && (

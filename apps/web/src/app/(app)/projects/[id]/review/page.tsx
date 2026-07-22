@@ -52,7 +52,7 @@ export default function ReviewPage() {
       </Button>
 
       <div className="flex items-center justify-between border-b pb-4">
-        <h1 className="text-xl font-bold">交底书审查</h1>
+        <h1 className="text-xl font-bold tracking-tight">交底书审查</h1>
         <Button onClick={() => runReview.mutate()} disabled={reviewing} className="gap-1.5">
           <Play className="size-3.5" />
           {reviewing ? '审查中...' : '执行审查'}
@@ -95,10 +95,10 @@ export default function ReviewPage() {
           {/* 维度评分 */}
           <div className="grid gap-3 sm:grid-cols-2">
             {(latest.dimension_scores as DimensionScore[]).map((d) => (
-              <Card key={d.key}>
+              <Card key={d.key} className="apple-lift">
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between">
-                    <CardTitle className="text-[14px]">{d.name}</CardTitle>
+                    <CardTitle className="text-[14px] tracking-tight">{d.name}</CardTitle>
                     <span className="text-lg font-bold tabular-nums">{d.score}</span>
                   </div>
                 </CardHeader>
@@ -118,46 +118,45 @@ export default function ReviewPage() {
             ))}
           </div>
 
-          {/* 问题清单 */}
-          {latest.resolved_issues.length > 0 && (
-            <Card className="border-success/30 bg-success/5">
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-1.5 text-[14px] text-success">
-                  <CheckCircle2 className="size-4" />
-                  已解决的问题
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ul className="space-y-1 text-[13px]">
-                  {latest.resolved_issues.map((issue, i) => (
-                    <li key={i} className="flex gap-2">
-                      <span className="text-success">✓</span>
-                      <span>{issue}</span>
-                    </li>
-                  ))}
-                </ul>
-              </CardContent>
-            </Card>
-          )}
-          {latest.remaining_issues.length > 0 && (
-            <Card className="border-warning/40 bg-warning/5">
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-1.5 text-[14px] text-warning-foreground">
-                  <TriangleAlert className="size-4 text-warning" />
-                  待改进
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <ul className="space-y-1 text-[13px]">
-                  {latest.remaining_issues.map((issue, i) => (
-                    <li key={i} className="flex gap-2">
-                      <span className="text-warning">→</span>
-                      <span>{issue}</span>
-                    </li>
-                  ))}
-                </ul>
-              </CardContent>
-            </Card>
+          {/* 问题清单：单一面板，细线分隔两组 */}
+          {(latest.resolved_issues.length > 0 || latest.remaining_issues.length > 0) && (
+            <div className="overflow-hidden rounded-2xl border border-black/[0.07] bg-card dark:border-white/10" style={{ boxShadow: 'var(--shadow-card)' }}>
+              {latest.resolved_issues.length > 0 && (
+                <div className="px-5 py-4">
+                  <div className="mb-2 flex items-center gap-1.5 text-[14px] font-semibold">
+                    <CheckCircle2 className="size-4 text-muted-foreground" />
+                    已解决的问题
+                  </div>
+                  <ul className="space-y-1 text-[13px] text-muted-foreground">
+                    {latest.resolved_issues.map((issue, i) => (
+                      <li key={i} className="flex gap-2">
+                        <span>✓</span>
+                        <span>{issue}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {latest.resolved_issues.length > 0 && latest.remaining_issues.length > 0 && (
+                <div className="border-t border-black/[0.07] dark:border-white/10" />
+              )}
+              {latest.remaining_issues.length > 0 && (
+                <div className="px-5 py-4">
+                  <div className="mb-2 flex items-center gap-1.5 text-[14px] font-semibold">
+                    <TriangleAlert className="size-4 text-muted-foreground" />
+                    待改进
+                  </div>
+                  <ul className="space-y-1 text-[13px] text-muted-foreground">
+                    {latest.remaining_issues.map((issue, i) => (
+                      <li key={i} className="flex gap-2">
+                        <span>→</span>
+                        <span>{issue}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
           )}
         </div>
       ) : (

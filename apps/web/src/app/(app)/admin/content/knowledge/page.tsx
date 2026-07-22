@@ -8,6 +8,7 @@ import { PageHeader, PageShell } from '@/components/page-shell'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { api } from '@/lib/api'
 import { useAdminUploadGlobal, useGlobalKnowledge } from '@/lib/queries'
@@ -70,9 +71,7 @@ export default function AdminKnowledgePage() {
             ))}
           </div>
         ) : list.length === 0 ? (
-          <div className="rounded-lg border border-dashed p-12 text-center text-sm text-muted-foreground">
-            全局库暂无共享内容，上传 docx/pdf 文件开始
-          </div>
+          <EmptyState description="全局库暂无共享内容" />
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {list.map((kf) => (
@@ -87,7 +86,7 @@ export default function AdminKnowledgePage() {
 
 function GlobalKnowledgeCard({ kf }: { kf: KnowledgeFile }) {
   return (
-    <Card>
+    <Card className="apple-lift">
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center justify-between gap-2 text-[15px]">
           <span className="truncate" title={kf.filename}>

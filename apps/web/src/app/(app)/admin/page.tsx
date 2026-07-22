@@ -6,7 +6,6 @@ import { AlertTriangle, ArrowRight, CheckCircle2 } from 'lucide-react'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -61,54 +60,62 @@ export default function AdminPage() {
     <PageShell>
       <PageHeader title="管理后台" description="系统概览" />
 
-      <div className="space-y-8 py-6">
-        {/* ① 待办聚合 */}
-        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {/* 待审工单 */}
-          <Card>
-            <CardContent className="flex items-center justify-between py-5">
-              <div>
-                <div className="text-[13px] text-muted-foreground">待审工单</div>
-                <div className="mt-1 text-[28px] font-semibold leading-none">
-                  {pendingReviews ? pendingCount : <Skeleton className="mt-1 h-7 w-10" />}
-                </div>
-                <div className="mt-2 text-[12px] text-muted-foreground">
-                  知识库审核队列
-                </div>
+      <div className="space-y-6 py-6">
+        {/* ① 待办聚合：待审工单 + LLM 健康，合并为单一面板 */}
+        <section
+          className="overflow-hidden rounded-2xl border border-black/[0.07] bg-card dark:border-white/10"
+          style={{ boxShadow: 'var(--shadow-card)' }}
+        >
+          <div className="flex items-center justify-between px-5 py-4">
+            <div>
+              <div className="text-[13px] text-muted-foreground">待审工单</div>
+              <div className="mt-1 text-[28px] font-semibold leading-none">
+                {pendingReviews ? pendingCount : <Skeleton className="mt-1 h-7 w-10" />}
               </div>
-              <Button asChild variant="outline" size="sm">
-                <Link href="/admin/review">
-                  {pendingCount > 0 ? '去审核' : '查看'}
-                  <ArrowRight className="ml-1.5 size-3.5" />
-                </Link>
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* LLM 健康 */}
-          <LLMHealthCard health={health} stats={statsData} />
+              <div className="mt-2 text-[12px] text-muted-foreground">
+                知识库审核队列
+              </div>
+            </div>
+            <Button asChild variant="outline" size="sm">
+              <Link href="/admin/review">
+                {pendingCount > 0 ? '去审核' : '查看'}
+                <ArrowRight className="ml-1.5 size-3.5" />
+              </Link>
+            </Button>
+          </div>
+          <div className="border-t border-black/[0.07] dark:border-white/10" />
+          <LLMHealthRow health={health} stats={statsData} />
         </section>
 
-        {/* ② 用户活动 */}
-        <section className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <UserActivityCard
+        {/* ② 用户活动：最近登录 + 最近注册，合并为单一面板 */}
+        <section
+          className="overflow-hidden rounded-2xl border border-black/[0.07] bg-card dark:border-white/10"
+          style={{ boxShadow: 'var(--shadow-card)' }}
+        >
+          <UserActivitySection
             title="最近登录"
             users={recentLogins}
             emptyText="暂无登录记录"
           />
-          <UserActivityCard
+          <div className="border-t border-black/[0.07] dark:border-white/10" />
+          <UserActivitySection
             title="最近注册"
             users={recentCreations}
             emptyText="暂无新用户"
           />
         </section>
 
-        {/* ③ 关键指标 */}
-        <section className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <MetricCard label="总用户" value={userStatsData?.total} />
-          <MetricCard label="7d 新增" value={userStatsData?.new_7d} />
-          <MetricCard label="LLM 调用（7d）" value={statsData?.total_calls} />
-          <MetricCard label="已授权数" value={userStatsData?.granted_count} />
+        {/* ③ 关键指标：4 个数字合并为一条统计条带 */}
+        <section
+          className="overflow-hidden rounded-2xl border border-black/[0.07] bg-card dark:border-white/10"
+          style={{ boxShadow: 'var(--shadow-card)' }}
+        >
+          <div className="grid grid-cols-2 lg:grid-cols-4">
+            <MetricCell label="总用户" value={userStatsData?.total} />
+            <MetricCell label="7d 新增" value={userStatsData?.new_7d} />
+            <MetricCell label="LLM 调用（7d）" value={statsData?.total_calls} />
+            <MetricCell label="已授权数" value={userStatsData?.granted_count} />
+          </div>
         </section>
       </div>
     </PageShell>
@@ -117,7 +124,7 @@ export default function AdminPage() {
 
 // ── 子组件 ──
 
-function LLMHealthCard({
+function LLMHealthRow({
   health,
   stats,
 }: {
@@ -128,59 +135,57 @@ function LLMHealthCard({
   const ok = health?.status === 'ok'
 
   return (
-    <Card>
-      <CardContent className="flex items-center justify-between py-5">
-        <div>
-          <div className="text-[13px] text-muted-foreground">LLM 健康</div>
-          <div className="mt-1 flex items-baseline gap-2">
-            {health ? (
-              <>
-                <span
-                  className={cn(
-                    'text-[28px] font-semibold leading-none',
-                    isWarning ? 'text-amber-600' : 'text-emerald-600',
-                  )}
-                >
-                  {(health.failure_rate * 100).toFixed(1)}%
-                </span>
-                <span className="text-[12px] text-muted-foreground">失败率（7d）</span>
-              </>
-            ) : (
-              <Skeleton className="h-7 w-20" />
-            )}
-          </div>
-          <div className="mt-2 flex items-center gap-1.5 text-[12px]">
-            {ok ? (
-              <>
-                <CheckCircle2 className="size-3.5 text-emerald-600" />
-                <span className="text-muted-foreground">
-                  健康 · {stats?.total_calls ?? 0} 次调用
-                </span>
-              </>
-            ) : isWarning ? (
-              <>
-                <AlertTriangle className="size-3.5 text-amber-600" />
-                <span className="text-amber-700">
-                  失败率超阈值（{health?.failed ?? 0} 次失败）
-                </span>
-              </>
-            ) : (
-              <Skeleton className="h-3.5 w-28" />
-            )}
-          </div>
+    <div className="flex items-center justify-between px-5 py-4">
+      <div>
+        <div className="text-[13px] text-muted-foreground">LLM 健康</div>
+        <div className="mt-1 flex items-baseline gap-2">
+          {health ? (
+            <>
+              <span
+                className={cn(
+                  'text-[28px] font-semibold leading-none',
+                  isWarning ? 'text-warning' : 'text-success',
+                )}
+              >
+                {(health.failure_rate * 100).toFixed(1)}%
+              </span>
+              <span className="text-[12px] text-muted-foreground">失败率（7d）</span>
+            </>
+          ) : (
+            <Skeleton className="h-7 w-20" />
+          )}
         </div>
-        <Button asChild variant="outline" size="sm">
-          <Link href="/admin/console/stats">
-            查看
-            <ArrowRight className="ml-1.5 size-3.5" />
-          </Link>
-        </Button>
-      </CardContent>
-    </Card>
+        <div className="mt-2 flex items-center gap-1.5 text-[12px]">
+          {ok ? (
+            <>
+              <CheckCircle2 className="size-3.5 text-success" />
+              <span className="text-muted-foreground">
+                健康 · {stats?.total_calls ?? 0} 次调用
+              </span>
+            </>
+          ) : isWarning ? (
+            <>
+              <AlertTriangle className="size-3.5 text-warning" />
+              <span className="text-warning">
+                失败率超阈值（{health?.failed ?? 0} 次失败）
+              </span>
+            </>
+          ) : (
+            <Skeleton className="h-3.5 w-28" />
+          )}
+        </div>
+      </div>
+      <Button asChild variant="outline" size="sm">
+        <Link href="/admin/console/stats">
+          查看
+          <ArrowRight className="ml-1.5 size-3.5" />
+        </Link>
+      </Button>
+    </div>
   )
 }
 
-function UserActivityCard({
+function UserActivitySection({
   title,
   users,
   emptyText,
@@ -190,61 +195,57 @@ function UserActivityCard({
   emptyText: string
 }) {
   return (
-    <Card>
-      <CardContent className="py-5">
-        <div className="mb-3 text-[13px] text-muted-foreground">{title}</div>
-        {!users ? (
-          <div className="space-y-2.5">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="flex items-center justify-between">
-                <Skeleton className="h-4 w-24" />
-                <Skeleton className="h-3.5 w-16" />
-              </div>
-            ))}
-          </div>
-        ) : users.length === 0 ? (
-          <div className="py-4 text-center text-[12px] text-muted-foreground">
-            {emptyText}
-          </div>
-        ) : (
-          <ul className="space-y-2">
-            {users.map((u) => (
-              <li
-                key={u.id}
-                className="flex items-center justify-between gap-3 text-[13px]"
-              >
-                <div className="min-w-0">
-                  <span className="font-medium">{u.username}</span>
-                  {u.email && (
-                    <span className="ml-1.5 truncate text-[12px] text-muted-foreground">
-                      {u.email}
-                    </span>
-                  )}
-                </div>
-                {u.ts && (
-                  <span className="shrink-0 text-[12px] text-muted-foreground">
-                    {formatRelativeTime(u.ts)}
+    <div className="px-5 py-4">
+      <div className="mb-3 text-[13px] text-muted-foreground">{title}</div>
+      {!users ? (
+        <div className="space-y-2.5">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="flex items-center justify-between">
+              <Skeleton className="h-4 w-24" />
+              <Skeleton className="h-3.5 w-16" />
+            </div>
+          ))}
+        </div>
+      ) : users.length === 0 ? (
+        <div className="py-4 text-center text-[12px] text-muted-foreground">
+          {emptyText}
+        </div>
+      ) : (
+        <ul className="space-y-2">
+          {users.map((u) => (
+            <li
+              key={u.id}
+              className="flex items-center justify-between gap-3 text-[13px]"
+            >
+              <div className="min-w-0">
+                <span className="font-medium">{u.username}</span>
+                {u.email && (
+                  <span className="ml-1.5 truncate text-[12px] text-muted-foreground">
+                    {u.email}
                   </span>
                 )}
-              </li>
-            ))}
-          </ul>
-        )}
-      </CardContent>
-    </Card>
+              </div>
+              {u.ts && (
+                <span className="shrink-0 text-[12px] text-muted-foreground">
+                  {formatRelativeTime(u.ts)}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   )
 }
 
-function MetricCard({ label, value }: { label: string; value: number | undefined }) {
+function MetricCell({ label, value }: { label: string; value: number | undefined }) {
   return (
-    <Card>
-      <CardContent className="py-4">
-        <div className="text-[12px] text-muted-foreground">{label}</div>
-        <div className="mt-1 text-[22px] font-semibold leading-none">
-          {value ?? <Skeleton className="mt-1 h-6 w-10" />}
-        </div>
-      </CardContent>
-    </Card>
+    <div className="border-b border-r border-black/[0.07] px-5 py-4 last:border-r-0 dark:border-white/10">
+      <div className="text-[12px] text-muted-foreground">{label}</div>
+      <div className="mt-1 text-[22px] font-semibold leading-none tabular-nums">
+        {value ?? <Skeleton className="mt-1 h-6 w-10" />}
+      </div>
+    </div>
   )
 }
 

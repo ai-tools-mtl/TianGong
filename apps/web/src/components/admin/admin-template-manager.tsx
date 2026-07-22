@@ -5,9 +5,11 @@ import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
+import { TemplateDetailDialog } from '@/components/template-detail-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { api } from '@/lib/api'
 import {
@@ -32,19 +34,24 @@ import type { TemplateStatus, TemplateSummary } from '@/types/api'
 const POLL_INTERVAL_MS = 1500
 const POLL_MAX_ATTEMPTS = 40
 
-async function pollAdminParseJob(jobId: string): Promise<'completed' | 'failed'> {
+interface PollResult {
+  status: 'completed' | 'failed' | 'timeout'
+  errorMessage?: string
+}
+
+async function pollAdminParseJob(jobId: string): Promise<PollResult> {
   for (let i = 0; i < POLL_MAX_ATTEMPTS; i++) {
     const job = await api.getAdminParseJob(jobId)
-    if (job.status === 'completed') return 'completed'
-    if (job.status === 'failed') return 'failed'
+    if (job.status === 'completed') return { status: 'completed' }
+    if (job.status === 'failed') return { status: 'failed', errorMessage: job.error_message || undefined }
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS))
   }
-  return 'failed'
+  return { status: 'timeout' }
 }
 
 const STATUS_BADGE: Record<TemplateStatus, { label: string; variant: 'secondary' | 'default' | 'destructive' | 'outline'; className?: string }> = {
   draft: { label: '草稿', variant: 'outline' },
-  published: { label: '已发布', variant: 'secondary', className: 'bg-emerald-100 text-emerald-700' },
+  published: { label: '已发布', variant: 'secondary', className: 'bg-success/10 text-success' },
   offline: { label: '已下线', variant: 'outline', className: 'text-muted-foreground' },
 }
 
@@ -65,11 +72,14 @@ export function AdminTemplateManager() {
       const { parse_job_id } = await api.uploadAdminTemplate(file)
       toast.info('模板已上传，正在解析...')
       const result = await pollAdminParseJob(parse_job_id)
-      if (result === 'completed') {
+      if (result.status === 'completed') {
         toast.success('模板解析成功（草稿状态，发布后用户可见）')
         refetch()
+      } else if (result.status === 'timeout') {
+        toast.error('解析超时（超过 60 秒），请刷新页面查看模板列表')
+        refetch()
       } else {
-        toast.error('模板解析失败')
+        toast.error(result.errorMessage || '模板解析失败')
       }
     } catch (err) {
       const msg = (err as { message?: string })?.message
@@ -142,15 +152,13 @@ export function AdminTemplateManager() {
             ))}
           </div>
         ) : list.length === 0 ? (
-          <div className="rounded-lg border border-dashed p-12 text-center text-sm text-muted-foreground">
-            还没有系统模板，上传一个 Word 模板开始（上传后为草稿态，需发布才对用户可见）
-          </div>
+          <EmptyState description="还没有模板，上传一个 Word 模板开始" />
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {list.map((t) => {
               const badge = STATUS_BADGE[t.status]
               return (
-                <Card key={t.id}>
+                <Card key={t.id} className="apple-lift">
                   <CardHeader className="pb-3">
                     <CardTitle className="flex items-center justify-between gap-2 text-[15px]">
                       <span className="truncate" title={t.name}>
@@ -165,10 +173,13 @@ export function AdminTemplateManager() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-2">
-                    <p className="text-[12px] text-muted-foreground">
-                      {t.section_count} 个章节
-                      {t.is_default && <span className="ml-2">· 默认</span>}
-                    </p>
+                    <div className="flex items-center justify-between">
+                      <p className="text-[12px] text-muted-foreground">
+                        {t.section_count} 个章节
+                        {t.is_default && <span className="ml-2">· 默认</span>}
+                      </p>
+                      <TemplateDetailDialog templateId={t.id} templateName={t.name} status={t.status} />
+                    </div>
                     <div className="flex flex-wrap items-center gap-1 pt-1">
                       {/* draft：发布 + 删除 */}
                       {t.status === 'draft' && (

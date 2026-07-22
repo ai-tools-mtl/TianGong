@@ -123,7 +123,8 @@ export default function UserDetailPage() {
           <CardHeader>
             <CardTitle className="text-[15px]">基本信息</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3 text-[13px]">
+          <CardContent className="text-[13px]">
+            <div className="divide-y divide-black/[0.07] dark:divide-white/10">
             <InfoRow label="用户名">
               <span className="font-medium">@{user.username}</span>
             </InfoRow>
@@ -140,7 +141,7 @@ export default function UserDetailPage() {
               {user.status === 'disabled' ? (
                 <Badge variant="destructive">已封禁</Badge>
               ) : (
-                <span className="text-emerald-600">正常</span>
+                <span className="text-success">正常</span>
               )}
             </InfoRow>
             <InfoRow label="创建时间">
@@ -159,6 +160,7 @@ export default function UserDetailPage() {
                 {user.has_own_llm_key ? '自配 Key' : '用全局 Key'}
               </Badge>
             </InfoRow>
+            </div>
           </CardContent>
         </Card>
 
@@ -199,16 +201,11 @@ export default function UserDetailPage() {
             {!isAdmin && (
               <div className="space-y-2">
                 <Label className="text-[12px] text-muted-foreground">全局 Key 授权</Label>
-                <div className="rounded-md border bg-muted/30 px-3 py-2 text-[12px]">
+                <div className="rounded-lg border bg-muted/30 px-3 py-2 text-[12px]">
                   {user.grant_detail?.is_active ? (
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
-                        <Badge
-                          variant="secondary"
-                          className="bg-emerald-100 text-emerald-700"
-                        >
-                          已授权
-                        </Badge>
+                        <Badge variant="secondary">已授权</Badge>
                         {user.grant_detail.granted_at && (
                           <span className="text-muted-foreground">
                             自 {formatDateTime(user.grant_detail.granted_at)}
@@ -277,7 +274,7 @@ export default function UserDetailPage() {
 
             {/* admin 自己：只有提示 */}
             {isSelf && (
-              <div className="rounded-md border border-dashed p-4 text-center text-[12px] text-muted-foreground">
+              <div className="rounded-xl border border-black/[0.07] bg-card p-4 text-center text-[12px] text-muted-foreground dark:border-white/10">
                 这是您自己的账号，无法在此执行封禁/重置密码操作
               </div>
             )}
@@ -302,7 +299,7 @@ function BackLink() {
 
 function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-start justify-between gap-3">
+    <div className="flex items-start justify-between gap-3 py-3 first:pt-0 last:pb-0">
       <span className="shrink-0 text-muted-foreground">{label}</span>
       <span className="text-right">{children}</span>
     </div>

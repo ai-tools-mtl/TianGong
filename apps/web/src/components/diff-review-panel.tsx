@@ -62,7 +62,7 @@ function BlockTextView({ text, kind }: { text: string; kind: 'insert' | 'delete'
   return (
     <div
       className={cn(
-        'whitespace-pre-wrap break-words rounded-md border px-3 py-2 font-mono text-[13px] leading-relaxed',
+        'whitespace-pre-wrap break-words rounded-lg border px-3 py-2 font-mono text-[13px] leading-relaxed',
         kind === 'insert'
           ? 'border-success/30 bg-success/10 text-success'
           : 'border-destructive/30 bg-destructive/10 text-destructive line-through decoration-destructive/40',
@@ -120,7 +120,7 @@ export function DiffReviewPanel({
       <div className="flex h-12 shrink-0 items-center justify-between border-b px-4">
         <div className="flex items-center gap-2">
           <GitCompare className="size-4 text-primary" />
-          <h3 className="text-[15px] font-semibold">审查差异</h3>
+          <h3 className="text-[15px] font-semibold tracking-tight">审查差异</h3>
           <span className="truncate text-[13px] text-muted-foreground">§{sectionTitle}</span>
         </div>
         <Button variant="ghost" size="icon-sm" onClick={onClose} aria-label="关闭">
@@ -132,7 +132,10 @@ export function DiffReviewPanel({
       <ScrollArea className="flex-1">
         <div className="space-y-3 p-4">
           {hunks.length === 0 && (
-            <div className="rounded-md border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
+            <div
+              className="rounded-2xl border border-black/[0.07] bg-card px-4 py-8 text-center text-sm text-muted-foreground dark:border-white/10"
+              style={{ boxShadow: 'var(--shadow-card)' }}
+            >
               没有检测到变更
             </div>
           )}
@@ -143,7 +146,7 @@ export function DiffReviewPanel({
               <div
                 key={hunk.id}
                 className={cn(
-                  'rounded-lg border bg-card transition-colors',
+                  'rounded-xl border bg-card transition-colors',
                   decision === 'accept' && 'border-success/50 ring-1 ring-success/20',
                   decision === 'reject' && 'border-destructive/50 opacity-70',
                 )}

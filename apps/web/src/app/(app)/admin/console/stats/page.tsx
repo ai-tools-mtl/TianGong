@@ -4,7 +4,7 @@ import { useState } from 'react'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
+import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
@@ -14,6 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { useLLMStats } from '@/lib/queries'
 import type { LLMStatsByModel, LLMStatsByUser } from '@/types/api'
 
@@ -51,7 +52,7 @@ export default function ConsoleStatsPage() {
       </PageHeader>
 
       <div className="space-y-6 py-6">
-        {/* 汇总卡片 */}
+        {/* 汇总卡片：统一 stat strip 面板，6 格以发丝线分隔 */}
         {isLoading || !stats ? (
           <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
             {Array.from({ length: 6 }).map((_, i) => (
@@ -59,133 +60,142 @@ export default function ConsoleStatsPage() {
             ))}
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
-            <MetricCard label="总调用" value={String(stats.total_calls)} />
-            <MetricCard
-              label="成功"
-              value={String(stats.total_success)}
-              className="text-green-600"
-            />
-            <MetricCard
-              label="失败"
-              value={String(stats.total_failed)}
-              className="text-red-600"
-            />
-            <MetricCard
-              label="平均耗时"
-              value={`${stats.avg_duration_ms ? Math.round(stats.avg_duration_ms) : 0} ms`}
-            />
-            <MetricCard
-              label="输入 tokens ↑"
-              value={formatTokens(stats.total_prompt_tokens)}
-            />
-            <MetricCard
-              label="输出 tokens ↓"
-              value={formatTokens(stats.total_completion_tokens)}
-            />
+          <div
+            className="overflow-hidden rounded-2xl border border-black/[0.07] bg-card dark:border-white/10"
+            style={{ boxShadow: 'var(--shadow-card)' }}
+          >
+            <div className="grid grid-cols-2 divide-x divide-y divide-black/[0.07] md:grid-cols-3 xl:grid-cols-6 dark:divide-white/10">
+              <StatCell label="总调用" value={String(stats.total_calls)} />
+              <StatCell
+                label="成功"
+                value={String(stats.total_success)}
+                valueClassName="text-success"
+              />
+              <StatCell
+                label="失败"
+                value={String(stats.total_failed)}
+                valueClassName="text-destructive"
+              />
+              <StatCell
+                label="平均耗时"
+                value={`${stats.avg_duration_ms ? Math.round(stats.avg_duration_ms) : 0} ms`}
+              />
+              <StatCell
+                label="输入 tokens ↑"
+                value={formatTokens(stats.total_prompt_tokens)}
+              />
+              <StatCell
+                label="输出 tokens ↓"
+                value={formatTokens(stats.total_completion_tokens)}
+              />
+            </div>
           </div>
         )}
 
-        {/* 按模型 */}
-        <Card>
-          <CardContent className="py-4">
-            <h2 className="mb-3 text-[14px] font-semibold">按模型</h2>
-            {stats && stats.by_model.length > 0 ? (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>模型</TableHead>
-                    <TableHead className="text-right">调用</TableHead>
-                    <TableHead className="text-right">失败</TableHead>
-                    <TableHead className="text-right">平均耗时</TableHead>
-                    <TableHead className="text-right">输入 tokens</TableHead>
-                    <TableHead className="text-right">输出 tokens</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {stats.by_model.map((m: LLMStatsByModel) => (
-                    <TableRow key={m.model}>
-                      <TableCell className="font-medium">{m.model}</TableCell>
-                      <TableCell className="text-right tabular-nums">{m.calls}</TableCell>
-                      <TableCell className="text-right tabular-nums text-red-600">
-                        {m.failed}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {m.avg_duration_ms ? Math.round(m.avg_duration_ms) : 0} ms
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatTokens(m.prompt_tokens)}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {formatTokens(m.completion_tokens)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            ) : (
-              <div className="rounded-md border border-dashed p-8 text-center text-[13px] text-muted-foreground">
-                {isLoading ? '加载中...' : '暂无数据'}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        {/* 明细：统一面板 + Tabs 切换「按模型 / 按用户」 */}
+        <div
+          className="overflow-hidden rounded-2xl border border-black/[0.07] bg-card dark:border-white/10"
+          style={{ boxShadow: 'var(--shadow-card)' }}
+        >
+          <Tabs defaultValue="model">
+            <div className="border-b border-black/[0.07] px-4 pt-3 dark:border-white/10">
+              <TabsList>
+                <TabsTrigger value="model">按模型</TabsTrigger>
+                <TabsTrigger value="user">按用户</TabsTrigger>
+              </TabsList>
+            </div>
 
-        {/* 按用户 */}
-        <Card>
-          <CardContent className="py-4">
-            <h2 className="mb-3 text-[14px] font-semibold">按用户</h2>
-            {stats && stats.by_user.length > 0 ? (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>用户</TableHead>
-                    <TableHead className="text-right">调用</TableHead>
-                    <TableHead className="text-right">失败</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {stats.by_user.map((u: LLMStatsByUser) => (
-                    <TableRow key={u.user_id ?? 'anonymous'}>
-                      <TableCell className="font-medium">{u.email}</TableCell>
-                      <TableCell className="text-right tabular-nums">{u.calls}</TableCell>
-                      <TableCell className="text-right tabular-nums text-red-600">
-                        {u.failed}
-                      </TableCell>
+            <TabsContent value="model" className="mt-0 p-4">
+              {stats && stats.by_model.length > 0 ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>模型</TableHead>
+                      <TableHead className="text-right">调用</TableHead>
+                      <TableHead className="text-right">失败</TableHead>
+                      <TableHead className="text-right">平均耗时</TableHead>
+                      <TableHead className="text-right">输入 tokens</TableHead>
+                      <TableHead className="text-right">输出 tokens</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            ) : (
-              <div className="rounded-md border border-dashed p-8 text-center text-[13px] text-muted-foreground">
-                {isLoading ? '加载中...' : '暂无数据'}
-              </div>
-            )}
-          </CardContent>
-        </Card>
+                  </TableHeader>
+                  <TableBody>
+                    {stats.by_model.map((m: LLMStatsByModel) => (
+                      <TableRow key={m.model}>
+                        <TableCell className="font-medium">{m.model}</TableCell>
+                        <TableCell className="text-right tabular-nums">{m.calls}</TableCell>
+                        <TableCell className="text-right tabular-nums text-destructive">
+                          {m.failed}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {m.avg_duration_ms ? Math.round(m.avg_duration_ms) : 0} ms
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatTokens(m.prompt_tokens)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatTokens(m.completion_tokens)}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : (
+                <EmptyState description={isLoading ? '加载中...' : '暂无数据'} />
+              )}
+            </TabsContent>
+
+            <TabsContent value="user" className="mt-0 p-4">
+              {stats && stats.by_user.length > 0 ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>用户</TableHead>
+                      <TableHead className="text-right">调用</TableHead>
+                      <TableHead className="text-right">失败</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {stats.by_user.map((u: LLMStatsByUser) => (
+                      <TableRow key={u.user_id ?? 'anonymous'}>
+                        <TableCell className="font-medium">{u.email}</TableCell>
+                        <TableCell className="text-right tabular-nums">{u.calls}</TableCell>
+                        <TableCell className="text-right tabular-nums text-destructive">
+                          {u.failed}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : (
+                <EmptyState description={isLoading ? '加载中...' : '暂无数据'} />
+              )}
+            </TabsContent>
+          </Tabs>
+        </div>
       </div>
     </PageShell>
   )
 }
 
-function MetricCard({
+/** 统一 stat strip 面板内的单个指标格。 */
+function StatCell({
   label,
   value,
-  className,
+  valueClassName,
 }: {
   label: string
   value: string
-  className?: string
+  valueClassName?: string
 }) {
   return (
-    <Card>
-      <CardContent className="py-3">
-        <div className="text-[12px] text-muted-foreground">{label}</div>
-        <div className={`mt-1 text-[18px] font-semibold leading-none ${className ?? ''}`}>
-          {value}
-        </div>
-      </CardContent>
-    </Card>
+    <div className="px-4 py-3">
+      <div className="text-[12px] text-muted-foreground">{label}</div>
+      <div
+        className={`mt-1 text-[18px] font-semibold leading-none ${valueClassName ?? ''}`}
+      >
+        {value}
+      </div>
+    </div>
   )
 }
 

@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 import { PageHeader, PageShell } from '@/components/page-shell'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
@@ -78,11 +79,9 @@ export default function UsersPage() {
         {isLoading ? (
           <UsersTableSkeleton />
         ) : list.length === 0 ? (
-          <div className="rounded-lg border border-dashed p-12 text-center text-sm text-muted-foreground">
-            暂无用户
-          </div>
+          <EmptyState description="暂无用户" />
         ) : (
-          <div className="rounded-lg border">
+          <div className="rounded-xl border">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -140,19 +139,14 @@ export default function UsersPage() {
                         {u.status === 'disabled' ? (
                           <Badge variant="destructive">已封禁</Badge>
                         ) : (
-                          <span className="text-[12px] text-emerald-600">正常</span>
+                          <span className="text-[12px] text-muted-foreground">正常</span>
                         )}
                       </TableCell>
 
                       {/* 全局 Key 授权 */}
                       <TableCell>
                         {u.has_global_grant ? (
-                          <Badge
-                            variant="secondary"
-                            className="bg-emerald-100 text-emerald-700"
-                          >
-                            已授权
-                          </Badge>
+                          <Badge variant="secondary">已授权</Badge>
                         ) : (
                           <span className="text-[12px] text-muted-foreground">—</span>
                         )}
@@ -237,7 +231,7 @@ export default function UsersPage() {
 
 function UsersTableSkeleton() {
   return (
-    <div className="rounded-lg border">
+    <div className="rounded-xl border">
       <div className="space-y-2 p-3">
         {Array.from({ length: 5 }).map((_, i) => (
           <div key={i} className="flex items-center gap-4">

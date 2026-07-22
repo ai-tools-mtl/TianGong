@@ -1,8 +1,8 @@
 import { cn } from '@/lib/utils'
 
 /**
- * 天工 logo：墨色方印 + AI 紫星点。
- * 内联 SVG，无外部资源。星点是产品"AI 驱动"身份的唯一视觉锚点。
+ * 天工 logo：墨色方印 + "工" 字镂空。
+ * 内联 SVG，无外部资源。墨黑方印呼应产品"工具重力"定位。
  */
 export function Logo({ className }: { className?: string }) {
   return (
@@ -15,13 +15,13 @@ export function Logo({ className }: { className?: string }) {
         aria-hidden="true"
         className="shrink-0"
       >
-        {/* 方印底 */}
+        {/* 方印底：墨黑 */}
         <rect
           x="1.5"
           y="1.5"
           width="23"
           height="23"
-          rx="5"
+          rx="6"
           className="fill-primary"
         />
         {/* "工" 字笔画，亮色镂空 */}

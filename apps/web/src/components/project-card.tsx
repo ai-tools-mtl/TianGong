@@ -60,7 +60,7 @@ export function ProjectCard({ project }: { project: Project }) {
   return (
     <>
       <Card
-        className="group cursor-pointer transition-colors hover:border-foreground/20"
+        className="apple-lift group cursor-pointer"
         onClick={() => router.push(`/projects/${project.id}`)}
       >
         <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
@@ -112,7 +112,7 @@ export function ProjectCard({ project }: { project: Project }) {
               <span>{STAGE_LABEL[project.stage]}</span>
               <span className="tabular-nums">{project.progress_pct}%</span>
             </div>
-            <div className="h-1 overflow-hidden rounded-full bg-muted">
+            <div className="h-1 overflow-hidden rounded-full" style={{ background: 'var(--track)' }}>
               <div
                 className="h-full rounded-full bg-primary transition-all"
                 style={{ width: `${project.progress_pct}%` }}

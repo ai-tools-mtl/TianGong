@@ -8,6 +8,7 @@ import { PageHeader, PageShell } from '@/components/page-shell'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
 import { api } from '@/lib/api'
 import { useApproveReview, usePendingReviews, useRejectReview } from '@/lib/queries'
@@ -42,7 +43,7 @@ function ReviewCard({ review }: { review: KnowledgeReview }) {
   }
 
   return (
-    <Card>
+    <Card className="apple-lift">
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center justify-between gap-2 text-[15px]">
           <span className="flex items-center gap-2">
@@ -117,9 +118,7 @@ export function ReviewWorkbench() {
         {isLoading ? (
           <p className="text-sm text-muted-foreground">加载中...</p>
         ) : !reviews || reviews.length === 0 ? (
-          <div className="rounded-lg border border-dashed p-12 text-center text-sm text-muted-foreground">
-            暂无待审核工单
-          </div>
+          <EmptyState description="暂无待审核工单" />
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {reviews.map((r: KnowledgeReview) => (

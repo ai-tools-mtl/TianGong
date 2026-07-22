@@ -46,7 +46,7 @@ export const TiptapEditor = forwardRef<TiptapEditorRef, TiptapEditorProps>(
     if (!editor) return null
 
     return (
-      <div className="overflow-hidden rounded-lg border bg-card">
+      <div className="overflow-hidden rounded-xl border bg-card">
         {editable && <Toolbar editor={editor} sectionId={sectionId} />}
         <EditorContent
           editor={editor}

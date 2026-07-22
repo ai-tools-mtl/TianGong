@@ -120,6 +120,14 @@ export function useTemplates() {
   })
 }
 
+export function useTemplate(id: string) {
+  return useQuery<import('@/types/api').Template>({
+    queryKey: ['templates', id],
+    queryFn: () => api.getTemplate(id),
+    enabled: !!id,
+  })
+}
+
 // ── 章节 ──
 export function useSections(projectId: string) {
   return useQuery<Section[]>({

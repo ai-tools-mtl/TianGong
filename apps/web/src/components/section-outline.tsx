@@ -33,9 +33,9 @@ export function SectionOutline({
             title={s.title}
             aria-label={s.title}
             className={cn(
-              'grid size-7 place-items-center rounded-md border transition-colors',
+              'grid size-7 place-items-center rounded-full border transition-colors',
               currentId === s.id
-                ? 'border-foreground/30 bg-accent'
+                ? 'border-black/[0.07] bg-accent dark:border-white/10'
                 : 'border-transparent hover:bg-accent/60',
             )}
           >

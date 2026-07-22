@@ -1,6 +1,7 @@
 import { Building } from 'lucide-react'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
+import { EmptyState } from '@/components/ui/empty-state'
 
 /**
  * 阶段 2 待实现模块的占位页（refactor/admin-ia-phase1）。
@@ -20,14 +21,7 @@ export function UnderConstruction({
     <PageShell>
       <PageHeader title={title} description={description} />
       <div className="py-10">
-        <div className="flex flex-col items-center justify-center gap-3 rounded-lg border border-dashed p-16 text-center">
-          <Building className="size-8 text-muted-foreground" />
-          <div className="text-sm font-medium">{title}</div>
-          <p className="max-w-sm text-[13px] text-muted-foreground">
-            {description}。当前阶段已立路由与导航骨架，相关能力（原 /admin 主页的操作区）
-            会逐步迁移至此。
-          </p>
-        </div>
+        <EmptyState icon={<Building className="size-5" />} title={title} description={description} />
       </div>
     </PageShell>
   )

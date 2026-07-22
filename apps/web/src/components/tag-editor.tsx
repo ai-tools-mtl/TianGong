@@ -6,7 +6,9 @@ import { toast } from 'sonner'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog'
@@ -14,6 +16,7 @@ import { Label } from '@/components/ui/label'
 import {
   useCreateTag, useDeleteTag, useMergeTags, useRenameTag, useTags,
 } from '@/lib/queries'
+import { cn } from '@/lib/utils'
 import type { Tag } from '@/types/api'
 
 export function TagEditor() {
@@ -91,17 +94,21 @@ export function TagEditor() {
         </Button>
       </form>
 
-      {/* 标签列表 */}
+      {/* 标签列表 — 统一面板 + 发丝线分隔（反碎片化） */}
       {isLoading ? (
         <p className="text-sm text-muted-foreground">加载中...</p>
       ) : !tags || tags.length === 0 ? (
-        <p className="text-sm text-muted-foreground">还没有标签。</p>
+        <EmptyState description="还没有标签，在上方创建第一个" />
       ) : (
-        <div className="space-y-2">
-          {tags.map((tag: Tag) => (
+        <div className="overflow-hidden rounded-2xl border border-black/[0.07] bg-card dark:border-white/10"
+          style={{ boxShadow: 'var(--shadow-card)' }}>
+          {tags.map((tag: Tag, idx: number) => (
             <div
               key={tag.id}
-              className="flex items-center justify-between rounded-md border px-3 py-2"
+              className={cn(
+                'flex items-center justify-between px-4 py-3 transition-colors hover:bg-muted/40',
+                idx > 0 && 'border-t border-black/[0.07] dark:border-white/10',
+              )}
             >
               {editingId === tag.id ? (
                 <div className="flex flex-1 items-center gap-2">
@@ -124,9 +131,9 @@ export function TagEditor() {
                 </div>
               ) : (
                 <>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2.5">
                     <Badge variant="secondary">{tag.name}</Badge>
-                    <span className="text-xs text-muted-foreground">
+                    <span className="text-xs text-muted-foreground tabular-nums">
                       {tag.project_count} 个项目
                     </span>
                   </div>
@@ -171,25 +178,23 @@ export function TagEditor() {
           <form onSubmit={handleMerge} className="space-y-4">
             <div className="space-y-2">
               <Label>源标签（将被删除）</Label>
-              <select
-                className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+              <Select
                 value={mergeSource}
                 onChange={(e) => setMergeSource(e.target.value)}
               >
                 <option value="">选择...</option>
                 {tags?.map((tag: Tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
-              </select>
+              </Select>
             </div>
             <div className="space-y-2">
               <Label>目标标签（保留）</Label>
-              <select
-                className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+              <Select
                 value={mergeTarget}
                 onChange={(e) => setMergeTarget(e.target.value)}
               >
                 <option value="">选择...</option>
                 {tags?.map((tag: Tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
-              </select>
+              </Select>
             </div>
             <DialogFooter>
               <Button type="submit" disabled={merge.isPending || !mergeSource || !mergeTarget}>

@@ -5,6 +5,7 @@ import { useState } from 'react'
 import { PageHeader, PageShell } from '@/components/page-shell'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import {
   Table,
@@ -43,18 +44,18 @@ export default function ConsoleAuditPage() {
         description={auditData ? `共 ${total} 条` : '管理操作记录'}
       />
 
-      <div className="space-y-4 py-6">
-        <Card>
-          <CardContent className="py-4">
+      <div className="py-6">
+        <Card className="overflow-hidden">
+          <CardContent className="px-0 py-4">
             {isLoading ? (
-              <div className="space-y-2">
+              <div className="space-y-2 px-6">
                 {Array.from({ length: 5 }).map((_, i) => (
                   <Skeleton key={i} className="h-10" />
                 ))}
               </div>
             ) : items.length === 0 ? (
-              <div className="rounded-md border border-dashed p-8 text-center text-[13px] text-muted-foreground">
-                暂无记录
+              <div className="px-6">
+                <EmptyState description="暂无记录" />
               </div>
             ) : (
               <Table>
@@ -96,34 +97,34 @@ export default function ConsoleAuditPage() {
               </Table>
             )}
           </CardContent>
-        </Card>
 
-        {/* 分页 */}
-        {auditData && items.length > 0 && (
-          <div className="flex items-center justify-between text-[12px] text-muted-foreground">
-            <span>
-              第 {page} / {totalPages} 页（每页 {PAGE_SIZE} 条）
-            </span>
-            <div className="flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={page <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-              >
-                上一页
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={items.length < PAGE_SIZE || page >= totalPages}
-                onClick={() => setPage((p) => p + 1)}
-              >
-                下一页
-              </Button>
+          {/* 分页（内嵌于卡片底部，发丝线分隔，形成统一面板） */}
+          {auditData && items.length > 0 && (
+            <div className="flex items-center justify-between border-t border-black/[0.07] px-6 py-3 text-[12px] text-muted-foreground dark:border-white/10">
+              <span>
+                第 {page} / {totalPages} 页（每页 {PAGE_SIZE} 条）
+              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={page <= 1}
+                  onClick={() => setPage((p) => Math.max(1, p - 1))}
+                >
+                  上一页
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={items.length < PAGE_SIZE || page >= totalPages}
+                  onClick={() => setPage((p) => p + 1)}
+                >
+                  下一页
+                </Button>
+              </div>
             </div>
-          </div>
-        )}
+          )}
+        </Card>
       </div>
     </PageShell>
   )

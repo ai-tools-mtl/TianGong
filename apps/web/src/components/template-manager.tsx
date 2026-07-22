@@ -5,6 +5,7 @@ import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
+import { TemplateDetailDialog } from '@/components/template-detail-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -15,14 +16,19 @@ import type { TemplateSummary } from '@/types/api'
 const POLL_INTERVAL_MS = 1500
 const POLL_MAX_ATTEMPTS = 40 // 60s 上限
 
-async function pollParseJob(jobId: string): Promise<'completed' | 'failed'> {
+interface PollResult {
+  status: 'completed' | 'failed' | 'timeout'
+  errorMessage?: string
+}
+
+async function pollParseJob(jobId: string): Promise<PollResult> {
   for (let i = 0; i < POLL_MAX_ATTEMPTS; i++) {
     const job = await api.getParseJob(jobId)
-    if (job.status === 'completed') return 'completed'
-    if (job.status === 'failed') return 'failed'
+    if (job.status === 'completed') return { status: 'completed' }
+    if (job.status === 'failed') return { status: 'failed', errorMessage: job.error_message || undefined }
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS))
   }
-  return 'failed'
+  return { status: 'timeout' }
 }
 
 export function TemplateManager() {
@@ -39,14 +45,18 @@ export function TemplateManager() {
       const { parse_job_id } = await api.uploadTemplate(file)
       toast.info('模板已上传，正在解析...')
       const result = await pollParseJob(parse_job_id)
-      if (result === 'completed') {
+      if (result.status === 'completed') {
         toast.success('模板解析成功')
         refetch()
+      } else if (result.status === 'timeout') {
+        toast.error('解析超时（超过 60 秒），请刷新页面查看模板列表')
+        refetch()
       } else {
-        toast.error('模板解析失败')
+        toast.error(result.errorMessage || '模板解析失败')
       }
-    } catch {
-      toast.error('上传失败')
+    } catch (err) {
+      const msg = (err as { message?: string })?.message
+      toast.error(msg || '上传失败')
     } finally {
       setUploading(false)
       if (fileRef.current) fileRef.current.value = ''
@@ -77,7 +87,10 @@ export function TemplateManager() {
         {isLoading ? (
           <p className="text-sm text-muted-foreground">加载中...</p>
         ) : templates.length === 0 ? (
-          <div className="rounded-lg border border-dashed p-12 text-center text-sm text-muted-foreground">
+          <div
+            className="rounded-2xl border border-black/[0.07] bg-card p-12 text-center text-sm text-muted-foreground dark:border-white/10"
+            style={{ boxShadow: 'var(--shadow-card)' }}
+          >
             还没有模板，上传一个 Word 模板开始
           </div>
         ) : (
@@ -92,9 +105,12 @@ export function TemplateManager() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-[12px] text-muted-foreground">
-                    {t.section_count} 个章节
-                  </p>
+                  <div className="flex items-center justify-between">
+                    <p className="text-[12px] text-muted-foreground">
+                      {t.section_count} 个章节
+                    </p>
+                    <TemplateDetailDialog templateId={t.id} templateName={t.name} status={t.status} />
+                  </div>
                 </CardContent>
               </Card>
             ))}
