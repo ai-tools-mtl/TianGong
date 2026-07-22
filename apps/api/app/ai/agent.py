@@ -47,10 +47,17 @@ def build_agent(
        按 MinIO 前缀加载 skill 目录、FilesystemMiddleware 持久化文件。
     3. build_agent_skill_sources：运行时合并可见 skill 前缀
        （global 低优先，personal 高优先覆盖同名）。
-    4. get_llm 取 ChatOpenAI，bind_tools 注入 RAG 工具。
-       注：deepagents 内部会对传入的 model 再调一次 bind_tools，与这里的预绑定
-       幂等叠加（fake model 返回自身；ChatOpenAI 产生 bound chain，均无害）。
+    4. get_llm 取 ChatOpenAI，直接传给 create_deep_agent(model=...)。
+       **不在此处预绑定 bind_tools**：deepagents 内部会调 model.bind_tools(tools)，
+       若在此处先 bind 一次，真实 ChatOpenAI 会返回 RunnableBinding（无 bind_tools 方法），
+       导致 deepagents 内部二次 bind 抛 AttributeError（I1）。
     5. create_deep_agent 组装返回 CompiledStateGraph。
+
+    单 bucket 设计（C1）：所有 skill（global + personal）统一存 MinIO "global" bucket，
+    仅靠 minio_prefix 区分 scope（skills/global/... vs skills/personal/{owner}/...）。
+    故 MinIOSkillStore(bucket="global") 对两种 scope 都正确。
+    注意：Task 16 的 skill CRUD 服务里 _bucket_for_scope 必须恒返回 "global"，
+    不得按 scope 拆分 bucket——否则 personal skill 运行时不可见（本 store 只读 global bucket）。
 
     Args:
         db: SQLAlchemy Session（供 build_agent_skill_sources 查可见 skill）。
@@ -67,19 +74,25 @@ def build_agent(
     check_tool_support(model=llm_config.model)
 
     # 2. MinIO BaseStore + StoreBackend
+    # C1：所有 skill（global + personal）统一存 "global" bucket，仅靠 minio_prefix 区分 scope。
     store = MinIOSkillStore(bucket="global")
-    backend = StoreBackend(store=store)
+    # I2：显式 namespace，避免 StoreBackend 回退到 legacy assistant_id 检测（每次 ls 抛 DeprecationWarning，
+    # 0.7.0 会 break）。source 路径（如 skills/global/<name>/）本身是绝对前缀，故 namespace 用空 tuple——
+    # StoreBackend 的 ls() 用 item.key（全路径）做前缀过滤，不与 namespace 叠加，故空 tuple 不会重复前缀。
+    backend = StoreBackend(
+        store=store,
+        namespace=lambda ctx: (),
+    )
 
     # 3. 可见 skill sources（global ∪ personal）
     skill_sources = build_agent_skill_sources(db, user_id=user_id)
 
     # 4. LLM + 工具
     llm = get_llm(llm_config, streaming=True)
-    llm_with_tools = llm.bind_tools([rag_search_tool])
 
     # 5. 组装 deepagents agent
     agent = create_deep_agent(
-        model=llm_with_tools,
+        model=llm,  # I1：不预绑定。deepagents 内部调 bind_tools，预绑定会让 RunnableBinding 无 bind_tools 方法。
         system_prompt=SYSTEM_PROMPT,
         tools=[rag_search_tool],
         skills=skill_sources if skill_sources else None,

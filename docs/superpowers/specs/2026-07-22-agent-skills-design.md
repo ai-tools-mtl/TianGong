@@ -155,6 +155,8 @@ apps/api/app/sandbox/
 
 MinIO 布局：`skills/<scope>/<owner_or_global>/<name>/{SKILL.md, scripts/, references/, assets/}`
 
+**单 bucket 设计（重要）：** 所有 skill（global + personal）统一存 MinIO 的 `"global"` bucket，**仅靠 `minio_prefix` 区分 scope**（`skills/global/...` vs `skills/personal/{owner}/...`），不按 scope 拆分 bucket。原因：`MinIOSkillStore` 单实例只读一个 bucket，若 global/personal 分桶，则 `build_agent` 里 `MinIOSkillStore(bucket="global")` 读不到 personal skill，personal skill 在运行时不可见（C1）。因此 Task 16 的 skill CRUD 服务里 `_bucket_for_scope` 必须**恒返回 `"global"`**，不得按 scope 分桶。
+
 ### 6.3 deepagents agent 重写（Q8-B/Q10/Q16-A）
 
 - `app/ai/agent.py`（新建）：`create_deep_agent(model=get_llm(...).bind_tools(...), skills=..., tools=[rag_search_tool])`。
