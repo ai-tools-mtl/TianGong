@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     # LLM（GLM via OpenAI 兼容协议）
     glm_api_key: str = ""
     glm_base_url: str = "https://open.bigmodel.cn/api/paas/v4"
-    glm_model: str = "glm-4-flash"
+    glm_model: str = "glm-4.7"
     glm_embedding_model: str = "embedding-3"
 
     # 文件上传（设计 13.2，附录 B：MVP 本地存储）
