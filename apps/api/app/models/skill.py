@@ -7,7 +7,7 @@ admin 全局（scope=global, owner_id=NULL）或用户个人（scope=personal）
 """
 import uuid
 
-from sqlalchemy import ForeignKey, Index, String, Text
+from sqlalchemy import ForeignKey, Index, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, IdMixin, TimestampMixin
@@ -27,11 +27,29 @@ class Skill(Base, IdMixin, TimestampMixin):
     - scope/owner_id 联合表达可见性：global 时 owner_id=NULL，personal 时必填。
     - status=draft 不进 runtime 可见集合（admin/用户编辑中不喂 agent）。
     - minio_prefix 指向 MinIO 中该 skill 的目录前缀（SKILL.md + scripts/ + ...）。
+    - 唯一性通过两个 partial index 实现（SQL NULL 视为 distinct，无法用单一复合
+      索引覆盖 global 档）：global 对 name 唯一、personal 对 (owner_id, name) 唯一。
     """
     __tablename__ = "skills"
     __table_args__ = (
-        # 同一 scope + owner 下 name 唯一（global 时 owner_id 视为 NULL 统一）
-        Index("uix_skill_scope_owner_name", "scope", "owner_id", "name", unique=True),
+        # global skill：owner_id 恒为 NULL，SQL 标准里 NULL 视为 distinct，
+        # 故用 partial index 在 scope='global' 时对 name 单独唯一
+        Index(
+            "uix_skill_global_name",
+            "name",
+            unique=True,
+            sqlite_where=text("scope = 'global'"),
+            postgresql_where=text("scope = 'global'"),
+        ),
+        # personal skill：owner_id 非 NULL，partial index 在 scope='personal' 时
+        # 对 (owner_id, name) 唯一
+        Index(
+            "uix_skill_personal_owner_name",
+            "owner_id", "name",
+            unique=True,
+            sqlite_where=text("scope = 'personal'"),
+            postgresql_where=text("scope = 'personal'"),
+        ),
     )
 
     name: Mapped[str] = mapped_column(String(64))  # spec name, [a-z0-9-], ≤64

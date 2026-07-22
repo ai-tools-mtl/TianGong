@@ -73,3 +73,34 @@ def test_skill_has_timestamps(db):
     db.commit()
     assert skill.created_at is not None
     assert skill.updated_at is not None
+
+
+def test_duplicate_global_name_raises(db):
+    """global skill 同名应被唯一约束拒绝。"""
+    from sqlalchemy.exc import IntegrityError
+    from app.models import Skill
+
+    db.add(Skill(name="dup", description="d", scope="global", status="draft", minio_prefix="skills/global/dup/"))
+    db.commit()
+
+    db.add(Skill(name="dup", description="d2", scope="global", status="draft", minio_prefix="skills/global/dup/"))
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+
+
+def test_duplicate_personal_name_same_owner_raises(db):
+    """同一用户的 personal skill 同名应被拒绝。"""
+    from sqlalchemy.exc import IntegrityError
+    from app.models import Skill
+
+    owner = uuid.uuid4()
+    db.add(Skill(name="my-skill", description="d", scope="personal", owner_id=owner, status="draft",
+                 minio_prefix=f"skills/personal/{owner}/my-skill/"))
+    db.commit()
+
+    db.add(Skill(name="my-skill", description="d2", scope="personal", owner_id=owner, status="draft",
+                 minio_prefix=f"skills/personal/{owner}/my-skill/"))
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()

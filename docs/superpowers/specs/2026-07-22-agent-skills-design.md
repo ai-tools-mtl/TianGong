@@ -104,7 +104,10 @@ class Skill(Base, IdMixin, TimestampMixin):
 - `scope` + `owner_id` 联合表达可见性：`scope="global"` 时 `owner_id=NULL`；`scope="personal"` 时 `owner_id` 必填。
 - `status="draft"` 的 skill 不进 runtime（admin/用户编辑中内容不喂 agent）。
 - `minio_prefix` 是 MinIO 对象前缀，skill 的 `SKILL.md`+`scripts/`+`references/`+`assets/` 都挂在这个前缀下。
-- 唯一约束：`(scope, owner_id, name)` 三元组唯一（global 档 `owner_id` 视为 NULL 统一）。
+- 唯一约束（partial index）：SQL 标准里 NULL 视为 distinct，单一 `(scope, owner_id, name)` 复合唯一索引对 global 档（`owner_id` 恒为 NULL）**不生效**，故改用两个 partial unique index：
+  - global：`name` 唯一（`WHERE scope='global'`，`sqlite_where`/`postgresql_where`）
+  - personal：`(owner_id, name)` 唯一（`WHERE scope='personal'`）
+  不同档之间互不影响（global 与 personal 允许同名，两个 personal 用户允许各自同名）。
 
 ### 5.2 彻底删除清单（Q5 解耦决定）
 
