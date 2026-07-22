@@ -1,7 +1,8 @@
-"""初始化数据库：跑全部 alembic 迁移到 head，可选创建管理员。
+"""初始化数据库：跑全部 alembic 迁移到 head，可选创建管理员，并 seed 默认模板/Rubric。
 
 这是一个幂等脚本，重复执行不会报错（alembic 已在 head 时跳过，admin
-已存在时跳过）。容器由用户自行启动，本脚本只负责建表与建账号。
+已存在时跳过，默认模板/Rubric 已存在时跳过）。容器由用户自行启动，本
+脚本只负责建表、建账号、seed 系统默认数据。
 
 前置条件（脚本会检测，不通会明确提示）：
     docker compose up -d postgres
@@ -78,6 +79,23 @@ def _maybe_create_admin(args: argparse.Namespace) -> None:
         db.close()
 
 
+def _seed_system_defaults() -> None:
+    """seed 系统默认模板 + 默认 Rubric（幂等）。"""
+    from app.services.seed_service import (
+        ensure_default_rubric,
+        ensure_default_template,
+    )
+
+    db = SessionLocal()
+    try:
+        tpl = ensure_default_template(db)
+        rubric = ensure_default_rubric(db)
+        print(f"✓ 默认模板就绪：{tpl.name} (id={tpl.id})")
+        print(f"✓ 默认 Rubric 就绪：{rubric.name} (id={rubric.id})")
+    finally:
+        db.close()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="初始化数据库（迁移到 head，可选建管理员）"
@@ -102,6 +120,7 @@ def main() -> int:
     _check_db_ready()
     _run_migrations()
     _maybe_create_admin(args)
+    _seed_system_defaults()
     print()
     print("✓ 数据库初始化完成")
     return 0

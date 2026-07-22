@@ -38,6 +38,7 @@ async def upload(
     if not file.filename or not file.filename.lower().endswith(".docx"):
         raise ValidationError("仅支持 .docx 文件")
     content = await file.read()
+    parse_service.validate_docx_bytes(content, file.filename)
     job = parse_service.create_parse_job(
         db, storage=get_storage(), user_id=current_user.id,
         filename=file.filename, file_bytes=content,

@@ -91,8 +91,25 @@ class NumberingResolver:
             self._counters[counter_key] = (
                 self._counters.get(counter_key, levels[ilvl]["start"] - 1) + 1
             )
+            # 上级递增时重置所有更深层级的计数器（Word 行为：
+            # 1.1 → 1.2 → 2.1，不能是 1.1 → 1.2 → 2.3）
+            int_ilvl = int(ilvl)
+            for i in range(int_ilvl + 1, 10):  # 最多 9 级
+                deeper_key = (num_id, str(i))
+                if deeper_key in self._counters:
+                    start_val = levels.get(str(i), {}).get("start", 1)
+                    self._counters[deeper_key] = start_val - 1  # 下次 resolve 时 +1 → start
+            
             count = self._counters[counter_key]
             lvl_text = levels[ilvl]["lvlText"] or ""
-            return lvl_text.replace(f"%{int(ilvl) + 1}", str(count))
+            # 替换所有级别的占位符（%1, %2, ...），而非仅当前级别
+            # Word 多级编号 lvlText 如 "%1.%2" —— 需替换 %1 和 %2 为各自计数器的值
+            result = lvl_text
+            for i in range(int(ilvl) + 1):
+                placeholder = f"%{i + 1}"
+                ck = (num_id, str(i))
+                val = self._counters.get(ck, levels.get(str(i), {}).get("start", 1))
+                result = result.replace(placeholder, str(val))
+            return result
         except Exception:
             return None
