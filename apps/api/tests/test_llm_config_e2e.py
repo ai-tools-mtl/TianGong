@@ -98,15 +98,60 @@ def _assert_byok_kwargs(mock_chat):
     assert kwargs["model"] == BYOK_MODEL, "LLM 应使用用户的 BYOK model"
 
 
+def _assert_byok_llm_config(captured):
+    """断言传入 build_agent 的 llm_config 携带 BYOK 值（Task 13 chat/generate 路径）。
+
+    rewrite/caption 仍走 astream_llm（patch ChatOpenAI 捕获构造参数，用 _assert_byok_kwargs）；
+    Task 13 起 chat/generate 走 agent loop，BYOK 配置传到 build_agent 的 llm_config 形参，
+    故在此断言 captured[0] 的 base_url/api_key/model。
+    """
+    assert captured, "build_agent 应被调用"
+    cfg = captured[0]
+    assert cfg.api_key == BYOK_API_KEY, "agent loop 应收到用户的 BYOK key"
+    assert cfg.base_url == BYOK_BASE_URL, "agent loop 应收到用户的 BYOK base_url"
+    assert cfg.model == BYOK_MODEL, "agent loop 应收到用户的 BYOK model"
+
+
+def _fake_agent_factory(token_text, captured):
+    """构造 fake build_agent：返回具备 astream_events 的假 agent。
+
+    Task 13 起 chat/generate 委托 deepagents agent loop（astream_chat/astream_generate
+    不再走 astream_llm）。这些测试的意图是「BYOK 配置真正传到 LLM 构造处」——
+    build_agent 内部仍调 get_llm → ChatOpenAI，故 patch app.ai.llm_client.ChatOpenAI
+    即可捕获构造参数。fake_agent 只负责把 token 流透传，避免触发 check_tool_support
+    （假模型 byok-model 不在支持列表）与 MinIO/真实 agent 构造。
+    captured：可选 list，收集构造时的 llm_config 以做额外断言。
+    """
+
+    class _FakeAgent:
+        async def astream_events(self, input_, *, version="v2"):
+            chunk = MagicMock()
+            chunk.content = token_text
+            yield {"event": "on_chat_model_stream", "data": {"chunk": chunk}}
+
+    def _build_agent(db, *, llm_config, user_id):
+        if captured is not None:
+            captured.append(llm_config)
+        return _FakeAgent()
+
+    return _build_agent
+
+
 # ── SSE 端点：ChatOpenAI 收到 BYOK 配置 ──
 
 def test_chat_uses_user_byok_config_not_env(client, registered_user, db_session):
-    """chat 端点：用户配了 BYOK，调 chat 时 ChatOpenAI 收到的是用户的假 key（非 env）。"""
+    """chat 端点：用户配了 BYOK，调 chat 时 BYOK 配置一路传到 build_agent（非 env）。
+
+    Task 13：chat 走 agent loop。BYOK 断链意图不变——resolve_llm_config 解析出的
+    配置传到 build_agent 的 llm_config 形参（build_agent 内部仍 get_llm → ChatOpenAI）。
+    本测试 patch build_agent 捕获 llm_config，断言其携带 BYOK 值；同时跳过
+    check_tool_support（假模型 byok-model 不支持 tool calling）与真实 agent 构造。
+    """
     sections = _setup_byok_user(client, registered_user, db_session)
     section = sections[0]
 
-    mock_inst = _mock_chat_openai("你好")
-    with patch("app.ai.llm_client.ChatOpenAI", return_value=mock_inst) as mock_chat:
+    captured = []
+    with patch("app.ai.agent.build_agent", _fake_agent_factory("你好", captured)):
         res = client.post(
             f"/api/v1/sections/{section.id}/chat", json={"message": "测试"},
         )
@@ -114,21 +159,21 @@ def test_chat_uses_user_byok_config_not_env(client, registered_user, db_session)
     assert res.status_code == 200
     assert "event: token" in res.text
     assert "event: done" in res.text
-    _assert_byok_kwargs(mock_chat)
+    _assert_byok_llm_config(captured)
 
 
 def test_generate_uses_user_byok_config_not_env(client, registered_user, db_session):
-    """generate 端点：ChatOpenAI 收到用户的 BYOK key。"""
+    """generate 端点：BYOK 配置传到 build_agent（同 chat，走 agent loop）。"""
     sections = _setup_byok_user(client, registered_user, db_session)
     section = sections[0]
 
-    mock_inst = _mock_chat_openai("# 草稿标题")
-    with patch("app.ai.llm_client.ChatOpenAI", return_value=mock_inst) as mock_chat:
+    captured = []
+    with patch("app.ai.agent.build_agent", _fake_agent_factory("# 草稿标题", captured)):
         res = client.post(f"/api/v1/sections/{section.id}/generate")
 
     assert res.status_code == 200
     assert "event: done" in res.text
-    _assert_byok_kwargs(mock_chat)
+    _assert_byok_llm_config(captured)
 
 
 def test_rewrite_uses_user_byok_config_not_env(client, registered_user, db_session):

@@ -65,42 +65,80 @@ def stream_rewrite(
     yield from stream_llm(messages, llm_config=llm_config)
 
 
+def _section_owner(db, section: Section):
+    """取 section 所属项目的 user_id（用于 skill 可见性）。
+
+    build_agent 需要 user_id 来限定 personal skill 可见范围 + RAG 检索范围。
+    """
+    from sqlalchemy import select
+
+    from app.models import Project
+
+    project = db.scalar(select(Project).where(Project.id == section.project_id))
+    return project.user_id if project else None
+
+
 async def astream_chat(
     db, section: Section, history: list[Message], user_input: str,
     *, llm_config: ResolvedLLMConfig, usage_sink: dict | None = None,
 ) -> AsyncIterator[str]:
-    """异步引导对话：流式回复用户问题（供 SSE 端点用）。
+    """异步引导对话：委托 deepagents agent loop（路线 B）。
 
-    usage_sink 透传给 astream_llm（断链 C3：捕获 token 用量记入 LLMCallLog）。
+    agent.astream_events 暴露 token + tool_call 事件。
+    本函数只 yield 文本 token（on_chat_model_stream）；tool_call 事件
+    由 Task 23 的 SSE 层捕获。
+
+    注意：usage_sink 在 agent loop 路径下**不会被填充**——token 用量
+    需从 agent 的最终 message 的 usage_metadata 提取（agent loop 多步调用，
+    简单累加 usage_sink 较复杂），Task 13 暂留空。旧 astream_llm 路径
+    （astream_rewrite 仍在用）仍正确填充 usage_sink。
     """
-    summaries = get_project_summaries(db, section.project_id)
-    knowledge = _retrieve_knowledge(db, section, user_input)
-    messages = assemble_messages(section, history, user_input, summaries, knowledge)
-    async for token in astream_llm(messages, llm_config=llm_config, usage_sink=usage_sink):
-        yield token
+    from app.ai.agent import build_agent
+
+    agent = build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section))
+    async for event in agent.astream_events(
+        {"messages": [{"role": "user", "content": user_input}]},
+        version="v2",
+    ):
+        # 只透传文本 token（on_chat_model_stream）
+        if event["event"] == "on_chat_model_stream":
+            chunk = event["data"].get("chunk")
+            if chunk and chunk.content:
+                yield chunk.content
 
 
 async def astream_generate(
     db, section: Section, history: list[Message],
     *, llm_config: ResolvedLLMConfig, usage_sink: dict | None = None,
 ) -> AsyncIterator[str]:
-    """异步生成草稿：基于对话历史生成本章草稿（Markdown 流式）。
+    """异步生成草稿：委托 deepagents agent loop（路线 B）。
 
-    usage_sink 透传给 astream_llm（断链 C3：捕获 token 用量记入 LLMCallLog）。
+    agent.astream_events 暴露 token + tool_call 事件。
+    本函数只 yield 文本 token（on_chat_model_stream）；tool_call 事件
+    由 Task 23 的 SSE 层捕获。
+
+    注意：usage_sink 在 agent loop 路径下**不会被填充**——token 用量
+    需从 agent 的最终 message 的 usage_metadata 提取（agent loop 多步调用，
+    简单累加 usage_sink 较复杂），Task 13 暂留空。旧 astream_llm 路径
+    （astream_rewrite 仍在用）仍正确填充 usage_sink。
     """
-    summaries = get_project_summaries(db, section.project_id)
-    knowledge = _retrieve_knowledge(db, section, section.title)
+    from app.ai.agent import build_agent
+
+    agent = build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section))
     sp = get_section_prompt(section.key)
-    messages = assemble_messages(
-        section, history, project_summaries=summaries, knowledge_context=knowledge
-    )
     instruction = (
-        f"请根据以上对话内容，整理生成本章节【{section.title}】的草稿。"
+        f"请根据对话历史，整理生成本章节【{section.title}】的草稿。"
         f"要求：{sp.output_format}。用 Markdown 格式输出。"
     )
-    messages.append(HumanMessage(content=instruction))
-    async for token in astream_llm(messages, llm_config=llm_config, usage_sink=usage_sink):
-        yield token
+    async for event in agent.astream_events(
+        {"messages": [{"role": "user", "content": instruction}]},
+        version="v2",
+    ):
+        # 只透传文本 token（on_chat_model_stream）
+        if event["event"] == "on_chat_model_stream":
+            chunk = event["data"].get("chunk")
+            if chunk and chunk.content:
+                yield chunk.content
 
 
 async def astream_rewrite(

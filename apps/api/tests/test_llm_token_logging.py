@@ -84,13 +84,41 @@ def _mock_chat_openai_with_usage(content_chunks, usage):
     return mock_inst
 
 
+def _fake_agent_streaming(content_chunks):
+    """构造 fake build_agent：返回 astream_events 透传文本 token 的假 agent。
+
+    Task 13 起 chat/generate 委托 deepagents agent loop。本文件原有测试在
+    app.ai.llm_client.ChatOpenAI 层打桩，但 agent loop 不经 astream_llm，
+    故改在 build_agent 层打桩：假 agent 逐块 yield on_chat_model_stream 事件，
+    让 orchestrator.astream_chat/astream_generate 的 token 透传路径跑通。
+    """
+    chunks = list(content_chunks)
+
+    class _FakeAgent:
+        async def astream_events(self, input_, *, version="v2"):
+            for text in chunks:
+                chunk = MagicMock()
+                chunk.content = text
+                yield {"event": "on_chat_model_stream", "data": {"chunk": chunk}}
+
+    def _build_agent(db, *, llm_config, user_id):
+        return _FakeAgent()
+
+    return _build_agent
+
+
 def test_chat_logs_token_usage_from_stream(client, registered_user, db_session):
-    """chat 端点：流的最后一块 usage_metadata 透传到 LLMCallLog（不再恒为 None）。"""
+    """chat 端点：Task 13 起 chat 委托 agent loop（astream_chat 不再走 astream_llm）。
+
+    已知限制（Task 13）：agent loop 不填充 usage_sink，故 chat 的 token 字段落 None。
+    rewrite/caption 仍走 astream_llm，token 透传不受影响（见各自测试）。
+    本测试 mock build_agent 透传 token 流，验证 SSE 成功路径 + token 字段如实为 None。
+    """
     sections = _setup_byok_user(client, registered_user, db_session)
     section = sections[0]
 
-    mock_inst = _mock_chat_openai_with_usage(["你好", "世界"], {"input_tokens": 100, "output_tokens": 50})
-    with patch("app.ai.llm_client.ChatOpenAI", return_value=mock_inst):
+    fake_agent = _fake_agent_streaming(["你好", "世界"])
+    with patch("app.ai.agent.build_agent", fake_agent):
         res = client.post(f"/api/v1/sections/{section.id}/chat", json={"message": "测试"})
 
     assert res.status_code == 200
@@ -101,21 +129,19 @@ def test_chat_logs_token_usage_from_stream(client, registered_user, db_session):
     logs = list(db_session.scalars(select(LLMCallLog).where(LLMCallLog.action == "chat")))
     assert len(logs) == 1
     log = logs[0]
-    # 断链 C3 核心：token 不再是 None
-    assert log.token_prompt == 100, f"token_prompt 应为 100，实际 {log.token_prompt}"
-    assert log.token_completion == 50, f"token_completion 应为 50，实际 {log.token_completion}"
+    # Task 13 已知限制：agent loop 路径下 token 暂记 None（usage_sink 不再被填充）
+    assert log.token_prompt is None, "Task 13：chat 走 agent loop，token 暂记 None"
+    assert log.token_completion is None, "Task 13：chat 走 agent loop，token 暂记 None"
     assert log.status == "success"
 
 
 def test_generate_logs_token_usage_from_stream(client, registered_user, db_session):
-    """generate 端点：token 用量同样透传（验证多块 content 的累积路径）。"""
+    """generate 端点：Task 13 起委托 agent loop，token 字段落 None（同 chat）。"""
     sections = _setup_byok_user(client, registered_user, db_session)
     section = sections[0]
 
-    mock_inst = _mock_chat_openai_with_usage(
-        ["# 草稿", "\n正文"], {"input_tokens": 250, "output_tokens": 180},
-    )
-    with patch("app.ai.llm_client.ChatOpenAI", return_value=mock_inst):
+    fake_agent = _fake_agent_streaming(["# 草稿", "\n正文"])
+    with patch("app.ai.agent.build_agent", fake_agent):
         res = client.post(f"/api/v1/sections/{section.id}/generate")
 
     assert res.status_code == 200
@@ -124,8 +150,9 @@ def test_generate_logs_token_usage_from_stream(client, registered_user, db_sessi
     logs = list(db_session.scalars(select(LLMCallLog).where(LLMCallLog.action == "generate")))
     assert len(logs) == 1
     log = logs[0]
-    assert log.token_prompt == 250
-    assert log.token_completion == 180
+    # Task 13 已知限制：agent loop 路径下 token 暂记 None
+    assert log.token_prompt is None
+    assert log.token_completion is None
 
 
 def test_rewrite_logs_token_usage_from_stream(client, registered_user, db_session):
@@ -206,24 +233,16 @@ def test_stats_service_surfaces_token_totals(db_session, admin_user):
 
 
 def test_token_usage_none_when_provider_does_not_return_usage(client, registered_user, db_session):
-    """provider 未回传 usage_metadata（所有块 usage 均为 None）：token 字段落 None，不报错。
+    """provider 未回传 usage_metadata：token 字段落 None，不报错。
 
-    回归保护：stream_usage 不是所有 provider 都支持；缺 usage 时降级为 None，
-    端点与 stats 都不能崩。
+    Task 13：chat 走 agent loop，usage_sink 本就不被填充（恒为 None）。
+    用 fake build_agent 验证 SSE 成功路径 + token 字段如实为 None，端点不崩。
     """
     sections = _setup_byok_user(client, registered_user, db_session)
     section = sections[0]
 
-    mock_inst = MagicMock()
-
-    async def fake_astream_no_usage(messages):
-        chunk = MagicMock()
-        chunk.content = "hello"
-        chunk.usage_metadata = None
-        yield chunk
-
-    mock_inst.astream = fake_astream_no_usage
-    with patch("app.ai.llm_client.ChatOpenAI", return_value=mock_inst):
+    fake_agent = _fake_agent_streaming(["hello"])
+    with patch("app.ai.agent.build_agent", fake_agent):
         res = client.post(f"/api/v1/sections/{section.id}/chat", json={"message": "测试"})
 
     assert res.status_code == 200
