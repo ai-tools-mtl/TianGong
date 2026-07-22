@@ -1,4 +1,5 @@
 from app.models.agent_skill import AgentSkill
+from app.models.skill import Skill
 from app.models.attachment import Attachment
 from app.models.audit_log import AuditLog
 from app.models.base import Base, JSONType
@@ -33,6 +34,7 @@ __all__ = [
     "ReviewRubric", "ReviewRecord", "UserLLMConfig",
     "UserGlobalLLMGrant",
     "AgentSkill",
+    "Skill",
     "LLMCallLog",
     "AuditLog",
 ]
