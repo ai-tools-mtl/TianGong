@@ -159,7 +159,7 @@ MinIO 布局：`skills/<scope>/<owner_or_global>/<name>/{SKILL.md, scripts/, ref
 
 ### 6.3 deepagents agent 重写（Q8-B/Q10/Q16-A）
 
-- `app/ai/agent.py`（新建）：`create_deep_agent(model=get_llm(...).bind_tools(...), skills=..., tools=[rag_search_tool])`。
+- `app/ai/agent.py`（新建）：`create_deep_agent(model=get_llm(...), skills=..., tools=[rag_search_tool], backend=StoreBackend(store=MinIOSkillStore(...), namespace=lambda ctx: ("skills",)))`。**不预绑定 `bind_tools`**——deepagents 内部会调 `model.bind_tools(all_tools)`，预绑定会让 `RunnableBinding`（无 `bind_tools` 方法）传入导致 AttributeError。
 - 取代 `app/ai/orchestrator.py` 的 `astream_generate`/`astream_chat`/`astream_rewrite` 一次性流，改为 agent loop。
 - `rag_search` 从布尔守卫改造为 `@tool`，agent 在 loop 中按需调用。
 - BYOK 降级（Q14-α）：agent 创建前检测模型 tool calling 支持，不支持 → 明确报错"当前模型不支持技能功能，请切换到支持 function calling 的模型"，**拒绝服务**。

@@ -77,11 +77,13 @@ def build_agent(
     # C1：所有 skill（global + personal）统一存 "global" bucket，仅靠 minio_prefix 区分 scope。
     store = MinIOSkillStore(bucket="global")
     # I2：显式 namespace，避免 StoreBackend 回退到 legacy assistant_id 检测（每次 ls 抛 DeprecationWarning，
-    # 0.7.0 会 break）。source 路径（如 skills/global/<name>/）本身是绝对前缀，故 namespace 用空 tuple——
-    # StoreBackend 的 ls() 用 item.key（全路径）做前缀过滤，不与 namespace 叠加，故空 tuple 不会重复前缀。
+    # 0.7.0 会 break）。namespace 必须非空（deepagents 的 _validate_namespace 拒绝空 tuple），
+    # 且应覆盖所有 skill 的前缀根——所有 minio_prefix 都以 "skills/" 开头，故用 ("skills",)。
+    # StoreBackend.ls() 先按 namespace 从 MinIO 搜索对象，再用 source_path（绝对路径，如
+    # "skills/global/<name>/"）做前缀过滤——过滤用的是 item.key 全路径，故不会双重前缀。
     backend = StoreBackend(
         store=store,
-        namespace=lambda ctx: (),
+        namespace=lambda ctx: ("skills",),
     )
 
     # 3. 可见 skill sources（global ∪ personal）

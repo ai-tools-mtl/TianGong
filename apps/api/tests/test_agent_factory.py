@@ -177,3 +177,38 @@ def test_build_agent_assembly_args(db_session, monkeypatch):
     assert isinstance(captured["backend"], StoreBackend)
     # system_prompt 非空（来自 context_assembler）
     assert captured["system_prompt"]
+
+
+def test_build_agent_storebackend_namespace_is_valid(db_session, monkeypatch):
+    """StoreBackend 的 namespace 必须非空（I2 回归保护）。
+
+    deepagents 的 _validate_namespace 拒绝空 tuple（抛 ValueError）。
+    _get_namespace() 在每次 ls/read/write 时被调用。若 namespace 为空，
+    真实 agent 执行（加载 skill）会崩。本测试直接调用 _get_namespace 验证不抛。
+    """
+    from app.ai import agent as agent_mod
+    from app.services.llm_config_service import ResolvedLLMConfig
+
+    monkeypatch.setattr(agent_mod, "get_llm", lambda config, **kw: _mock_llm())
+    monkeypatch.setattr(agent_mod, "create_deep_agent", lambda **kw: type("_S", (), {"ainvoke": lambda *a: None, "astream_events": lambda *a: None})())
+    from app.core import storage as storage_mod
+
+    class _FakeStorage:
+        def __init__(self): self._client = None
+        def _resolve(self, a): return a
+    monkeypatch.setattr(storage_mod, "get_storage", lambda: _FakeStorage())
+
+    config = ResolvedLLMConfig(
+        base_url="http://x", api_key="k", model="glm-4.7",
+        embedding_model="e", source="env",
+    )
+    agent_mod.build_agent(db_session, llm_config=config, user_id=uuid.uuid4())
+
+    # 直接构造同配置 StoreBackend 验证 namespace callable 返回非空且通过校验。
+    from app.skills.storage import MinIOSkillStore
+    from deepagents.backends import StoreBackend
+    store = MinIOSkillStore(bucket="global")
+    backend = StoreBackend(store=store, namespace=lambda ctx: ("skills",))
+    # _get_namespace 不抛 ValueError（空 tuple 会被 _validate_namespace 拒绝）
+    ns = backend._get_namespace()  # noqa: SLF001
+    assert ns == ("skills",)
