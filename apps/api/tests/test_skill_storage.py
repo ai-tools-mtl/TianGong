@@ -4,8 +4,6 @@
 用内存假实现 mock MinioStorage，不真实连 minio。
 测试 namespace ↔ MinIO key 的映射 + BaseStore 方法契约。
 """
-import pytest
-
 from app.skills.storage import MinIOSkillStore, namespace_to_minio_key
 
 
