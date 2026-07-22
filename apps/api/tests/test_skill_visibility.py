@@ -76,3 +76,5 @@ def test_build_agent_skill_sources(db_session):
     sources = build_agent_skill_sources(db_session, user_id=owner)
     assert "skills/global/" in sources
     assert f"skills/personal/{owner}/" in sources
+    # 顺序契约：global 在前（低优先级），personal 在后（高优先级，覆盖同名 global）
+    assert sources.index("skills/global/") < sources.index(f"skills/personal/{owner}/")
