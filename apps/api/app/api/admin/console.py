@@ -10,7 +10,7 @@
 """
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -26,7 +26,9 @@ class GlobalLLMSettings(BaseModel):
     enabled: bool
     base_url: str | None = None
     api_key: str | None = None
-    model: str | None = None
+    # 1214 修复闸 3：model 可选（不更新时不传），但给了就必须非空，
+    # 防止 admin 漏填 model 存入空串 → 后续触发智谱 1214。
+    model: str | None = Field(default=None, min_length=1)
     embedding_model: str | None = None
     allowed_models: list[str] | None = None
 

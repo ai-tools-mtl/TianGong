@@ -94,6 +94,31 @@ def _resolve_model(llm_config) -> str:
     return llm_config.model or ""
 
 
+def _friendly_llm_error(e: Exception) -> str:
+    """把 LLM provider 原始异常（晦涩英文）转成中文友好提示（1214 修复闸 4）。
+
+    覆盖智谱 GLM / OpenAI 兼容协议的常见错误码：
+    - 1214 model 空 → 提示补模型名
+    - 1002 / 401 key 无效 → 提示查 API Key
+    - 超时 / 连接 → 提示网络
+    未匹配的错误保留 str(e)（截断 200 字符），不丢信息。
+    """
+    msg = str(e)
+    # 1214：model 为空（含上游 get_llm 的 ValueError 也归到"缺模型"语义）
+    if "1214" in msg or "model code cannot be empty" in msg or "缺少 model" in msg:
+        return "LLM 配置缺少模型名，请前往设置补全「模型」字段"
+    # 1002 / key 非法 / 401
+    if "1002" in msg or "Authorization" in msg or "API Key" in msg or "Invalid API Key" in msg:
+        return "API Key 无效或已过期，请前往设置检查密钥"
+    # 超时 / 连接
+    if "timed out" in msg.lower() or "timeout" in msg.lower():
+        return "LLM 请求超时，请稍后重试"
+    if "connection" in msg.lower() or "unreachable" in msg.lower():
+        return "无法连接 LLM 服务，请检查网络或 base_url"
+    # 未匹配：保留原文（截断），不丢信息
+    return msg[:200]
+
+
 def _log_llm_call(
     db: Session, *,
     user_id, project_id, action: str, model: str, provider: str,
@@ -223,7 +248,7 @@ async def chat(
         except Exception as e:
             status = "failed"
             err = e
-            yield _sse_event("error", {"code": "llm_error", "message": str(e)[:200]})
+            yield _sse_event("error", {"code": "llm_error", "message": _friendly_llm_error(e)})
         finally:
             _log_llm_call(
                 db,
@@ -300,7 +325,7 @@ async def generate_draft(
         except Exception as e:
             status = "failed"
             err = e
-            yield _sse_event("error", {"code": "llm_error", "message": str(e)[:200]})
+            yield _sse_event("error", {"code": "llm_error", "message": _friendly_llm_error(e)})
         finally:
             _log_llm_call(
                 db,
@@ -362,7 +387,7 @@ async def rewrite(
         except Exception as e:
             status = "failed"
             err = e
-            yield _sse_event("error", {"code": "llm_error", "message": str(e)[:200]})
+            yield _sse_event("error", {"code": "llm_error", "message": _friendly_llm_error(e)})
         finally:
             _log_llm_call(
                 db,
@@ -585,7 +610,7 @@ async def caption_figures(
         except Exception as e:
             status = "failed"
             err = e
-            yield _sse_event("error", {"code": "llm_error", "message": str(e)[:200]})
+            yield _sse_event("error", {"code": "llm_error", "message": _friendly_llm_error(e)})
         finally:
             _log_llm_call(
                 db,

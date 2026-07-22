@@ -5,6 +5,7 @@
 
 from unittest.mock import patch
 
+from app.services import llm_config_service
 from app.services.llm_config_service import ResolvedLLMConfig
 
 
@@ -94,3 +95,36 @@ def test_resolve_llm_config_returns_none_when_no_env_key(monkeypatch, db_session
 
     cfg = resolve_llm_config(db_session, user_id=uuid.uuid4())
     assert cfg is None
+
+
+# ── 1214 修复闸 2：global 配置 model 为空时降级为 None ──
+# 根因：admin 只填 key 没填 model 就保存 → model 存成空串 →
+# _build_global_config 只校验 api_key，返回 model="" 的配置 → 后续触发 1214。
+# 修复：model 空时视同未配置返回 None，让 resolve 降级到 BYOK/env。
+
+def test_build_global_config_returns_none_when_model_empty(db_session):
+    """全局配置 model 为空串 → _build_global_config 返回 None（视同未配置）。"""
+    from app.services.llm_config_service import _build_global_config
+
+    # 建一个有 key 但 model 为空的全局配置（模拟 admin 漏填 model）
+    llm_config_service.set_global_llm_settings(
+        db_session, enabled=True,
+        base_url="https://api.example.com", api_key="sk-test-1234567890",
+        model="",  # ← 空 model（set 允许存空，见 set_global_llm_settings）
+    )
+    cfg = _build_global_config(db_session, source="admin")
+    assert cfg is None
+
+
+def test_build_global_config_returns_config_when_model_present(db_session):
+    """全局配置 model 有值 → 正常返回配置（回归：model 非空不被误拦）。"""
+    from app.services.llm_config_service import _build_global_config
+
+    llm_config_service.set_global_llm_settings(
+        db_session, enabled=True,
+        base_url="https://api.example.com", api_key="sk-test-1234567890",
+        model="glm-4-flash",
+    )
+    cfg = _build_global_config(db_session, source="admin")
+    assert cfg is not None
+    assert cfg.model == "glm-4-flash"

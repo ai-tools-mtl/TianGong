@@ -140,7 +140,11 @@ def _build_global_config(db: Session, *, source: str) -> ResolvedLLMConfig | Non
         return None  # admin 显式关闭
 
     global_cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_config"))
-    if global_cfg and global_cfg.value and global_cfg.value.get("api_key_encrypted"):
+    # 防御闸（1214 修复）：同时要求 api_key 和 model 非空。
+    # 原来只校验 api_key，admin 漏填 model 时会返回 model="" 的配置，
+    # 透传给 ChatOpenAI 触发智谱 1214。model 空 → 视同未配置返回 None，
+    # 让 resolve 降级到 BYOK/env。
+    if global_cfg and global_cfg.value and global_cfg.value.get("api_key_encrypted") and global_cfg.value.get("model"):
         v = global_cfg.value
         return ResolvedLLMConfig(
             base_url=v.get("base_url", ""),

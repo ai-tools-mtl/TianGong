@@ -15,6 +15,11 @@ def get_llm(llm_config: ResolvedLLMConfig, *, streaming: bool = False) -> ChatOp
     AIMessageChunk 上回填 usage_metadata（input_tokens/output_tokens），
     供 astream_llm 侧捕获用于 LLMCallLog 记账（断链 C3）。
     """
+    # 防御闸（1214 修复）：空 model 透传给 ChatOpenAI 不会在客户端报错，
+    # 会原样发给智谱 → 回 1214 "model code cannot be empty"（晦涩英文）。
+    # 在工厂入口提前拦住，抛清晰中文错误（会冒到 SSE error 事件给前端 toast）。
+    if not llm_config.model:
+        raise ValueError("LLM 配置缺少 model，无法发起调用，请前往设置补全模型名")
     return ChatOpenAI(
         model=llm_config.model,
         base_url=llm_config.base_url,

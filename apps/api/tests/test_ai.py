@@ -383,3 +383,58 @@ def test_list_conversations_filter_by_status(client, registered_user, db_session
     actives = client.get(f"/api/v1/sections/{section.id}/conversations?status=active").json()
     assert len(actives) == 2
     assert all(c["status"] == "active" for c in actives)
+
+
+# ── 1214 修复闸 4：LLM 错误汉化 ──
+# 根因：ai.py 的 except 把 str(e) 原样塞进 SSE error message，
+# 前端 toast 显示晦涩英文 "Error code: 400 - {'error':{'code':'1214'...}}"。
+# 修复：抽 _friendly_llm_error 把已知错误（1214 model空/1002 key无效）转中文友好提示。
+
+def test_chat_sse_error_friendly_when_model_empty(client, registered_user, db_session, monkeypatch):
+    """LLM 抛 1214（model 空）时，SSE error 的 message 应为中文友好提示，非晦涩英文。"""
+    section = _make_logged_in_section(client, registered_user, db_session)
+
+    async def raise_model_empty(db, sec, history, msg, **kwargs):
+        raise Exception("Error code: 400 - {'error': {'code': '1214', 'message': 'model:The model code cannot be empty.'}}")
+        yield  # noqa: 让函数成为 async generator
+
+    monkeypatch.setattr("app.api.ai.astream_chat", raise_model_empty)
+
+    res = client.post(f"/api/v1/sections/{section.id}/chat", json={"message": "hi"})
+    assert res.status_code == 200
+    # SSE error 的 message 不能再含原始英文错误码
+    assert "model code cannot be empty" not in res.text
+    assert "1214" not in res.text
+    # 应含中文友好提示（含"模型"关键词）
+    assert "模型" in res.text
+
+
+def test_chat_sse_error_friendly_when_auth_invalid(client, registered_user, db_session, monkeypatch):
+    """LLM 抛 1002（key 无效）时，SSE error 的 message 应为中文友好提示。"""
+    section = _make_logged_in_section(client, registered_user, db_session)
+
+    async def raise_auth_invalid(db, sec, history, msg, **kwargs):
+        raise Exception("Error code: 401 - {'error': {'code': '1002', 'message': 'Authorization Token非法'}}")
+        yield  # noqa
+
+    monkeypatch.setattr("app.api.ai.astream_chat", raise_auth_invalid)
+
+    res = client.post(f"/api/v1/sections/{section.id}/chat", json={"message": "hi"})
+    assert res.status_code == 200
+    assert "Authorization Token" not in res.text
+    assert "API Key" in res.text or "密钥" in res.text or "授权" in res.text
+
+
+def test_chat_sse_error_keeps_unknown_error_message(client, registered_user, db_session, monkeypatch):
+    """未识别的错误保留原始 message（截断），不丢失信息。"""
+    section = _make_logged_in_section(client, registered_user, db_session)
+
+    async def raise_unknown(db, sec, history, msg, **kwargs):
+        raise Exception("某种未知错误XYZ123")
+        yield  # noqa
+
+    monkeypatch.setattr("app.api.ai.astream_chat", raise_unknown)
+
+    res = client.post(f"/api/v1/sections/{section.id}/chat", json={"message": "hi"})
+    assert res.status_code == 200
+    assert "某种未知错误XYZ123" in res.text

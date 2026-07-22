@@ -5,7 +5,7 @@
 """
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -22,7 +22,8 @@ class UserLLMCreateRequest(BaseModel):
     provider: str = "custom"
     base_url: str
     api_key: str
-    model: str
+    # 1214 修复闸 3：model 必填且非空，防止存入空 model 触发智谱 1214。
+    model: str = Field(..., min_length=1)
     embedding_model: str | None = None
 
 
@@ -32,6 +33,8 @@ class UserLLMUpdateRequest(BaseModel):
     provider: str | None = None
     base_url: str | None = None
     api_key: str | None = None
+    # model 可选更新：None=不改。不强制 min_length（否则无法表达"不改 model"），
+    # 空 model 由闸 1（get_llm）/闸 2（global 解析）兜底拦截。
     model: str | None = None
     embedding_model: str | None = None
 
@@ -41,7 +44,8 @@ class UserLLMTestRequest(BaseModel):
     provider: str = "custom"
     base_url: str
     api_key: str
-    model: str
+    # 1214 修复闸 3：测试连通性也必须有 model（无 model 必报 1214）。
+    model: str = Field(..., min_length=1)
     embedding_model: str | None = None
 
 
