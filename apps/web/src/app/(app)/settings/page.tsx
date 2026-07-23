@@ -125,7 +125,7 @@ function SourceSelector({ configs, grantActive, selectedSource, onSelect }: Sour
 
   return (
     <div className="space-y-3">
-      <SectionLabel>默认 LLM 源</SectionLabel>
+      <SectionLabel size="md">默认 LLM 源</SectionLabel>
       {!hasAnyOption ? (
         <EmptyState description="暂无可选项。点击右上角「添加配置」新增，或联系管理员授权全局 Key。" />
       ) : (
@@ -226,7 +226,7 @@ function ConfigList({ configs }: ConfigListProps) {
   if (configs.length === 0) {
     return (
       <div className="space-y-3">
-        <SectionLabel>我的自定义配置</SectionLabel>
+        <SectionLabel size="md">我的自定义配置</SectionLabel>
         <EmptyState description="暂无配置，点击右上角「添加配置」开始" />
       </div>
     )
@@ -234,7 +234,7 @@ function ConfigList({ configs }: ConfigListProps) {
 
   return (
     <div className="space-y-3">
-      <SectionLabel>我的自定义配置（{configs.length}）</SectionLabel>
+      <SectionLabel size="md">我的自定义配置（{configs.length}）</SectionLabel>
       <div
         className="overflow-hidden rounded-2xl border border-black/[0.07] bg-card dark:border-white/10"
         style={{ boxShadow: 'var(--shadow-card)' }}
