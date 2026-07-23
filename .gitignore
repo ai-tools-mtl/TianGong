@@ -36,3 +36,9 @@ apps/api/*.db
 
 # Git worktrees（隔离工作区，skill: using-git-worktrees）
 .worktrees/
+
+# 工具私有目录(zcode agent 本地文件)
+.zcode/
+
+# 生产配置(含密钥,勿提交)
+.env.production
