@@ -81,12 +81,16 @@ def _section_owner(db, section: Section):
 async def astream_chat(
     db, section: Section, history: list[Message], user_input: str,
     *, llm_config: ResolvedLLMConfig, usage_sink: dict | None = None,
-) -> AsyncIterator[str]:
+) -> AsyncIterator[tuple[str, dict | str]]:
     """异步引导对话：委托 deepagents agent loop（路线 B）。
 
-    agent.astream_events 暴露 token + tool_call 事件。
-    本函数只 yield 文本 token（on_chat_model_stream）；tool_call 事件
-    由 Task 23 的 SSE 层捕获。
+    yield (kind, payload) 元组（Task 23：agent loop 透明化）：
+      - ("token", str)：文本 token
+      - ("tool_call", {"name", "args"})：agent 发起工具调用
+      - ("tool_result", {"name", "result"})：工具返回
+
+    agent.astream_events 暴露 token + tool_call/tool_result 事件，本函数
+    全部透传给 SSE 层。
 
     注意：usage_sink 在 agent loop 路径下**不会被填充**——token 用量
     需从 agent 的最终 message 的 usage_metadata 提取（agent loop 多步调用，
@@ -100,22 +104,39 @@ async def astream_chat(
         {"messages": [{"role": "user", "content": user_input}]},
         version="v2",
     ):
-        # 只透传文本 token（on_chat_model_stream）
-        if event["event"] == "on_chat_model_stream":
+        evt = event["event"]
+        if evt == "on_chat_model_stream":
             chunk = event["data"].get("chunk")
             if chunk and chunk.content:
-                yield chunk.content
+                yield ("token", chunk.content)
+        elif evt == "on_tool_start":
+            yield ("tool_call", {
+                "name": event.get("name", ""),
+                "args": event.get("data", {}).get("input", {}),
+            })
+        elif evt == "on_tool_end":
+            result = event.get("data", {}).get("output")
+            # result 可能是各种类型（str / ToolMessage / dict），统一转 str 截断
+            result_str = str(result)[:500] if result is not None else ""
+            yield ("tool_result", {
+                "name": event.get("name", ""),
+                "result": result_str,
+            })
 
 
 async def astream_generate(
     db, section: Section, history: list[Message],
     *, llm_config: ResolvedLLMConfig, usage_sink: dict | None = None,
-) -> AsyncIterator[str]:
+) -> AsyncIterator[tuple[str, dict | str]]:
     """异步生成草稿：委托 deepagents agent loop（路线 B）。
 
-    agent.astream_events 暴露 token + tool_call 事件。
-    本函数只 yield 文本 token（on_chat_model_stream）；tool_call 事件
-    由 Task 23 的 SSE 层捕获。
+    yield (kind, payload) 元组（Task 23：agent loop 透明化）：
+      - ("token", str)：文本 token
+      - ("tool_call", {"name", "args"})：agent 发起工具调用
+      - ("tool_result", {"name", "result"})：工具返回
+
+    agent.astream_events 暴露 token + tool_call/tool_result 事件，本函数
+    全部透传给 SSE 层。
 
     注意：usage_sink 在 agent loop 路径下**不会被填充**——token 用量
     需从 agent 的最终 message 的 usage_metadata 提取（agent loop 多步调用，
@@ -134,11 +155,24 @@ async def astream_generate(
         {"messages": [{"role": "user", "content": instruction}]},
         version="v2",
     ):
-        # 只透传文本 token（on_chat_model_stream）
-        if event["event"] == "on_chat_model_stream":
+        evt = event["event"]
+        if evt == "on_chat_model_stream":
             chunk = event["data"].get("chunk")
             if chunk and chunk.content:
-                yield chunk.content
+                yield ("token", chunk.content)
+        elif evt == "on_tool_start":
+            yield ("tool_call", {
+                "name": event.get("name", ""),
+                "args": event.get("data", {}).get("input", {}),
+            })
+        elif evt == "on_tool_end":
+            result = event.get("data", {}).get("output")
+            # result 可能是各种类型（str / ToolMessage / dict），统一转 str 截断
+            result_str = str(result)[:500] if result is not None else ""
+            yield ("tool_result", {
+                "name": event.get("name", ""),
+                "result": result_str,
+            })
 
 
 async def astream_rewrite(

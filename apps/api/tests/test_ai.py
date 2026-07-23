@@ -45,9 +45,9 @@ def test_chat_endpoint_emits_done_event_with_heartbeat_support(client, registere
     """SSE chat 端点：mock LLM，验证 token/done 事件格式 + 异步 generate。"""
     section = _make_logged_in_section(client, registered_user, db_session)
 
-    # mock astream_chat 返回固定 token
+    # mock astream_chat 返回固定 token（Task 23：orchestrator yield (kind, payload) 元组）
     async def fake_astream_chat(db, section, history, msg, **kwargs):
-        yield "hello"
+        yield ("token", "hello")
 
     monkeypatch.setattr("app.api.ai.astream_chat", fake_astream_chat)
 
@@ -65,7 +65,7 @@ def test_generate_saves_draft_on_completion(client, registered_user, db_session,
     assert section.content is None  # 初始为空
 
     async def fake_astream_generate(db, sec, history, **kwargs):
-        yield "# 标题"
+        yield ("token", "# 标题")
 
     monkeypatch.setattr("app.api.ai.astream_generate", fake_astream_generate)
 
@@ -97,9 +97,9 @@ def test_heartbeat_does_not_kill_slow_stream(client, registered_user, db_session
     monkeypatch.setattr(ai_module, "HEARTBEAT_INTERVAL", 0.3)
 
     async def slow_astream_chat(db, sec, history, msg, **kwargs):
-        yield "first"
+        yield ("token", "first")
         await asyncio.sleep(0.6)  # > 心跳间隔，触发心跳
-        yield "second"  # 心跳后这个 token 必须仍能到达（原 bug 会丢失）
+        yield ("token", "second")  # 心跳后这个 token 必须仍能到达（原 bug 会丢失）
 
     monkeypatch.setattr("app.api.ai.astream_chat", slow_astream_chat)
 
@@ -118,7 +118,7 @@ def test_chat_writes_llm_call_log_on_success(client, registered_user, db_session
     section = _make_logged_in_section(client, registered_user, db_session)
 
     async def fake_astream_chat(db, sec, history, msg, **kwargs):
-        yield "hello"
+        yield ("token", "hello")
 
     monkeypatch.setattr("app.api.ai.astream_chat", fake_astream_chat)
 
@@ -147,7 +147,7 @@ def test_generate_writes_llm_call_log_on_success(client, registered_user, db_ses
     section = _make_logged_in_section(client, registered_user, db_session)
 
     async def fake_astream_generate(db, sec, history, **kwargs):
-        yield "# 标题"
+        yield ("token", "# 标题")
 
     monkeypatch.setattr("app.api.ai.astream_generate", fake_astream_generate)
 
@@ -290,7 +290,7 @@ def test_chat_summarizes_title_on_first_message(client, registered_user, db_sess
     section = _make_logged_in_section(client, registered_user, db_session)
 
     async def fake_astream_chat(db, sec, history, msg, **kwargs):
-        yield "你好，这是回复"
+        yield ("token", "你好，这是回复")
 
     monkeypatch.setattr("app.api.ai.astream_chat", fake_astream_chat)
     # mock 标题总结，避免真实 LLM 调用
@@ -341,7 +341,7 @@ def test_chat_does_not_resummarize_active_conversation(client, registered_user, 
         return "不应被调用"
 
     async def fake_astream_chat(db, sec, history, msg, **kwargs):
-        yield "回复"
+        yield ("token", "回复")
 
     monkeypatch.setattr("app.api.ai.astream_chat", fake_astream_chat)
     monkeypatch.setattr("app.api.ai.conversation_service.summarize_conversation_title", fake_summarize)
@@ -438,3 +438,81 @@ def test_chat_sse_error_keeps_unknown_error_message(client, registered_user, db_
     res = client.post(f"/api/v1/sections/{section.id}/chat", json={"message": "hi"})
     assert res.status_code == 200
     assert "某种未知错误XYZ123" in res.text
+
+
+# ── Task 23：agent loop 透明化（SSE 暴露 tool_call/tool_result）──
+
+def test_chat_emits_tool_call_and_tool_result_events(client, registered_user, db_session, monkeypatch):
+    """chat 端点：orchestrator yield 的 tool_call/tool_result 元组应转为对应 SSE 事件。
+
+    前端据此显示"正在检索知识库..."等进度提示，agent loop 不再黑盒。
+    验证事件类型、payload 字段、token 仍正常累加、done 事件带 message_id。
+    """
+    import json as _json
+
+    section = _make_logged_in_section(client, registered_user, db_session)
+
+    async def fake_astream_chat(db, sec, history, msg, **kwargs):
+        # 模拟 agent loop：先调工具，再出文本 token
+        yield ("tool_call", {"name": "rag_search", "args": {"query": "权利要求"}})
+        yield ("tool_result", {"name": "rag_search", "result": "相关文档片段..."})
+        yield ("token", "基于检索结果，")
+
+    monkeypatch.setattr("app.api.ai.astream_chat", fake_astream_chat)
+
+    res = client.post(f"/api/v1/sections/{section.id}/chat", json={"message": "帮我查"})
+    assert res.status_code == 200
+    body = res.text
+
+    # tool_call 事件
+    assert "event: tool_call" in body
+    tool_call_data = _json.loads(
+        [l for l in body.split("\n") if l.startswith("data: ") and "rag_search" in l and "query" in l][0][6:]
+    )
+    assert tool_call_data["name"] == "rag_search"
+    assert tool_call_data["args"] == {"query": "权利要求"}
+
+    # tool_result 事件
+    assert "event: tool_result" in body
+    tool_result_data = _json.loads(
+        [l for l in body.split("\n") if l.startswith("data: ") and "result" in l][0][6:]
+    )
+    assert tool_result_data["name"] == "rag_search"
+    assert tool_result_data["result"] == "相关文档片段..."
+
+    # token 仍正常出
+    assert "event: token" in body
+    assert "基于检索结果" in body
+
+    # done 仍带 message_id
+    assert "event: done" in body
+
+
+def test_generate_emits_tool_call_and_tool_result_events(client, registered_user, db_session, monkeypatch):
+    """generate 端点：同样透传 tool_call/tool_result SSE 事件 + token 累加存草稿。"""
+    import json as _json
+
+    section = _make_logged_in_section(client, registered_user, db_session)
+
+    async def fake_astream_generate(db, sec, history, **kwargs):
+        yield ("tool_call", {"name": "rag_search", "args": {"query": "背景"}})
+        yield ("tool_result", {"name": "rag_search", "result": "背景知识"})
+        yield ("token", "# 草稿标题")
+
+    monkeypatch.setattr("app.api.ai.astream_generate", fake_astream_generate)
+
+    res = client.post(f"/api/v1/sections/{section.id}/generate")
+    assert res.status_code == 200
+    body = res.text
+
+    assert "event: tool_call" in body
+    assert "event: tool_result" in body
+    assert "event: token" in body
+    assert "草稿标题" in body
+    assert "event: done" in body
+
+    # 草稿仍正确累加并落库
+    db_session.expire_all()
+    from app.models import Section
+    s = db_session.get(Section, section.id)
+    assert s.content is not None

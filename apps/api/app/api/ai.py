@@ -158,6 +158,9 @@ async def _yield_with_heartbeat(async_gen) -> AsyncIterator[tuple[str, str]]:
 
     LLM 生成慢或长时间无 token 时，中间代理可能掐断空闲连接；
     心跳让连接保持活跃。token 与心跳交替 yield（统一 str）。
+
+    用于 str 生成器（astream_rewrite）；agent loop 生成器 yield 元组，
+    见 _yield_with_heartbeat_tuple。
     """
     ait = async_gen.__aiter__()
     nxt = asyncio.ensure_future(ait.__anext__())
@@ -173,6 +176,31 @@ async def _yield_with_heartbeat(async_gen) -> AsyncIterator[tuple[str, str]]:
         else:
             # 超时但 task 仍在运行（不取消），发心跳保活
             yield ("heartbeat", "")
+
+
+async def _yield_with_heartbeat_tuple(async_gen) -> AsyncIterator[tuple[str, object]]:
+    """同 _yield_with_heartbeat，但包装 (kind, payload) 元组生成器（Task 23）。
+
+    astream_generate / astream_chat 已改为 yield ("token"|"tool_call"|"tool_result", payload)
+    元组；本包装把它们原样透传，并插入 ("heartbeat", None) 作为心跳哨兵。
+
+    保留同样的 asyncio.wait + task 复用策略（不用 wait_for，避免超时取消
+    杀掉慢速 LLM 流）。心跳路径不影响 agent loop 进行中的事件。
+    """
+    ait = async_gen.__aiter__()
+    nxt = asyncio.ensure_future(ait.__anext__())
+    while True:
+        done, _pending = await asyncio.wait({nxt}, timeout=HEARTBEAT_INTERVAL)
+        if nxt in done:
+            try:
+                item = nxt.result()
+            except StopAsyncIteration:
+                break
+            yield item  # (kind, payload) 原样透传
+            nxt = asyncio.ensure_future(ait.__anext__())
+        else:
+            # 超时但 task 仍在运行（不取消），发心跳保活
+            yield ("heartbeat", None)
 
 
 @router.post("/sections/{section_id}/chat")
@@ -210,15 +238,23 @@ async def chat(
             )
             return
         try:
-            async for kind, text in _yield_with_heartbeat(
+            async for kind, data in _yield_with_heartbeat_tuple(
                 astream_chat(db, section, history, payload.message,
                              llm_config=llm_config, usage_sink=usage)
             ):
                 if kind == "heartbeat":
                     yield _sse_event("heartbeat", {})
-                else:
-                    full_response += text
-                    yield _sse_event("token", {"text": text})
+                elif kind == "token":
+                    full_response += data
+                    yield _sse_event("token", {"text": data})
+                elif kind == "tool_call":
+                    yield _sse_event("tool_call", {
+                        "name": data["name"], "args": data["args"],
+                    })
+                elif kind == "tool_result":
+                    yield _sse_event("tool_result", {
+                        "name": data["name"], "result": data["result"],
+                    })
             ai_msg = Message(section_id=section.id, conversation_id=conv.id, role="assistant", content=full_response)
             db.add(ai_msg)
             db.commit()
@@ -298,14 +334,22 @@ async def generate_draft(
             )
             return
         try:
-            async for kind, text in _yield_with_heartbeat(
+            async for kind, data in _yield_with_heartbeat_tuple(
                 astream_generate(db, section, history, llm_config=llm_config, usage_sink=usage)
             ):
                 if kind == "heartbeat":
                     yield _sse_event("heartbeat", {})
-                else:
-                    full_md += text
-                    yield _sse_event("token", {"text": text})
+                elif kind == "token":
+                    full_md += data
+                    yield _sse_event("token", {"text": data})
+                elif kind == "tool_call":
+                    yield _sse_event("tool_call", {
+                        "name": data["name"], "args": data["args"],
+                    })
+                elif kind == "tool_result":
+                    yield _sse_event("tool_result", {
+                        "name": data["name"], "result": data["result"],
+                    })
             from app.ai.markdown_to_tiptap import markdown_to_tiptap
             section.content = markdown_to_tiptap(full_md)
             if section.status == "empty":
