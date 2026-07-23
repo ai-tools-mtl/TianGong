@@ -17,10 +17,11 @@ include 顺序：子 router 间的路径冲突已无（不同前缀），但子 
 
 from fastapi import APIRouter
 
-from . import console, content, review, users
+from . import console, content, review, skills, users
 
 router = APIRouter(tags=["admin"])
 router.include_router(users.router)
 router.include_router(console.router)
 router.include_router(content.router)
 router.include_router(review.router)
+router.include_router(skills.router)
