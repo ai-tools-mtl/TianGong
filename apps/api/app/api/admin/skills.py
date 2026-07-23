@@ -4,10 +4,11 @@
 仿 admin/content.py 模式：require_admin + 委托 skill_service + 返回 SkillOut。
 管理 scope=global 的技能（owner_id=NULL）。
 """
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.exceptions import ValidationError
 from app.deps import require_admin
 from app.models import User
 from app.models.skill import SCOPE_GLOBAL
@@ -103,3 +104,22 @@ def delete_global_skill(
     """删除全局 skill（DB + MinIO 目录，幂等）。"""
     skill_service.delete_skill(db, skill_id=skill_id)
     return {"ok": True}
+
+
+@router.post("/admin/skills/import-zip", response_model=SkillOut)
+async def import_global_skill_zip(
+    file: UploadFile = File(...),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """从 zip 包导入全局 skill（spec 标准 SKILL.md + scripts/references/assets）。
+
+    同名拒绝（ConflictError）。默认 status=draft，导入后需手动激活。
+    """
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        raise ValidationError("仅支持 .zip 文件")
+    content = await file.read()
+    skill = skill_service.import_skill_zip(
+        db, scope=SCOPE_GLOBAL, owner_id=None, zip_bytes=content,
+    )
+    return _to_out(skill)

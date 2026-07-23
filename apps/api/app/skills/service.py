@@ -185,3 +185,20 @@ def read_skill_detail(db: Session, *, skill_id) -> tuple[Skill, str]:
     bucket = _bucket_for_scope(skill.scope)
     md = read_skill_md(bucket=bucket, prefix=skill.minio_prefix)
     return skill, md
+
+
+def import_skill_zip(db: Session, *, scope: str, owner_id, zip_bytes: bytes) -> Skill:
+    """从 zip 包导入 skill：解析 → 复用 create_skill（唯一性 + MinIO + DB）。
+
+    zip 解析失败（缺 SKILL.md、路径穿越、frontmatter 缺字段、name 不合规）
+    抛 ValidationError。同名抛 ConflictError（来自 create_skill）。
+    默认 status=draft（导入后用户手动激活）。
+    """
+    from app.skills.zip_import import parse_skill_zip
+
+    parsed = parse_skill_zip(zip_bytes)
+    return create_skill(
+        db, scope=scope, owner_id=owner_id,
+        name=parsed.name, description=parsed.description, body=parsed.body,
+        scripts=parsed.scripts, references=parsed.references, assets=parsed.assets,
+    )

@@ -8,11 +8,11 @@
 归属校验在路由层：personal skill 仅 owner 本人可读写，
 否则抛 ForbiddenError（显式拒绝，防 ID 探测）。
 """
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.core.exceptions import ForbiddenError
+from app.core.exceptions import ForbiddenError, ValidationError
 from app.deps import get_current_user
 from app.models import User
 from app.models.skill import SCOPE_PERSONAL
@@ -134,3 +134,22 @@ def delete_my_skill(
     _check_ownership(skill, current_user.id)
     skill_service.delete_skill(db, skill_id=skill_id)
     return {"ok": True}
+
+
+@router.post("/skills/mine/import-zip", response_model=SkillOut)
+async def import_my_skill_zip(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """从 zip 包导入个人 skill（owner=当前用户）。
+
+    同名拒绝（ConflictError）。默认 status=draft。
+    """
+    if not file.filename or not file.filename.lower().endswith(".zip"):
+        raise ValidationError("仅支持 .zip 文件")
+    content = await file.read()
+    skill = skill_service.import_skill_zip(
+        db, scope=SCOPE_PERSONAL, owner_id=current_user.id, zip_bytes=content,
+    )
+    return _to_out(skill)
