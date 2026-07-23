@@ -11,6 +11,7 @@ import {
   Shield,
   Tags,
   Users,
+  Wrench,
 } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
@@ -56,6 +57,7 @@ const ADMIN_NAV_ITEMS: NavItem[] = [
   { href: '/admin/users', label: '用户', icon: Users },
   { href: '/admin/content', label: '内容', icon: FileText },
   { href: '/admin/review', label: '审核', icon: CheckCircle, showPendingBadge: true },
+  { href: '/admin/skills', label: '技能', icon: Wrench },
   { href: '/admin/console', label: '控制台', icon: Settings },
 ]
 
