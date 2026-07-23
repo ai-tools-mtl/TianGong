@@ -26,11 +26,11 @@ import type { UserLLMConfig } from '@/types/api'
 
 export default function SettingsPage() {
   const qc = useQueryClient()
-  const { data: configs = [] } = useQuery<UserLLMConfig[]>({
+  const { data: configs = [], isLoading: configsLoading } = useQuery<UserLLMConfig[]>({
     queryKey: ['my-llm'],
     queryFn: () => api.listMyLLM(),
   })
-  const { data: myGrant } = useQuery({ queryKey: ['my-grant'], queryFn: () => api.getMyGrant() })
+  const { data: myGrant, isLoading: grantLoading } = useQuery({ queryKey: ['my-grant'], queryFn: () => api.getMyGrant() })
 
   // ── 选源器 ──
   // 初始化默认 source；若失效（配置被删/授权撤销）则清空提示重选。
@@ -45,6 +45,10 @@ export default function SettingsPage() {
       setSourceInitialized(true)
       return
     }
+    // 等待相关数据加载完成后再校验，避免把"加载中"误判为"已失效"
+    // （强制刷新时 myGrant/configs 首次为 undefined/[]，不等待会清掉有效值）
+    if (saved === 'global' && grantLoading) return
+    if (saved.startsWith('custom:') && configsLoading) return
     // 校验 saved 是否仍有效
     if (saved === 'global') {
       // global 选项仅在授权时可见；未授权则失效
@@ -71,7 +75,7 @@ export default function SettingsPage() {
       setSelectedSource(null)
     }
     setSourceInitialized(true)
-  }, [configs, myGrant])
+  }, [configs, myGrant, configsLoading, grantLoading])
 
   function handleSelectSource(source: string) {
     setSelectedSource(source)
