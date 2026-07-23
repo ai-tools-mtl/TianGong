@@ -8,6 +8,8 @@ class RegisterRequest(BaseModel):
     email: EmailStr | None = None  # 可选联系方式
     password: str = Field(min_length=8, max_length=128)
     name: str = Field(min_length=1, max_length=100)
+    # 内部产品化:关闭开放注册,凭邀请码注册
+    invite_code: str = Field(min_length=1, max_length=32)
 
     @field_validator("username")
     @classmethod

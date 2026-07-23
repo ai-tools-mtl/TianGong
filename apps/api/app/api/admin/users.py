@@ -38,6 +38,56 @@ class PasswordReset(BaseModel):
     new_password: str
 
 
+class AdminCreateUser(BaseModel):
+    """admin 直接创建账号(内部产品化:关闭注册后的另一发号途径)。
+
+    复用 register_user 的校验(EmailStr/username 唯一/密码强度),
+    保证所有写用户入口同一套校验(GOTCHAS G4)。不需要邀请码。
+    """
+    username: str
+    email: str | None = None
+    password: str
+    name: str
+    role: str = "user"  # user / admin,默认 user
+
+
+@router.post("/admin/users")
+def create_user(
+    payload: AdminCreateUser,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """admin 直接创建账号。复用 register_user 校验逻辑,无需邀请码。"""
+    from app.services.auth_service import register_user
+    user = register_user(
+        db,
+        username=payload.username,
+        password=payload.password,
+        name=payload.name,
+        email=payload.email,
+    )
+    # 角色调整(register_user 默认建 user;admin 指定 admin 时改)
+    if payload.role == "admin" and user.role != "admin":
+        user.role = "admin"
+        db.commit()
+        db.refresh(user)
+    # 审计
+    from app.services.admin_service import _audit
+    _audit(
+        db, actor=admin, action="create_user",
+        target_type="user", target_id=str(user.id),
+        detail={"username": user.username, "role": user.role},
+    )
+    return {
+        "id": str(user.id),
+        "username": user.username,
+        "email": user.email,
+        "name": user.name,
+        "role": user.role,
+        "status": user.status,
+    }
+
+
 @router.get("/admin/users")
 def list_users(
     admin: User = Depends(require_admin),

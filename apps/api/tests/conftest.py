@@ -148,7 +148,11 @@ def client(app_obj):
 
 @pytest.fixture
 def registered_user(db_session) -> dict:
-    """注册一个普通用户，返回 {id, email, password}。"""
+    """注册一个普通用户，返回 {id, email, password}。
+
+    直接构造 User 对象,不走 register 端点(不受邀请码约束)——
+    给绝大多数只需要"一个已存在用户"的测试用。
+    """
     u = User(
         username="testuser",
         email="test@example.com",
@@ -158,3 +162,18 @@ def registered_user(db_session) -> dict:
     db_session.add(u)
     db_session.commit()
     return {"id": str(u.id), "username": u.username, "email": u.email, "password": "Pass1234!"}
+
+
+def make_invite_code(db_session, *, max_uses: int = 1) -> str:
+    """测试 helper:生成一个有效邀请码,返回码字符串。
+
+    供需要走 /auth/register 端点的测试用(内部产品化后注册需邀请码)。
+    """
+    from app.models import InviteCode
+    import secrets
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    code = "".join(secrets.choice(alphabet) for _ in range(8))
+    invite = InviteCode(code=code, max_uses=max_uses, used_count=0)
+    db_session.add(invite)
+    db_session.commit()
+    return code

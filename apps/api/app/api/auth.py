@@ -9,6 +9,7 @@ from app.deps import get_current_user
 from app.models import User
 from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserRead
 from app.services.auth_service import authenticate_user, register_user, update_last_login
+from app.services.invite_service import validate_and_consume
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 _settings = get_settings()
@@ -33,6 +34,9 @@ def _set_auth_cookies(response: Response, access: str, refresh: str) -> None:
 
 @router.post("/register", response_model=UserRead)
 def register(payload: RegisterRequest, db: Session = Depends(get_db)):
+    # 内部产品化:先核销邀请码(API 层),再建用户(register_user 保持邀请码无关)
+    # 两者共用同一 session;若建用户失败,核销回滚(同事务)
+    validate_and_consume(db, code=payload.invite_code)
     user = register_user(
         db,
         username=payload.username,

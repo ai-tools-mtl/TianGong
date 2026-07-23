@@ -1,6 +1,7 @@
 from app.models.skill import Skill
 from app.models.attachment import Attachment
 from app.models.audit_log import AuditLog
+from app.models.invite_code import InviteCode
 from app.models.base import Base, JSONType
 from app.models.conversation import Conversation, ConversationStatus
 from app.models.knowledge_chunk import KnowledgeChunk
@@ -35,4 +36,5 @@ __all__ = [
     "Skill",
     "LLMCallLog",
     "AuditLog",
+    "InviteCode",
 ]
