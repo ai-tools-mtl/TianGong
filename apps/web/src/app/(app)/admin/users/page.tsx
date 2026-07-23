@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { toast } from 'sonner'
 
+import { CreateUserDialog } from '@/components/admin/create-user-dialog'
 import { PageHeader, PageShell } from '@/components/page-shell'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -74,7 +75,9 @@ export default function UsersPage() {
 
   return (
     <PageShell>
-      <PageHeader title="用户管理" description={`${list.length} 个用户`} />
+      <PageHeader title="用户管理" description={`${list.length} 个用户`}>
+        <CreateUserDialog />
+      </PageHeader>
       <div className="py-6">
         {isLoading ? (
           <UsersTableSkeleton />

@@ -42,11 +42,40 @@ export interface RegisterRequest {
   email?: string
   password: string
   name: string
+  // 内部产品化:凭邀请码注册
+  invite_code: string
 }
 
 export interface LoginRequest {
   username: string
   password: string
+}
+
+// ── 邀请码(内部产品化)──
+
+export interface InviteCode {
+  id: string
+  code: string
+  max_uses: number
+  used_count: number
+  status: 'active' | 'exhausted' | 'revoked' | 'expired'
+  expires_at: string | null
+  revoked_at: string | null
+  created_by_id: string | null
+  created_at: string
+}
+
+export interface InviteCodeCreate {
+  max_uses?: number
+  expires_in_days?: number | null
+}
+
+export interface AdminCreateUserRequest {
+  username: string
+  email?: string
+  password: string
+  name: string
+  role?: string
 }
 
 // ── 模板 ──

@@ -20,6 +20,7 @@ import type {
   TagCreate,
   TagMerge,
   TemplateSummary,
+  InviteCode,
 } from '@/types/api'
 
 export const queryKeys = {
@@ -56,6 +57,8 @@ export const queryKeys = {
       ['admin', 'audit-logs', page, size] as const,
     // 内置模板管理（refactor/admin-ia-phase3 切片 B）
     adminTemplates: ['admin', 'content', 'templates'] as const,
+    // 邀请码管理（内部产品化）
+    invites: ['admin', 'invites'] as const,
   },
 }
 
@@ -489,6 +492,43 @@ export function useResetUserPassword() {
     onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: queryKeys.admin.userDetail(vars.userId) })
     },
+  })
+}
+
+/** admin 直接创建用户（内部产品化：无需邀请码）。失效用户列表。 */
+export function useCreateUser() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: import('@/types/api').AdminCreateUserRequest) => api.adminCreateUser(data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.admin.users }),
+  })
+}
+
+// ── 邀请码管理（内部产品化）──
+
+/** 邀请码列表。 */
+export function useInvites() {
+  return useQuery<InviteCode[]>({
+    queryKey: queryKeys.admin.invites,
+    queryFn: () => api.listInvites(),
+  })
+}
+
+/** 生成邀请码。失效邀请码列表。 */
+export function useCreateInvite() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: import('@/types/api').InviteCodeCreate) => api.createInvite(data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.admin.invites }),
+  })
+}
+
+/** 吊销邀请码。失效邀请码列表。 */
+export function useRevokeInvite() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (inviteId: string) => api.revokeInvite(inviteId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.admin.invites }),
   })
 }
 

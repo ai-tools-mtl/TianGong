@@ -336,6 +336,9 @@ export const api = {
 
   // ── 管理员 ──
   listUsers: () => request<import('@/types/api').AdminUser[]>(`/admin/users`),
+  /** POST /admin/users admin 直接创建用户(内部产品化:无需邀请码)。 */
+  adminCreateUser: (data: import('@/types/api').AdminCreateUserRequest) =>
+    request<import('@/types/api').AdminUser>(`/admin/users`, { method: 'POST', body: JSON.stringify(data) }),
   getGlobalLLM: () => request<import('@/types/api').GlobalLLMSettings>(`/admin/llm-config`),
   setGlobalLLM: (data: {
     enabled: boolean
@@ -380,6 +383,13 @@ export const api = {
   /** LLM 调用健康摘要（落地页 LLM 健康卡用，返回 status=ok/warning）。 */
   getLLMHealth: (days = 7) =>
     request<import('@/types/api').LLMHealth>(`/admin/stats/llm/health?days=${days}`),
+
+  // ── 邀请码管理（内部产品化：关闭开放注册后的发号机制）──
+  listInvites: () => request<import('@/types/api').InviteCode[]>(`/admin/invites`),
+  createInvite: (data: import('@/types/api').InviteCodeCreate) =>
+    request<import('@/types/api').InviteCode>(`/admin/invites`, { method: 'POST', body: JSON.stringify(data) }),
+  revokeInvite: (inviteId: string) =>
+    request<{ ok: boolean }>(`/admin/invites/${inviteId}`, { method: 'DELETE' }),
 
   // ── 用户设置（多自定义配置 CRUD，Task 4.0）──
   listMyLLM: () => request<UserLLMConfig[]>(`/settings/llm`),

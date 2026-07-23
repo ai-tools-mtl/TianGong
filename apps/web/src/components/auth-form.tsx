@@ -29,10 +29,11 @@ export function AuthForm({ mode }: AuthFormProps) {
     const email = emailRaw ? String(emailRaw) : undefined
     const password = String(form.get('password'))
     const name = String(form.get('name') || '')
+    const inviteCode = String(form.get('invite_code') || '')
 
     try {
       if (isRegister) {
-        await api.register({ username, email, password, name })
+        await api.register({ username, email, password, name, invite_code: inviteCode })
       }
       await api.login({ username, password })
       const user = await api.me()
@@ -56,6 +57,20 @@ export function AuthForm({ mode }: AuthFormProps) {
 
   return (
     <form onSubmit={onSubmit} className="space-y-4 w-full max-w-sm">
+      {isRegister && (
+        <div className="space-y-2">
+          <Label htmlFor="invite_code">邀请码</Label>
+          <Input
+            id="invite_code"
+            name="invite_code"
+            type="text"
+            required
+            placeholder="向管理员获取邀请码"
+            autoCapitalize="characters"
+            autoCorrect="off"
+          />
+        </div>
+      )}
       {isRegister && (
         <div className="space-y-2">
           <Label htmlFor="name">姓名</Label>
