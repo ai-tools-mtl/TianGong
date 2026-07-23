@@ -1,0 +1,28 @@
+# 不要把以下内容拷进 Web 镜像(安全 + 减体积)
+
+# 本地配置
+.env
+.env.*
+!.env.example
+
+# Next.js 构建产物与缓存(build 阶段会重新生成)
+.next/
+out/
+.cache/
+
+# 依赖(容器内 pnpm install 重装)
+node_modules/
+
+# 版本控制与 IDE
+.git/
+.gitignore
+.vscode/
+.idea/
+
+# 测试
+coverage/
+
+# 日志
+*.log
+npm-debug.log*
+pnpm-debug.log*

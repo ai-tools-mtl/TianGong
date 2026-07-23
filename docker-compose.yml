@@ -1,3 +1,16 @@
+# 天工 Docker Compose
+#
+# 两种用法:
+#   1. 本地开发(只起数据层,应用用 uv/pnpm 手动起):
+#      docker compose up -d postgres minio
+#
+#   2. 内网全栈部署(四个服务全起,一键起):
+#      docker compose --env-file .env.production --profile full up -d --build
+#      详见 docs/deploy-internal.md
+#
+# 全栈服务(api/web)挂在 `full` profile 下,默认不起,
+# 避免本地开发时误起应用容器与本地 uv/pnpm 进程抢端口。
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -33,6 +46,73 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  # ---- 以下为全栈部署服务,仅在 --profile full 时启动 ----
+
+  api:
+    profiles: ["full"]
+    build:
+      context: ./apps/api
+    container_name: tiangong-api
+    # 容器间用服务名访问数据层;环境变量覆盖镜像内任何 .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://tiangong:${POSTGRES_PASSWORD:-tiangong}@postgres:5432/tiangong
+      TEST_DATABASE_URL: postgresql+psycopg://tiangong:${POSTGRES_PASSWORD:-tiangong}@postgres:5432/tiangong_test
+      JWT_SECRET: ${JWT_SECRET}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      REFRESH_TOKEN_EXPIRE_DAYS: ${REFRESH_TOKEN_EXPIRE_DAYS:-7}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+      MINIO_ENDPOINT: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-tiangong}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      MINIO_BUCKET_PERSONAL: ${MINIO_BUCKET_PERSONAL:-tiangong-personal}
+      MINIO_BUCKET_GLOBAL: ${MINIO_BUCKET_GLOBAL:-tiangong-global}
+      MINIO_SECURE: ${MINIO_SECURE:-false}
+      GLM_API_KEY: ${GLM_API_KEY}
+      GLM_BASE_URL: ${GLM_BASE_URL:-https://open.bigmodel.cn/api/paas/v4}
+      GLM_MODEL: ${GLM_MODEL:-glm-4.7}
+      GLM_EMBEDDING_MODEL: ${GLM_EMBEDDING_MODEL:-embedding-3}
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  web:
+    profiles: ["full"]
+    build:
+      context: ./apps/web
+      args:
+        # build 时内联进前端产物(compose 从 .env.production 注入)
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+        # npm 镜像源(网络受限环境用),默认官方源
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmjs.org}
+    container_name: tiangong-web
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
 
 volumes:
   pgdata:

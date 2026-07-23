@@ -1,5 +1,10 @@
-allowBuilds:
-  sharp: set this to true or false
-ignoredBuiltDependencies:
-  - sharp
-  - unrs-resolver
+# pnpm 11+ 全局配置(见 https://pnpm.io/settings)
+# 本项目非 monorepo,但此文件仍是 pnpm 读取配置的标准位置
+
+# pnpm 11 默认阻止所有依赖的 build/postinstall 脚本(供应链安全)。
+# sharp(Next.js 图片优化的 native 依赖)通过 optionalDependencies 分发平台二进制,
+# 其 build 脚本不在 onlyBuiltDependencies 生效范围(pnpm 11 已知行为),
+# 因此用 dangerouslyAllowAllBuilds 放行。
+# 安全前提:依赖全部锁在 pnpm-lock.yaml 并经 supply-chain policy 校验,
+# 构建为 frozen-lockfile,无运行时任意脚本风险。
+dangerouslyAllowAllBuilds: true
