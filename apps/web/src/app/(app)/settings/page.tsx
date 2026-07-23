@@ -1,15 +1,16 @@
 'use client'
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Plus } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -17,6 +18,7 @@ import {
 import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { SectionLabel } from '@/components/ui/section-label'
 import { api } from '@/lib/api'
 import { clearDefaultSource, getDefaultSource, setDefaultSource } from '@/lib/llm-source'
 import { cn } from '@/lib/utils'
@@ -34,6 +36,7 @@ export default function SettingsPage() {
   // 初始化默认 source；若失效（配置被删/授权撤销）则清空提示重选。
   const [selectedSource, setSelectedSource] = useState<string | null>(null)
   const [sourceInitialized, setSourceInitialized] = useState(false)
+  const [createOpen, setCreateOpen] = useState(false)
 
   useEffect(() => {
     const saved = getDefaultSource()
@@ -78,9 +81,14 @@ export default function SettingsPage() {
 
   return (
     <PageShell width="narrow">
-      <PageHeader title="设置" description="管理你的 LLM 接入（多自定义配置 + 选源）" />
+      <PageHeader title="设置" description="管理你的 LLM 接入">
+        <Button onClick={() => setCreateOpen(true)} className="gap-1.5">
+          <Plus className="size-3.5" />
+          添加配置
+        </Button>
+      </PageHeader>
 
-      <div className="py-6 space-y-4">
+      <div className="space-y-6 py-6">
         {/* 选源器 */}
         <SourceSelector
           configs={configs}
@@ -91,14 +99,14 @@ export default function SettingsPage() {
 
         {/* 配置列表 */}
         <ConfigList configs={configs} />
-
-        {/* 新增表单 */}
-        <CreateForm onCreate={() => qc.invalidateQueries({ queryKey: ['my-llm'] })} />
-
-        <p className="px-1 text-[12px] text-muted-foreground">
-          支持 OpenAI 兼容 Provider（智谱 GLM / OpenAI / DeepSeek / 本地 Ollama 等）。Key 加密存储，不明文返回。
-        </p>
       </div>
+
+      {/* 新增配置 — Dialog（按需触发，和系统其他创建操作一致） */}
+      <CreateDialog
+        open={createOpen}
+        onOpenChange={setCreateOpen}
+        onCreated={() => qc.invalidateQueries({ queryKey: ['my-llm'] })}
+      />
     </PageShell>
   )
 }
@@ -116,16 +124,16 @@ function SourceSelector({ configs, grantActive, selectedSource, onSelect }: Sour
   const hasAnyOption = grantActive || configs.length > 0
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-[15px]">默认 LLM 源</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        {!hasAnyOption ? (
-          <EmptyState description="暂无可选项。请在下方添加自定义配置，或联系管理员授权全局 Key。" />
-        ) : (
-          <div className="overflow-hidden rounded-2xl border border-black/[0.07] bg-card dark:border-white/10"
-               style={{ boxShadow: 'var(--shadow-card)' }}>
+    <div className="space-y-3">
+      <SectionLabel>默认 LLM 源</SectionLabel>
+      {!hasAnyOption ? (
+        <EmptyState description="暂无可选项。点击右上角「添加配置」新增，或联系管理员授权全局 Key。" />
+      ) : (
+        <>
+          <div
+            className="overflow-hidden rounded-2xl border border-black/[0.07] bg-card dark:border-white/10"
+            style={{ boxShadow: 'var(--shadow-card)' }}
+          >
             {grantActive && (
               <SourceOption
                 value="global"
@@ -146,14 +154,14 @@ function SourceSelector({ configs, grantActive, selectedSource, onSelect }: Sour
               />
             ))}
           </div>
-        )}
-        {hasAnyOption && selectedSource === null && (
-          <p className="px-1 text-[12px] text-warning">
-            尚未选择默认源，AI 助手将无法调用。请选择一项。
-          </p>
-        )}
-      </CardContent>
-    </Card>
+          {selectedSource === null && (
+            <p className="px-1 text-[12px] text-warning">
+              尚未选择默认源，AI 助手将无法调用。请选择一项。
+            </p>
+          )}
+        </>
+      )}
+    </div>
   )
 }
 
@@ -171,7 +179,7 @@ function SourceOption({ value, label, description, selected, onSelect }: SourceO
       type="button"
       onClick={() => onSelect(value)}
       className={cn(
-        'flex w-full items-center gap-3 border-t border-black/[0.07] px-3 py-2.5 text-left transition-colors first:border-t-0 dark:border-white/10',
+        'flex w-full items-center gap-3 border-t border-black/[0.07] px-4 py-3 text-left transition-colors first:border-t-0 dark:border-white/10',
         selected ? 'bg-accent' : 'hover:bg-muted/50',
       )}
     >
@@ -217,61 +225,53 @@ function ConfigList({ configs }: ConfigListProps) {
 
   if (configs.length === 0) {
     return (
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-[15px]">我的自定义配置</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <EmptyState description="暂无配置，在下方新增第一条。" />
-        </CardContent>
-      </Card>
+      <div className="space-y-3">
+        <SectionLabel>我的自定义配置</SectionLabel>
+        <EmptyState description="暂无配置，点击右上角「添加配置」开始" />
+      </div>
     )
   }
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-[15px]">我的自定义配置（{configs.length}）</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div
-          className="overflow-hidden rounded-2xl border border-black/[0.07] bg-card dark:border-white/10"
-          style={{ boxShadow: 'var(--shadow-card)' }}
-        >
-          {configs.map((c) => (
-            <div
-              key={c.id}
-              className="flex items-center justify-between gap-3 border-t border-black/[0.07] px-3 py-2.5 transition-colors first:border-t-0 hover:bg-muted/40 dark:border-white/10"
-            >
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[13px] font-medium">{c.name}</p>
-                <p className="truncate text-[12px] text-muted-foreground">
-                  {c.model} · {c.api_key_masked}
+    <div className="space-y-3">
+      <SectionLabel>我的自定义配置（{configs.length}）</SectionLabel>
+      <div
+        className="overflow-hidden rounded-2xl border border-black/[0.07] bg-card dark:border-white/10"
+        style={{ boxShadow: 'var(--shadow-card)' }}
+      >
+        {configs.map((c) => (
+          <div
+            key={c.id}
+            className="flex items-center justify-between gap-3 border-t border-black/[0.07] px-4 py-3 transition-colors first:border-t-0 hover:bg-muted/40 dark:border-white/10"
+          >
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[13px] font-medium">{c.name}</p>
+              <p className="truncate text-[12px] text-muted-foreground">
+                {c.model} · {c.api_key_masked}
+              </p>
+              {c.embedding_model && (
+                <p className="truncate text-[11px] text-muted-foreground">
+                  embed: {c.embedding_model}
                 </p>
-                {c.embedding_model && (
-                  <p className="truncate text-[11px] text-muted-foreground">
-                    embed: {c.embedding_model}
-                  </p>
-                )}
-              </div>
-              <div className="flex shrink-0 gap-1">
-                <Button size="xs" variant="outline" onClick={() => setEditing(c)}>
-                  编辑
-                </Button>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  className="text-destructive hover:text-destructive"
-                  disabled={deleteMutation.isPending}
-                  onClick={() => deleteMutation.mutate(c.id)}
-                >
-                  删除
-                </Button>
-              </div>
+              )}
             </div>
-          ))}
-        </div>
-      </CardContent>
+            <div className="flex shrink-0 gap-1">
+              <Button size="xs" variant="outline" onClick={() => setEditing(c)}>
+                编辑
+              </Button>
+              <Button
+                size="xs"
+                variant="ghost"
+                className="text-destructive hover:text-destructive"
+                disabled={deleteMutation.isPending}
+                onClick={() => deleteMutation.mutate(c.id)}
+              >
+                删除
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
 
       {editing && (
         <EditDialog
@@ -283,17 +283,19 @@ function ConfigList({ configs }: ConfigListProps) {
           }}
         />
       )}
-    </Card>
+    </div>
   )
 }
 
-// ── 新增表单 ─────────────────────────────────────────────
+// ── 新增配置弹窗 ─────────────────────────────────────────
 
-interface CreateFormProps {
-  onCreate: () => void
+interface CreateDialogProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onCreated: () => void
 }
 
-function CreateForm({ onCreate }: CreateFormProps) {
+function CreateDialog({ open, onOpenChange, onCreated }: CreateDialogProps) {
   const [name, setName] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
@@ -311,12 +313,13 @@ function CreateForm({ onCreate }: CreateFormProps) {
       }),
     onSuccess: () => {
       toast.success('配置已添加')
+      onCreated()
+      onOpenChange(false)
       setName('')
       setBaseUrl('')
       setApiKey('')
       setModel('')
       setEmbeddingModel('')
-      onCreate()
     },
     onError: () => toast.error('保存失败'),
   })
@@ -342,58 +345,63 @@ function CreateForm({ onCreate }: CreateFormProps) {
   const canSubmit = !!name.trim() && !!baseUrl.trim() && !!apiKey && !!model.trim()
 
   return (
-    <Card>
-      <CardHeader className="pb-3">
-        <CardTitle className="text-[15px]">新增配置</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="space-y-2">
-          <Label htmlFor="name">配置名</Label>
-          <Input
-            id="name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="如：公司Key"
-          />
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>添加 LLM 配置</DialogTitle>
+          <DialogDescription>
+            支持 OpenAI 兼容 Provider（智谱 GLM / OpenAI / DeepSeek / 本地 Ollama 等）。Key 加密存储，不明文返回。
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 py-2">
+          <div className="space-y-2">
+            <Label htmlFor="name">配置名</Label>
+            <Input
+              id="name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="如：公司Key"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="baseUrl">API Base URL</Label>
+            <Input
+              id="baseUrl"
+              value={baseUrl}
+              onChange={(e) => setBaseUrl(e.target.value)}
+              placeholder="https://open.bigmodel.cn/api/paas/v4"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="apiKey">API Key</Label>
+            <Input
+              id="apiKey"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="输入你的 API Key"
+              type="password"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="model">模型名</Label>
+            <Input
+              id="model"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder="glm-4-flash"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="embeddingModel">Embedding 模型（可选）</Label>
+            <Input
+              id="embeddingModel"
+              value={embeddingModel}
+              onChange={(e) => setEmbeddingModel(e.target.value)}
+              placeholder="embedding-3"
+            />
+          </div>
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="baseUrl">API Base URL</Label>
-          <Input
-            id="baseUrl"
-            value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
-            placeholder="https://open.bigmodel.cn/api/paas/v4"
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="apiKey">API Key</Label>
-          <Input
-            id="apiKey"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            placeholder="输入你的 API Key"
-            type="password"
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="model">模型名</Label>
-          <Input
-            id="model"
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            placeholder="glm-4-flash"
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="embeddingModel">Embedding 模型（可选）</Label>
-          <Input
-            id="embeddingModel"
-            value={embeddingModel}
-            onChange={(e) => setEmbeddingModel(e.target.value)}
-            placeholder="embedding-3"
-          />
-        </div>
-        <div className="flex flex-wrap gap-2 pt-1">
+        <DialogFooter>
           <Button onClick={handleTest} variant="outline" disabled={testing || !apiKey || !baseUrl}>
             {testing ? '测试中...' : '测试连通'}
           </Button>
@@ -403,9 +411,9 @@ function CreateForm({ onCreate }: CreateFormProps) {
           >
             {createMutation.isPending ? '保存中...' : '保存'}
           </Button>
-        </div>
-      </CardContent>
-    </Card>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
