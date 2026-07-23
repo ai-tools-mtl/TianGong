@@ -13,6 +13,10 @@ import type {
   ShareLink,
   ShareLinkCreate,
   SharedInfo,
+  Skill,
+  SkillCreate,
+  SkillDetail,
+  SkillUpdate,
   Tag,
   TagCreate,
   TagMerge,
@@ -488,6 +492,26 @@ export const api = {
 
   getSharedInfo: (token: string) =>
     request<SharedInfo>(`/shared/${token}`),
+
+  // ── Agent Skills（spec 合规）──
+  listGlobalSkills: () => request<Skill[]>('/admin/skills'),
+  createGlobalSkill: (data: SkillCreate) =>
+    request<Skill>('/admin/skills', { method: 'POST', body: JSON.stringify(data) }),
+  getGlobalSkill: (id: string) => request<SkillDetail>(`/admin/skills/${id}`),
+  updateGlobalSkill: (id: string, data: SkillUpdate) =>
+    request<Skill>(`/admin/skills/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteGlobalSkill: (id: string) =>
+    request<{ ok: boolean }>(`/admin/skills/${id}`, { method: 'DELETE' }),
+
+  listVisibleSkills: () => request<Skill[]>('/skills/visible'),
+  listMySkills: () => request<Skill[]>('/skills/mine'),
+  createMySkill: (data: SkillCreate) =>
+    request<Skill>('/skills/mine', { method: 'POST', body: JSON.stringify(data) }),
+  getMySkill: (id: string) => request<SkillDetail>(`/skills/mine/${id}`),
+  updateMySkill: (id: string, data: SkillUpdate) =>
+    request<Skill>(`/skills/mine/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteMySkill: (id: string) =>
+    request<{ ok: boolean }>(`/skills/mine/${id}`, { method: 'DELETE' }),
 }
 
 /**

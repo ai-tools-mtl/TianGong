@@ -460,3 +460,35 @@ export interface Conversation {
   created_at: string
   updated_at: string
 }
+
+// ── Agent Skill（spec 合规，两档可见性）──
+export type SkillScope = 'global' | 'personal'
+export type SkillStatus = 'draft' | 'active'
+
+export interface Skill {
+  id: string
+  name: string
+  description: string
+  scope: SkillScope
+  owner_id: string | null
+  status: SkillStatus
+  minio_prefix: string
+  created_at: string
+  updated_at: string
+}
+
+export interface SkillDetail extends Skill {
+  skill_md: string
+}
+
+export interface SkillCreate {
+  name: string
+  description: string
+  skill_md: string
+}
+
+export interface SkillUpdate {
+  description?: string
+  skill_md?: string
+  status?: SkillStatus
+}

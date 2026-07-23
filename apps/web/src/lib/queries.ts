@@ -13,6 +13,9 @@ import type {
   Project,
   ProjectCreate,
   Section,
+  Skill,
+  SkillCreate,
+  SkillUpdate,
   Tag,
   TagCreate,
   TagMerge,
@@ -34,6 +37,13 @@ export const queryKeys = {
   shareLinks: (projectId: string) => ['share-links', projectId] as const,
   messages: (sectionId: string, conversationId?: string) =>
     ['messages', sectionId, conversationId ?? null] as const,
+  skills: {
+    all: ['skills'] as const,
+    visible: ['skills', 'visible'] as const,
+    mine: ['skills', 'mine'] as const,
+    admin: ['skills', 'admin'] as const,
+    detail: (id: string) => ['skills', 'detail', id] as const,
+  },
   // admin 域（refactor/admin-ia-phase1 切片 1）。all 用于一刀切失效所有 admin 缓存。
   admin: {
     all: ['admin'] as const,
@@ -585,5 +595,66 @@ export function useDeleteAdminTemplate() {
       qc.invalidateQueries({ queryKey: queryKeys.admin.adminTemplates })
       qc.invalidateQueries({ queryKey: queryKeys.templates })
     },
+  })
+}
+
+// ── Agent Skills（spec 合规）──
+export function useGlobalSkills() {
+  return useQuery<Skill[]>({ queryKey: queryKeys.skills.admin, queryFn: api.listGlobalSkills })
+}
+
+export function useCreateGlobalSkill() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: SkillCreate) => api.createGlobalSkill(data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.skills.admin }),
+  })
+}
+
+export function useUpdateGlobalSkill() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: SkillUpdate }) => api.updateGlobalSkill(id, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.skills.admin }),
+  })
+}
+
+export function useDeleteGlobalSkill() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.deleteGlobalSkill(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.skills.admin }),
+  })
+}
+
+export function useVisibleSkills() {
+  return useQuery<Skill[]>({ queryKey: queryKeys.skills.visible, queryFn: api.listVisibleSkills })
+}
+
+export function useMySkills() {
+  return useQuery<Skill[]>({ queryKey: queryKeys.skills.mine, queryFn: api.listMySkills })
+}
+
+export function useCreateMySkill() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: SkillCreate) => api.createMySkill(data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.skills.mine }),
+  })
+}
+
+export function useUpdateMySkill() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: SkillUpdate }) => api.updateMySkill(id, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.skills.mine }),
+  })
+}
+
+export function useDeleteMySkill() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.deleteMySkill(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.skills.mine }),
   })
 }
