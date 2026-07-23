@@ -76,6 +76,10 @@ def build_agent(
     # 2. MinIO BaseStore + StoreBackend
     # C1：所有 skill（global + personal）统一存 "global" bucket，仅靠 minio_prefix 区分 scope。
     store = MinIOSkillStore(bucket="global")
+    # Task 15 v1 决定（spec §12 已知限制）：backend 只用 StoreBackend（skill 存储），
+    # 不自动注入 Docker sandbox backend。脚本执行通过 sandbox.docker_runner.execute_script
+    # 独立 API 暴露（Task 14）。agent 自动执行脚本（CompositeBackend 组合 sandbox）留 v2。
+    # 这样 build_agent 不依赖 Docker daemon——Docker 不可用时 agent 仍能加载 skill。
     # I2：显式 namespace，避免 StoreBackend 回退到 legacy assistant_id 检测（每次 ls 抛 DeprecationWarning，
     # 0.7.0 会 break）。namespace 必须非空（deepagents 的 _validate_namespace 拒绝空 tuple），
     # 且应覆盖所有 skill 的前缀根——所有 minio_prefix 都以 "skills/" 开头，故用 ("skills",)。
