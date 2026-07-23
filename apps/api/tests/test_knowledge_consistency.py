@@ -30,9 +30,9 @@ def fake_embed(monkeypatch):
     fake_vec = [0.0] * 2048
     monkeypatch.setattr(
         "app.services.knowledge_service.embed_texts",
-        lambda texts: [fake_vec for _ in texts],
+        lambda texts, **kwargs: [fake_vec for _ in texts],
     )
-    monkeypatch.setattr("app.rag.embedding.embed_text", lambda t: fake_vec)
+    monkeypatch.setattr("app.rag.embedding.embed_text", lambda t, **kwargs: fake_vec)
 
 
 @pytest.fixture
