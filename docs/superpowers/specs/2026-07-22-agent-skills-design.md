@@ -8,7 +8,7 @@
 
 ## 锚点总览
 
-Agent Skills 开放标准 · 两档可见性（admin 全局 / 用户个人）· MinIO `BaseStore` 适配 · deepagents 全量重写 AI 层 · 自建 Docker sandbox · BYOK 不支持 tool calling 时拒绝服务 · 旧 `agent_skills` 表彻底删除。
+Agent Skills 开放标准 · 两档可见性（admin 全局 / 用户个人）· MinIO `BaseStore` 适配 · deepagents 全量重写 AI 层 · 自建 Docker sandbox · 自定义配置模型不支持 tool calling 时拒绝服务 · 旧 `agent_skills` 表彻底删除。
 
 ---
 
@@ -60,7 +60,7 @@ Agent Skills 开放标准 · 两档可见性（admin 全局 / 用户个人）· 
 | **旧体系** | `agent_skills` 表 + 项目耦合**彻底删除** | Q2/Q5 | 否决"重定义为项目启用清单"：彻底解耦，项目无 skill 状态 |
 | **AI 运行时** | **路线 B**：全量切 `deepagents`，spec 合规三层披露 | Q8/Q10/Q16 | 否决"路线 A prompt 注入"：抛弃渐进式披露=spec 残缺 |
 | **默认模型** | `glm-4.7`（V1 验证通过，[Coding Plan 默认](https://docs.bigmodel.cn/cn/coding-plan/overview)）| Q14(i) | base_url 不变 `open.bigmodel.cn/api/paas/v4`，只改默认 model 名 |
-| **BYOK 降级** | **(α) 拒绝服务**：模型不支持 tool calling → 明确报错 | Q14(ii) | 否决"静默降级路线 A"(β)：隐性降级是产品事故温床；否决"假装能跑"(γ) |
+| **自定义配置降级** | **(α) 拒绝服务**：模型不支持 tool calling → 明确报错 | Q14(ii) | 否决"静默降级路线 A"(β)：隐性降级是产品事故温床；否决"假装能跑"(γ) |
 | **存储** | MinIO + 自写 LangGraph `BaseStore` 适配器 | Q4/Q9 | `StoreBackend` 包它，`SkillsMiddleware` 加载 |
 | **可见性** | 两档：admin 全局 + 用户个人 | Q7/Q17b | 撤回"其他用户公开 skill"(iii)：删发布流程，无 public 档 |
 | **合并方式** | **纯运行时计算**可见集合 | Q11-α | 项目无 skill 状态，下线即不可见，无孤儿问题 |
@@ -162,7 +162,7 @@ MinIO 布局：`skills/<scope>/<owner_or_global>/<name>/{SKILL.md, scripts/, ref
 - `app/ai/agent.py`（新建）：`create_deep_agent(model=get_llm(...), skills=..., tools=[rag_search_tool], backend=StoreBackend(store=MinIOSkillStore(...), namespace=lambda ctx: ("skills",)))`。**不预绑定 `bind_tools`**——deepagents 内部会调 `model.bind_tools(all_tools)`，预绑定会让 `RunnableBinding`（无 `bind_tools` 方法）传入导致 AttributeError。
 - 取代 `app/ai/orchestrator.py` 的 `astream_generate`/`astream_chat`/`astream_rewrite` 一次性流，改为 agent loop。
 - `rag_search` 从布尔守卫改造为 `@tool`，agent 在 loop 中按需调用。
-- BYOK 降级（Q14-α）：agent 创建前检测模型 tool calling 支持，不支持 → 明确报错"当前模型不支持技能功能，请切换到支持 function calling 的模型"，**拒绝服务**。
+- 自定义配置降级（Q14-α）：agent 创建前检测模型 tool calling 支持，不支持 → 明确报错"当前模型不支持技能功能，请切换到支持 function calling 的模型"，**拒绝服务**。
 
 ### 6.4 Docker sandbox（Q12-b/Q15-A）
 
@@ -199,7 +199,7 @@ MinIO 布局：`skills/<scope>/<owner_or_global>/<name>/{SKILL.md, scripts/, ref
 
 | 场景 | 处理 |
 |---|---|
-| 用户 BYOK 模型不支持 tool calling | **拒绝服务**（Q14-α），明确报错引导换模型 |
+| 用户自定义配置模型不支持 tool calling | **拒绝服务**（Q14-α），明确报错引导换模型 |
 | MinIO 不可达 | skill CRUD 不可用，agent 降级为无 skill 的纯文本生成 |
 | Docker daemon 不可用 | 脚本执行禁用，skill 的 `scripts/` 不可跑（`references/` 仍可读）|
 | skill `status=draft` | 不进 runtime 可见集合 |
@@ -220,7 +220,7 @@ MinIO 布局：`skills/<scope>/<owner_or_global>/<name>/{SKILL.md, scripts/, ref
 
 1. **Phase 1 数据层**：新 `Skill` 模型 + 迁移 + 删除旧 `agent_skills` 体系（含前端清理）。
 2. **Phase 2 存储层**：MinIO `BaseStore` 适配器 + `StoreBackend` 集成。
-3. **Phase 3 运行时**：deepagents agent 重写（含 `rag_search` 工具化）+ BYOK 降级护栏。
+3. **Phase 3 运行时**：deepagents agent 重写（含 `rag_search` 工具化）+ 自定义配置降级护栏。
 4. **Phase 4 sandbox**：自建 Docker sandbox + MinIO 脚本拉取。
 5. **Phase 5 可见性 + CRUD**：合并服务 + admin/user 两套 API。
 6. **Phase 6 前端**：admin 全局管理 + 用户个人管理页面。

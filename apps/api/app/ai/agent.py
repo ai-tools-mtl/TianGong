@@ -11,7 +11,7 @@
   SkillsMiddleware/FilesystemMiddleware 持久化 skill 与文件。
 - Task 9 build_agent_skill_sources：运行时计算可见 skill 前缀列表（global ∪ personal）。
 - Task 10 rag_search_tool：作为 agent 的检索工具注入。
-- get_llm：解析后的 BYOK/global/env 配置 → ChatOpenAI 实例。
+- get_llm：解析后的自定义/global/env 配置 → ChatOpenAI 实例。
 
 注意：create_deep_agent / StoreBackend 必须在模块顶层 import，
 测试用 monkeypatch.setattr(agent_mod, "create_deep_agent", ...) 装配断言时
@@ -40,7 +40,7 @@ def build_agent(
     """构造 deepagents agent（路线 B 的装配入口）。
 
     顺序（关键）：
-    1. check_tool_support：BYOK 降级检测。不支持 tool calling 立即抛
+    1. check_tool_support：自定义配置降级检测。不支持 tool calling 立即抛
        ToolSupportError（Q14-α，宁拒不降级），避免旧 orchestrator 那种
        晦涩的「调了一半才在 GLM 1214 报错」。
     2. MinIOSkillStore（BaseStore）+ StoreBackend 包装：供 SkillsMiddleware
@@ -70,7 +70,7 @@ def build_agent(
     Raises:
         ToolSupportError: 模型不支持 tool calling（Q14-α fail-fast）。
     """
-    # 1. BYOK 降级检测——第一道闸，不支持立即拒绝
+    # 1. 自定义配置降级检测——第一道闸，不支持立即拒绝
     check_tool_support(model=llm_config.model)
 
     # 2. MinIO BaseStore + StoreBackend

@@ -52,13 +52,13 @@ export default function SettingsPage() {
       } else {
         setSelectedSource(saved)
       }
-    } else if (saved.startsWith('byok:')) {
-      const configId = saved.slice(5)
+    } else if (saved.startsWith('custom:')) {
+      const configId = saved.slice(7)
       const exists = configs.some((c: UserLLMConfig) => c.id === configId)
       if (!exists) {
         clearDefaultSource()
         setSelectedSource(null)
-        toast.info('所选 BYOK 配置已被删除，请重新选择 LLM 源')
+        toast.info('所选自定义配置已被删除，请重新选择 LLM 源')
       } else {
         setSelectedSource(saved)
       }
@@ -78,7 +78,7 @@ export default function SettingsPage() {
 
   return (
     <PageShell width="narrow">
-      <PageHeader title="设置" description="管理你的 LLM 接入（多 BYOK + 选源）" />
+      <PageHeader title="设置" description="管理你的 LLM 接入（多自定义配置 + 选源）" />
 
       <div className="py-6 space-y-4">
         {/* 选源器 */}
@@ -122,7 +122,7 @@ function SourceSelector({ configs, grantActive, selectedSource, onSelect }: Sour
       </CardHeader>
       <CardContent className="space-y-3">
         {!hasAnyOption ? (
-          <EmptyState description="暂无可选项。请在下方添加 BYOK 配置，或联系管理员授权全局 Key。" />
+          <EmptyState description="暂无可选项。请在下方添加自定义配置，或联系管理员授权全局 Key。" />
         ) : (
           <div className="overflow-hidden rounded-2xl border border-black/[0.07] bg-card dark:border-white/10"
                style={{ boxShadow: 'var(--shadow-card)' }}>
@@ -138,10 +138,10 @@ function SourceSelector({ configs, grantActive, selectedSource, onSelect }: Sour
             {configs.map((c) => (
               <SourceOption
                 key={c.id}
-                value={`byok:${c.id}`}
+                value={`custom:${c.id}`}
                 label={c.name}
                 description={`${c.model} · ${c.api_key_masked}`}
-                selected={selectedSource === `byok:${c.id}`}
+                selected={selectedSource === `custom:${c.id}`}
                 onSelect={onSelect}
               />
             ))}
@@ -210,7 +210,7 @@ function ConfigList({ configs }: ConfigListProps) {
       invalidate()
       // 删除的若是默认源，清掉（外层 useEffect 会兜底校正，这里即时清更稳）
       const saved = getDefaultSource()
-      if (saved && saved === `byok:${editing?.id}`) clearDefaultSource()
+      if (saved && saved === `custom:${editing?.id}`) clearDefaultSource()
     },
     onError: () => toast.error('删除失败'),
   })
@@ -219,7 +219,7 @@ function ConfigList({ configs }: ConfigListProps) {
     return (
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-[15px]">我的 BYOK 配置</CardTitle>
+          <CardTitle className="text-[15px]">我的自定义配置</CardTitle>
         </CardHeader>
         <CardContent>
           <EmptyState description="暂无配置，在下方新增第一条。" />
@@ -231,7 +231,7 @@ function ConfigList({ configs }: ConfigListProps) {
   return (
     <Card>
       <CardHeader className="pb-3">
-        <CardTitle className="text-[15px]">我的 BYOK 配置（{configs.length}）</CardTitle>
+        <CardTitle className="text-[15px]">我的自定义配置（{configs.length}）</CardTitle>
       </CardHeader>
       <CardContent>
         <div

@@ -35,18 +35,18 @@ def admin_user(db_session):
     return u
 
 
-def _setup_byok_user(client, registered_user, db_session):
-    """登录 + 建项目 + 配 BYOK，返回第一个 section（同 test_llm_config_e2e 的脚手架）。"""
+def _setup_custom_user(client, registered_user, db_session):
+    """登录 + 建项目 + 配自定义配置，返回第一个 section（同 test_llm_config_e2e 的脚手架）。"""
     ensure_default_template(db_session)
     user = db_session.scalar(select(User).where(User.email == registered_user["email"]))
     db_session.add(UserLLMConfig(
         user_id=user.id,
         name="test",
         provider="custom",
-        base_url="https://byok-fake.example.com",
-        api_key_encrypted=encrypt_value("sk-byok-fake-key"),
-        model="byok-model",
-        embedding_model="byok-embed",
+        base_url="https://custom-fake.example.com",
+        api_key_encrypted=encrypt_value("sk-custom-fake-key"),
+        model="custom-model",
+        embedding_model="custom-embed",
     ))
     db_session.commit()
     p = create_project(db_session, user=user, title="Token 用量测试发明")
@@ -114,7 +114,7 @@ def test_chat_logs_token_usage_from_stream(client, registered_user, db_session):
     rewrite/caption 仍走 astream_llm，token 透传不受影响（见各自测试）。
     本测试 mock build_agent 透传 token 流，验证 SSE 成功路径 + token 字段如实为 None。
     """
-    sections = _setup_byok_user(client, registered_user, db_session)
+    sections = _setup_custom_user(client, registered_user, db_session)
     section = sections[0]
 
     fake_agent = _fake_agent_streaming(["你好", "世界"])
@@ -137,7 +137,7 @@ def test_chat_logs_token_usage_from_stream(client, registered_user, db_session):
 
 def test_generate_logs_token_usage_from_stream(client, registered_user, db_session):
     """generate 端点：Task 13 起委托 agent loop，token 字段落 None（同 chat）。"""
-    sections = _setup_byok_user(client, registered_user, db_session)
+    sections = _setup_custom_user(client, registered_user, db_session)
     section = sections[0]
 
     fake_agent = _fake_agent_streaming(["# 草稿", "\n正文"])
@@ -157,7 +157,7 @@ def test_generate_logs_token_usage_from_stream(client, registered_user, db_sessi
 
 def test_rewrite_logs_token_usage_from_stream(client, registered_user, db_session):
     """rewrite 端点：token 用量透传。"""
-    sections = _setup_byok_user(client, registered_user, db_session)
+    sections = _setup_custom_user(client, registered_user, db_session)
     section = sections[0]
 
     mock_inst = _mock_chat_openai_with_usage(["重写"], {"input_tokens": 80, "output_tokens": 40})
@@ -178,7 +178,7 @@ def test_rewrite_logs_token_usage_from_stream(client, registered_user, db_sessio
 
 def test_caption_logs_token_usage_from_stream(client, registered_user, db_session):
     """caption_figures 端点（直接调 astream_llm）：token 用量透传并写日志。"""
-    sections = _setup_byok_user(client, registered_user, db_session)
+    sections = _setup_custom_user(client, registered_user, db_session)
     drawings = next(s for s in sections if s.key == "drawings")
 
     mock_inst = _mock_chat_openai_with_usage(
@@ -238,7 +238,7 @@ def test_token_usage_none_when_provider_does_not_return_usage(client, registered
     Task 13：chat 走 agent loop，usage_sink 本就不被填充（恒为 None）。
     用 fake build_agent 验证 SSE 成功路径 + token 字段如实为 None，端点不崩。
     """
-    sections = _setup_byok_user(client, registered_user, db_session)
+    sections = _setup_custom_user(client, registered_user, db_session)
     section = sections[0]
 
     fake_agent = _fake_agent_streaming(["hello"])

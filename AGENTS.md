@@ -5,7 +5,7 @@
 ## 项目简介
 
 天工是 AI 驱动的专利交底书撰写智能体——从灵感到授权全生命周期的 Agent 系统。
-- **当前阶段**：MVP 全部 P0 已完成（计划 1–7b：后端地基→前端地基→模板编辑器→AI 撰写→版本导出→知识库 RAG→审查引擎→管理后台 BYOK）
+- **当前阶段**：MVP 全部 P0 已完成（计划 1–7b：后端地基→前端地基→模板编辑器→AI 撰写→版本导出→知识库 RAG→审查引擎→管理后台自定义配置）
 - **技术栈**：FastAPI(Python) 后端 + Next.js 前端 + PostgreSQL(pgvector) + LangChain（编排 + Embedding）。注：原设计曾规划 LangGraph + LlamaIndex，落地中调整为纯 LangChain（见 GOTCHAS E3）
 
 ## 必读文档（按顺序）
@@ -60,3 +60,4 @@ cd apps/api && uv run python -m scripts.create_admin --username admin --password
 - **密码**：用 bcrypt 库直接调用，不用 passlib（见 GOTCHAS G1）
 - **shadcn/ui**：锁 3.x，不用 4.x（见 GOTCHAS F1）；CLI 与 MCP SDK 冲突装不了组件，要新组件**手写**（见 GOTCHAS F8）
 - **开发端口**：后端 8000、前端 3000，都用 `localhost`（不用 127.0.0.1，见 GOTCHAS F4）
+- **「BYOK」术语已更名为「自定义配置」**：本项目原称的 BYOK 实指「用户密钥加密托管」（L1 成本隔离型——每用户用自己的 key 调用，运营方不为用户 token 买单），非严格意义的 BYOK（密钥主权型，服务端零明文）。代码层面 source 协议前缀为 `custom:{config_id}`，用户可见文案统一称「自定义配置」。此为有意决策，非缺陷。

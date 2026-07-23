@@ -3,7 +3,7 @@ from pydantic import BaseModel
 
 class ChatRequest(BaseModel):
     message: str
-    source: str | None = None  # "global" / "byok:{id}" / "env"；None 走 fallback
+    source: str | None = None  # "global" / "custom:{id}" / "env"；None 走 fallback
     conversation_id: str | None = None
 
 

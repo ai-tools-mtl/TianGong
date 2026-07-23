@@ -243,7 +243,7 @@ def _ingest_chunks(
 ) -> None:
     """分块 + 向量化 + 写 chunk(关联 file)。
 
-    向量化配置由 user_id 内部解析（断链修复：embed 真用 BYOK/全局/env 配置）。
+    向量化配置由 user_id 内部解析（断链修复：embed 真用自定义/全局/env 配置）。
     无可用配置时跳过向量化但 chunk 仍写入（embedding=None），检索时该 chunk 不命中。
     """
     chunks = chunk_sections([{"key": None, "title": title, "content": text}])

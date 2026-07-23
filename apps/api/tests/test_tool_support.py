@@ -1,5 +1,5 @@
 # apps/api/tests/test_tool_support.py
-"""BYOK tool calling 降级检测（spec Q14-α）。"""
+"""自定义配置 tool calling 降级检测（spec Q14-α）。"""
 import pytest
 
 

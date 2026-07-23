@@ -26,19 +26,19 @@ def test_get_llm_uses_resolved_config_not_env():
     from app.ai.llm_client import get_llm
 
     cfg = ResolvedLLMConfig(
-        base_url="https://byok.example.com",
-        api_key="sk-byok-xxx",
-        model="byok-model",
-        embedding_model="byok-embed",
+        base_url="https://custom.example.com",
+        api_key="sk-custom-xxx",
+        model="custom-model",
+        embedding_model="custom-embed",
         source="user",
     )
     with patch("app.ai.llm_client.ChatOpenAI") as mock:
         get_llm(llm_config=cfg)
         _, kwargs = mock.call_args
         # 必须用 cfg 的值，不是 settings
-        assert kwargs["base_url"] == "https://byok.example.com"
-        assert kwargs["api_key"] == "sk-byok-xxx"
-        assert kwargs["model"] == "byok-model"
+        assert kwargs["base_url"] == "https://custom.example.com"
+        assert kwargs["api_key"] == "sk-custom-xxx"
+        assert kwargs["model"] == "custom-model"
 
 
 def test_get_embedder_uses_resolved_config():
@@ -46,22 +46,22 @@ def test_get_embedder_uses_resolved_config():
     from app.rag.embedding import get_embedder
 
     cfg = ResolvedLLMConfig(
-        base_url="https://byok.example.com",
-        api_key="sk-byok-xxx",
-        model="byok-model",
-        embedding_model="byok-embed",
+        base_url="https://custom.example.com",
+        api_key="sk-custom-xxx",
+        model="custom-model",
+        embedding_model="custom-embed",
         source="user",
     )
     with patch("app.rag.embedding.OpenAIEmbeddings") as mock:
         get_embedder(embed_config=cfg)
         _, kwargs = mock.call_args
-        assert kwargs["base_url"] == "https://byok.example.com"
-        assert kwargs["api_key"] == "sk-byok-xxx"
-        assert kwargs["model"] == "byok-embed"
+        assert kwargs["base_url"] == "https://custom.example.com"
+        assert kwargs["api_key"] == "sk-custom-xxx"
+        assert kwargs["model"] == "custom-embed"
 
 
 def test_resolve_llm_config_falls_back_to_env(monkeypatch, db_session):
-    """无 BYOK + 无全局配置 + env 有 glm_api_key → 返回 env 兜底配置（阶段 0 Task 0.6）。"""
+    """无自定义配置 + 无全局配置 + env 有 glm_api_key → 返回 env 兜底配置（阶段 0 Task 0.6）。"""
     import uuid
 
     from app.core.config import get_settings
@@ -84,7 +84,7 @@ def test_resolve_llm_config_falls_back_to_env(monkeypatch, db_session):
 
 
 def test_resolve_llm_config_returns_none_when_no_env_key(monkeypatch, db_session):
-    """无 BYOK + 无全局 + env glm_api_key 为空 → 仍返回 None（调用方报 no_llm_config）。"""
+    """无自定义配置 + 无全局 + env glm_api_key 为空 → 仍返回 None（调用方报 no_llm_config）。"""
     import uuid
 
     from app.core.config import get_settings
@@ -100,7 +100,7 @@ def test_resolve_llm_config_returns_none_when_no_env_key(monkeypatch, db_session
 # ── 1214 修复闸 2：global 配置 model 为空时降级为 None ──
 # 根因：admin 只填 key 没填 model 就保存 → model 存成空串 →
 # _build_global_config 只校验 api_key，返回 model="" 的配置 → 后续触发 1214。
-# 修复：model 空时视同未配置返回 None，让 resolve 降级到 BYOK/env。
+# 修复：model 空时视同未配置返回 None，让 resolve 降级到自定义配置/env。
 
 def test_build_global_config_returns_none_when_model_empty(db_session):
     """全局配置 model 为空串 → _build_global_config 返回 None（视同未配置）。"""

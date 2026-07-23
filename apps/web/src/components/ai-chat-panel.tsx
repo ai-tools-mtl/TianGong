@@ -30,7 +30,7 @@ interface ChatMessage {
 }
 
 /**
- * 判定错误是否为“LLM 源失效”（全局 Key 授权被撤销 / 选中的 BYOK 被删）。
+ * 判定错误是否为“LLM 源失效”（全局 Key 授权被撤销 / 选中的自定义配置被删）。
  *
  * streamChat/streamGenerate 在初始 POST !res.ok 时抛出的 Error 携带 .status
  * 与 .code（见 api.ts _sseHttpError）；后端 ForbiddenError 序列化为
@@ -215,7 +215,7 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
       if (err instanceof DOMException && err.name === 'AbortError') {
         // 用户主动停止：保留已生成的半截内容，不弹错
       } else if (isForbiddenSourceError(err)) {
-        // LLM 源失效（全局 Key 授权被撤销 / BYOK 被删）：清默认源 + 引导重选
+        // LLM 源失效（全局 Key 授权被撤销 / 自定义配置被删）：清默认源 + 引导重选
         handleStaleSourceError()
         setMessages((m) => {
           const last = m[m.length - 1]

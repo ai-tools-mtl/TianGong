@@ -1,4 +1,4 @@
-"""多 BYOK CRUD API 测试（Task 2.3 Part A）。
+"""自定义配置 CRUD API 测试（Task 2.3 Part A）。
 
 覆盖 /api/v1/settings/llm 系列端点的多配置 CRUD 语义：
 - GET 空 → []

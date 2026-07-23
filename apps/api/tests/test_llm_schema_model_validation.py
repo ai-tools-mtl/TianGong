@@ -26,7 +26,7 @@ def test_global_llm_settings_allows_none_model():
     assert s.model is None
 
 
-def test_byok_create_rejects_empty_model():
+def test_custom_create_rejects_empty_model():
     """UserLLMCreateRequest 的 model 空串 → ValidationError。"""
     from app.api.settings import UserLLMCreateRequest
     with pytest.raises(ValidationError):
@@ -36,7 +36,7 @@ def test_byok_create_rejects_empty_model():
         )
 
 
-def test_byok_test_rejects_empty_model():
+def test_custom_test_rejects_empty_model():
     """UserLLMTestRequest 的 model 空串 → ValidationError（测试连通性也必须有 model）。"""
     from app.api.settings import UserLLMTestRequest
     with pytest.raises(ValidationError):
@@ -45,7 +45,7 @@ def test_byok_test_rejects_empty_model():
         )
 
 
-def test_byok_update_model_allows_none():
+def test_custom_update_model_allows_none():
     """UserLLMUpdateRequest.model=None → 合法（表示不更新 model，可选更新语义）。"""
     from app.api.settings import UserLLMUpdateRequest
     req = UserLLMUpdateRequest()

@@ -6,7 +6,7 @@
 - admin/content.py     内容生产（/admin/content/templates/* + /admin/knowledge/upload）
 - admin/review.py      知识库审核（/admin/knowledge/reviews/*）
 
-注：用户 BYOK 配置（/settings/*）拆到 app/api/settings.py，不属本包。
+注：用户自定义配置（/settings/*）拆到 app/api/settings.py，不属本包。
 
 子 router 都用 tags=["admin"]、空 prefix（路径字面量写在装饰器上，与原 admin.py 一致）。
 聚合后保持 API 契约零变化（URL/tags/响应结构全不变）。

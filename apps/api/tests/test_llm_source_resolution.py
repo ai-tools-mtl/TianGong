@@ -2,9 +2,9 @@
 
 覆盖 resolve_llm_config 的 source 分支：
 - source="global"：admin 免授权；非 admin 须有有效 grant，否则 ForbiddenError
-- source="byok:{id}"：自己的配置 → 该配置；他人配置 → NotFoundError（防探测）
+- source="custom:{id}"：自己的配置 → 该配置；他人配置 → NotFoundError（防探测）
 - source="env"：env 兜底
-- source=None fallback：admin→global；非 admin→grant→global，否则单条 BYOK，否则 env，否则 None
+- source=None fallback：admin→global；非 admin→grant→global，否则单条自定义配置，否则 env，否则 None
 - 无效 source → ValidationError
 """
 
@@ -56,12 +56,12 @@ def _make_global_config(db):
     db.commit()
 
 
-def _make_byok(db, user, *, name="default", base="https://byok.example.com",
-               key="sk-byok-123", model="byok-model"):
+def _make_custom(db, user, *, name="default", base="https://custom.example.com",
+                 key="sk-custom-123", model="custom-model"):
     cfg = UserLLMConfig(
         user_id=user.id, name=name, provider="custom",
         base_url=base, api_key_encrypted=encrypt_value(key),
-        model=model, embedding_model="byok-embed",
+        model=model, embedding_model="custom-embed",
     )
     db.add(cfg); db.commit(); db.refresh(cfg)
     return cfg
@@ -124,42 +124,42 @@ def test_global_unconfigured_returns_none(db_session):
     assert cfg is None
 
 
-# ── source="byok:{id}" ──
+# ── source="custom:{id}" ──
 
-def test_byok_returns_own_config(db_session):
-    """source=byok:{自己 id} → 该配置。"""
+def test_custom_returns_own_config(db_session):
+    """source=custom:{自己 id} → 该配置。"""
     u = _make_user(db_session)
-    cfg = _make_byok(db_session, u)
+    cfg = _make_custom(db_session, u)
 
-    resolved = resolve_llm_config(db_session, user_id=u.id, source=f"byok:{cfg.id}")
+    resolved = resolve_llm_config(db_session, user_id=u.id, source=f"custom:{cfg.id}")
     assert resolved is not None
     assert resolved.source == "user"
-    assert resolved.api_key == "sk-byok-123"
-    assert resolved.model == "byok-model"
+    assert resolved.api_key == "sk-custom-123"
+    assert resolved.model == "custom-model"
 
 
-def test_byok_other_users_config_not_found(db_session):
-    """source=byok:{他人 id} → NotFoundError（防探测，不泄露存在性）。"""
+def test_custom_other_users_config_not_found(db_session):
+    """source=custom:{他人 id} → NotFoundError（防探测，不泄露存在性）。"""
     owner = _make_user(db_session, name="owner")
     attacker = _make_user(db_session, name="attacker")
-    cfg = _make_byok(db_session, owner)
+    cfg = _make_custom(db_session, owner)
 
     with pytest.raises(NotFoundError):
-        resolve_llm_config(db_session, user_id=attacker.id, source=f"byok:{cfg.id}")
+        resolve_llm_config(db_session, user_id=attacker.id, source=f"custom:{cfg.id}")
 
 
-def test_byok_nonexistent_id_not_found(db_session):
-    """source=byok:{不存在的 id} → NotFoundError。"""
+def test_custom_nonexistent_id_not_found(db_session):
+    """source=custom:{不存在的 id} → NotFoundError。"""
     u = _make_user(db_session)
     with pytest.raises(NotFoundError):
-        resolve_llm_config(db_session, user_id=u.id, source=f"byok:{uuid.uuid4()}")
+        resolve_llm_config(db_session, user_id=u.id, source=f"custom:{uuid.uuid4()}")
 
 
-def test_byok_invalid_uuid_not_found(db_session):
-    """source=byok:{非 UUID} → NotFoundError（不抛 ValueError）。"""
+def test_custom_invalid_uuid_not_found(db_session):
+    """source=custom:{非 UUID} → NotFoundError（不抛 ValueError）。"""
     u = _make_user(db_session)
     with pytest.raises(NotFoundError):
-        resolve_llm_config(db_session, user_id=u.id, source="byok:not-a-uuid")
+        resolve_llm_config(db_session, user_id=u.id, source="custom:not-a-uuid")
 
 
 # ── source="env" ──
@@ -232,19 +232,19 @@ def test_fallback_non_admin_with_grant_uses_global(db_session):
     assert cfg.api_key == GLOBAL_API_KEY
 
 
-def test_fallback_non_admin_no_grant_uses_byok(db_session):
-    """source=None + 非 admin + 无 grant + 有单条 BYOK → 该 BYOK（过渡兼容）。"""
+def test_fallback_non_admin_no_grant_uses_custom(db_session):
+    """source=None + 非 admin + 无 grant + 有单条自定义配置 → 该自定义配置（过渡兼容）。"""
     u = _make_user(db_session)
-    _make_byok(db_session, u, key="sk-fallback-byok")
+    _make_custom(db_session, u, key="sk-fallback-custom")
 
     cfg = resolve_llm_config(db_session, user_id=u.id, source=None)
     assert cfg is not None
     assert cfg.source == "user"
-    assert cfg.api_key == "sk-fallback-byok"
+    assert cfg.api_key == "sk-fallback-custom"
 
 
-def test_fallback_non_admin_no_grant_no_byok_uses_env(monkeypatch, db_session):
-    """source=None + 非 admin + 无 grant + 无 BYOK + env 非空 → env 兜底。"""
+def test_fallback_non_admin_no_grant_no_custom_uses_env(monkeypatch, db_session):
+    """source=None + 非 admin + 无 grant + 无自定义配置 + env 非空 → env 兜底。"""
     s = get_settings()
     monkeypatch.setattr(s, "glm_api_key", "env-key")
     u = _make_user(db_session)
@@ -256,7 +256,7 @@ def test_fallback_non_admin_no_grant_no_byok_uses_env(monkeypatch, db_session):
 
 
 def test_fallback_non_admin_nothing_configured_returns_none(db_session):
-    """source=None + 非 admin + 无 grant + 无 BYOK + env 空 → None。"""
+    """source=None + 非 admin + 无 grant + 无自定义配置 + env 空 → None。"""
     u = _make_user(db_session)
     cfg = resolve_llm_config(db_session, user_id=u.id, source=None)
     assert cfg is None
@@ -268,7 +268,7 @@ def test_fallback_default_when_source_omitted(db_session):
     证明 8 个旧调用点 resolve_llm_config(db, user_id=x) 仍可用（最小爆破）。
     """
     u = _make_user(db_session)
-    _make_byok(db_session, u, key="sk-default-omitted")
+    _make_custom(db_session, u, key="sk-default-omitted")
 
     cfg = resolve_llm_config(db_session, user_id=u.id)  # 不传 source
     assert cfg is not None

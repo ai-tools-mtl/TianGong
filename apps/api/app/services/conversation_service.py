@@ -15,7 +15,7 @@ def summarize_conversation_title(
     """用 LLM 根据首条对话内容生成简短标题。失败降级为用户消息前 20 字。
 
     复用 summary_service.generate_summary 的调用模式（同步 invoke + try/except 降级）。
-    llm_config 由调用方从 llm_config_service.resolve_llm_config 解析后传入（BYOK 透传）。
+    llm_config 由调用方从 llm_config_service.resolve_llm_config 解析后传入（自定义配置透传）。
     """
     fallback = first_user_msg[:20] + ("..." if len(first_user_msg) > 20 else "")
     try:

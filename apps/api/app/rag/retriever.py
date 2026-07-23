@@ -28,7 +28,7 @@ def retrieve(
     命中范围：scope=global（全员共享）+ scope=personal 且 user_id=本人。
     不命中他人 personal（严格隔离，关键约束 1）。
 
-    向量化配置由 user_id 内部解析（断链修复：embed 真用 BYOK/全局/env 配置）。
+    向量化配置由 user_id 内部解析（断链修复：embed 真用自定义/全局/env 配置）。
     无可用配置时返回空结果（检索不可用，调用方按空结果处理）。
     """
     embed_config = resolve_llm_config(db, user_id=user_id)

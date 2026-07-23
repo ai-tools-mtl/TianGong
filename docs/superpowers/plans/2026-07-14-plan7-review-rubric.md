@@ -917,5 +917,5 @@ git commit --allow-empty -m "chore: 计划 7 审查引擎端到端验证通过"
 ## 后续（计划 7b，不在本计划）
 
 - 管理员后台（全局模板/Rubric/用户管理）
-- LLM BYOK（用户自配 key）
+- LLM 自定义配置（用户自配 key）
 - agent 技能自定义

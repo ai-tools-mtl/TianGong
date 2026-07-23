@@ -14,7 +14,7 @@ from app.services.llm_config_service import resolve_llm_config
 def archive_project(db: Session, *, project: Project, user_id) -> int:
     """归档项目。返回写入的 chunk 数。幂等：先删旧 chunk 再重生成。
 
-    向量化配置由 user_id 内部解析（断链修复：embed 真用 BYOK/全局配置）。
+    向量化配置由 user_id 内部解析（断链修复：embed 真用自定义/全局配置）。
     无可用配置时返回 0（无法向量化则无法归档）。
     """
     embed_config = resolve_llm_config(db, user_id=user_id)

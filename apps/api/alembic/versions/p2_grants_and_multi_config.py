@@ -4,12 +4,12 @@
 1. 新增 user_global_llm_grants 表——用户级全局 LLM Key 白名单授权。
    admin 配一把全局 Key，逐用户授权（grant）才能用；撤销写 revoked_at。
    user_id unique（一用户最多一条有效授权）。
-2. user_llm_configs 去 user_id unique（一用户可有多条 BYOK 配置）+ 新增 name 列。
+2. user_llm_configs 去 user_id unique（一用户可有多条自定义配置）+ 新增 name 列。
 
 注意：a20f16f0da4e 当初把 user_id 的 unique 约束实现为 unique index
 （ix_user_llm_configs_user_id, unique=True）。去 unique = drop 该 unique index
 再重建为普通 index。name 为 NOT NULL，对历史行无值，故先 DELETE 旧行
-（drop-rebuild 共识：BYOK 配置可丢弃）再 add nullable 最后 alter 到 NOT NULL，
+（drop-rebuild 共识：自定义配置可丢弃）再 add nullable 最后 alter 到 NOT NULL，
 兼容 sqlite（batch_alter_table）与 PG。
 
 is_active 本迁移不触碰（Task 2.1 在重写 resolve 时再移除）。
@@ -51,7 +51,7 @@ def upgrade() -> None:
     op.create_index(op.f('ix_user_global_llm_grants_user_id'), 'user_global_llm_grants', ['user_id'], unique=True)
 
     # ── 2. user_llm_configs 去 unique + 加 name ──
-    # 旧 BYOK 行无 name 值；drop-rebuild 共识下直接清空（Task 2.0 地基，数据可丢）。
+    # 旧自定义配置行无 name 值；drop-rebuild 共识下直接清空（Task 2.0 地基，数据可丢）。
     op.execute("DELETE FROM user_llm_configs")
 
     with op.batch_alter_table('user_llm_configs', schema=None) as batch_op:
@@ -60,7 +60,7 @@ def upgrade() -> None:
         # 先以 nullable 增加（兼容已有行清空后的空表）
         batch_op.add_column(sa.Column('name', sa.String(length=50), nullable=True))
 
-    # 重建为普通（非 unique）index —— 一个用户可有多条 BYOK 配置
+    # 重建为普通（非 unique）index —— 一个用户可有多条自定义配置
     op.create_index(
         op.f('ix_user_llm_configs_user_id'),
         'user_llm_configs', ['user_id'], unique=False,

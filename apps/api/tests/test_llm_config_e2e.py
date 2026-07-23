@@ -1,11 +1,11 @@
-"""端到端断链证明：用户配的 BYOK 配置真正驱动 LLM 调用（而非 env）。
+"""端到端断链证明：用户配的自定义配置真正驱动 LLM 调用（而非 env）。
 
-这是阶段 0 的核心交付：证明 resolve_llm_config 解析出的 BYOK 配置
+这是阶段 0 的核心交付：证明 resolve_llm_config 解析出的自定义配置
 （base_url / api_key / model）真正一路传到 ChatOpenAI/OpenAIEmbeddings 构造处，
 而不是被 env 兜底覆盖（即「断链」确实修复）。
 
 测试策略：用 TestClient 走真实 HTTP → FastAPI 路由 → orchestrator → llm_client，
-仅在 app.ai.llm_client.ChatOpenAI 层打桩，捕获构造参数，断言用的是用户的 BYOK 值。
+仅在 app.ai.llm_client.ChatOpenAI 层打桩，捕获构造参数，断言用的是用户的自定义 key 值。
 """
 
 from unittest.mock import MagicMock, patch
@@ -28,32 +28,32 @@ def _no_env_llm_fallback(monkeypatch):
     防止 no-config 测试因 OS 环境变量（如开发者本地 export GLM_API_KEY=xxx）
     假失败——pydantic-settings 会读 os.environ，否则 resolve 会返回 env 兜底
     配置而非 None，导致 no_llm_config 错误不再触发。
-    本文件内所有「无配置」断言因此稳定；本文件 BYOK 测试不受影响（分支①优先）。
+    本文件内所有「无配置」断言因此稳定；本文件自定义配置测试不受影响（分支①优先）。
     """
     monkeypatch.setattr(get_settings(), "glm_api_key", "")
 
-BYOK_BASE_URL = "https://byok-fake.example.com"
-BYOK_API_KEY = "sk-byok-fake-key-12345"
-BYOK_MODEL = "byok-model"
-BYOK_EMBED = "byok-embed"
+CUSTOM_BASE_URL = "https://custom-fake.example.com"
+CUSTOM_API_KEY = "sk-custom-fake-key-12345"
+CUSTOM_MODEL = "custom-model"
+CUSTOM_EMBED = "custom-embed"
 
 
-def _setup_byok_user(client, registered_user, db_session):
-    """登录 + 建项目 + 给当前用户配 BYOK（假 key/url/model）。返回第一个 section。"""
+def _setup_custom_user(client, registered_user, db_session):
+    """登录 + 建项目 + 给当前用户配自定义配置（假 key/url/model）。返回第一个 section。"""
     ensure_default_template(db_session)
     user = db_session.scalar(select(User).where(User.email == registered_user["email"]))
-    # 给用户配 BYOK
+    # 给用户配自定义配置
     db_session.add(UserLLMConfig(
         user_id=user.id,
         name="test",
         provider="custom",
-        base_url=BYOK_BASE_URL,
-        api_key_encrypted=encrypt_value(BYOK_API_KEY),
-        model=BYOK_MODEL,
-        embedding_model=BYOK_EMBED,
+        base_url=CUSTOM_BASE_URL,
+        api_key_encrypted=encrypt_value(CUSTOM_API_KEY),
+        model=CUSTOM_MODEL,
+        embedding_model=CUSTOM_EMBED,
     ))
     db_session.commit()
-    p = create_project(db_session, user=user, title="BYOK 测试发明")
+    p = create_project(db_session, user=user, title="自定义配置测试发明")
     sections = list_sections(db_session, user_id=user.id, project_id=str(p.id))
     client.post("/api/v1/auth/login", json={
         "username": registered_user["username"], "password": registered_user["password"],
@@ -68,7 +68,7 @@ def _mock_chat_openai(token_text="hello"):
         mock_inst, mock_chat = _mock_chat_openai("你好")
         with patch("app.ai.llm_client.ChatOpenAI", return_value=mock_inst) as mock_chat:
             ...
-            _assert_byok_kwargs(mock_chat)  # mock_chat.call_args 捕获构造参数
+            _assert_custom_kwargs(mock_chat)  # mock_chat.call_args 捕获构造参数
     """
     mock_inst = MagicMock()
 
@@ -89,37 +89,37 @@ def _sync_chunk(text):
     return chunk
 
 
-def _assert_byok_kwargs(mock_chat):
-    """断言 ChatOpenAI 被构造时用的是 BYOK 的值。"""
+def _assert_custom_kwargs(mock_chat):
+    """断言 ChatOpenAI 被构造时用的是自定义 key 的值。"""
     assert mock_chat.called, "ChatOpenAI 应被实例化"
     _, kwargs = mock_chat.call_args
-    assert kwargs["api_key"] == BYOK_API_KEY, "LLM 应使用用户的 BYOK key，而非 env"
-    assert kwargs["base_url"] == BYOK_BASE_URL, "LLM 应使用用户的 BYOK base_url"
-    assert kwargs["model"] == BYOK_MODEL, "LLM 应使用用户的 BYOK model"
+    assert kwargs["api_key"] == CUSTOM_API_KEY, "LLM 应使用用户的自定义 key，而非 env"
+    assert kwargs["base_url"] == CUSTOM_BASE_URL, "LLM 应使用用户的自定义 base_url"
+    assert kwargs["model"] == CUSTOM_MODEL, "LLM 应使用用户的自定义 model"
 
 
-def _assert_byok_llm_config(captured):
-    """断言传入 build_agent 的 llm_config 携带 BYOK 值（Task 13 chat/generate 路径）。
+def _assert_custom_llm_config(captured):
+    """断言传入 build_agent 的 llm_config 携带自定义配置值（Task 13 chat/generate 路径）。
 
-    rewrite/caption 仍走 astream_llm（patch ChatOpenAI 捕获构造参数，用 _assert_byok_kwargs）；
-    Task 13 起 chat/generate 走 agent loop，BYOK 配置传到 build_agent 的 llm_config 形参，
+    rewrite/caption 仍走 astream_llm（patch ChatOpenAI 捕获构造参数，用 _assert_custom_kwargs）；
+    Task 13 起 chat/generate 走 agent loop，自定义配置传到 build_agent 的 llm_config 形参，
     故在此断言 captured[0] 的 base_url/api_key/model。
     """
     assert captured, "build_agent 应被调用"
     cfg = captured[0]
-    assert cfg.api_key == BYOK_API_KEY, "agent loop 应收到用户的 BYOK key"
-    assert cfg.base_url == BYOK_BASE_URL, "agent loop 应收到用户的 BYOK base_url"
-    assert cfg.model == BYOK_MODEL, "agent loop 应收到用户的 BYOK model"
+    assert cfg.api_key == CUSTOM_API_KEY, "agent loop 应收到用户的自定义 key"
+    assert cfg.base_url == CUSTOM_BASE_URL, "agent loop 应收到用户的自定义 base_url"
+    assert cfg.model == CUSTOM_MODEL, "agent loop 应收到用户的自定义 model"
 
 
 def _fake_agent_factory(token_text, captured):
     """构造 fake build_agent：返回具备 astream_events 的假 agent。
 
     Task 13 起 chat/generate 委托 deepagents agent loop（astream_chat/astream_generate
-    不再走 astream_llm）。这些测试的意图是「BYOK 配置真正传到 LLM 构造处」——
+    不再走 astream_llm）。这些测试的意图是「自定义配置真正传到 LLM 构造处」——
     build_agent 内部仍调 get_llm → ChatOpenAI，故 patch app.ai.llm_client.ChatOpenAI
     即可捕获构造参数。fake_agent 只负责把 token 流透传，避免触发 check_tool_support
-    （假模型 byok-model 不在支持列表）与 MinIO/真实 agent 构造。
+    （假模型 custom-model 不在支持列表）与 MinIO/真实 agent 构造。
     captured：可选 list，收集构造时的 llm_config 以做额外断言。
     """
 
@@ -137,17 +137,17 @@ def _fake_agent_factory(token_text, captured):
     return _build_agent
 
 
-# ── SSE 端点：ChatOpenAI 收到 BYOK 配置 ──
+# ── SSE 端点：ChatOpenAI 收到自定义配置 ──
 
-def test_chat_uses_user_byok_config_not_env(client, registered_user, db_session):
-    """chat 端点：用户配了 BYOK，调 chat 时 BYOK 配置一路传到 build_agent（非 env）。
+def test_chat_uses_user_custom_config_not_env(client, registered_user, db_session):
+    """chat 端点：用户配了自定义配置，调 chat 时自定义配置一路传到 build_agent（非 env）。
 
-    Task 13：chat 走 agent loop。BYOK 断链意图不变——resolve_llm_config 解析出的
+    Task 13：chat 走 agent loop。断链意图不变——resolve_llm_config 解析出的
     配置传到 build_agent 的 llm_config 形参（build_agent 内部仍 get_llm → ChatOpenAI）。
-    本测试 patch build_agent 捕获 llm_config，断言其携带 BYOK 值；同时跳过
-    check_tool_support（假模型 byok-model 不支持 tool calling）与真实 agent 构造。
+    本测试 patch build_agent 捕获 llm_config，断言其携带自定义配置值；同时跳过
+    check_tool_support（假模型 custom-model 不支持 tool calling）与真实 agent 构造。
     """
-    sections = _setup_byok_user(client, registered_user, db_session)
+    sections = _setup_custom_user(client, registered_user, db_session)
     section = sections[0]
 
     captured = []
@@ -159,12 +159,12 @@ def test_chat_uses_user_byok_config_not_env(client, registered_user, db_session)
     assert res.status_code == 200
     assert "event: token" in res.text
     assert "event: done" in res.text
-    _assert_byok_llm_config(captured)
+    _assert_custom_llm_config(captured)
 
 
-def test_generate_uses_user_byok_config_not_env(client, registered_user, db_session):
-    """generate 端点：BYOK 配置传到 build_agent（同 chat，走 agent loop）。"""
-    sections = _setup_byok_user(client, registered_user, db_session)
+def test_generate_uses_user_custom_config_not_env(client, registered_user, db_session):
+    """generate 端点：自定义配置传到 build_agent（同 chat，走 agent loop）。"""
+    sections = _setup_custom_user(client, registered_user, db_session)
     section = sections[0]
 
     captured = []
@@ -173,12 +173,12 @@ def test_generate_uses_user_byok_config_not_env(client, registered_user, db_sess
 
     assert res.status_code == 200
     assert "event: done" in res.text
-    _assert_byok_llm_config(captured)
+    _assert_custom_llm_config(captured)
 
 
-def test_rewrite_uses_user_byok_config_not_env(client, registered_user, db_session):
-    """rewrite 端点：ChatOpenAI 收到用户的 BYOK key。"""
-    sections = _setup_byok_user(client, registered_user, db_session)
+def test_rewrite_uses_user_custom_config_not_env(client, registered_user, db_session):
+    """rewrite 端点：ChatOpenAI 收到用户的自定义 key。"""
+    sections = _setup_custom_user(client, registered_user, db_session)
     section = sections[0]
 
     mock_inst = _mock_chat_openai("重写后的文字")
@@ -189,12 +189,12 @@ def test_rewrite_uses_user_byok_config_not_env(client, registered_user, db_sessi
 
     assert res.status_code == 200
     assert "event: done" in res.text
-    _assert_byok_kwargs(mock_chat)
+    _assert_custom_kwargs(mock_chat)
 
 
-def test_caption_figures_uses_user_byok_config_not_env(client, registered_user, db_session):
-    """caption_figures 端点（直接调 astream_llm）：ChatOpenAI 收到用户的 BYOK key。"""
-    sections = _setup_byok_user(client, registered_user, db_session)
+def test_caption_figures_uses_user_custom_config_not_env(client, registered_user, db_session):
+    """caption_figures 端点（直接调 astream_llm）：ChatOpenAI 收到用户的自定义 key。"""
+    sections = _setup_custom_user(client, registered_user, db_session)
     drawings = next(s for s in sections if s.key == "drawings")
 
     mock_inst = _mock_chat_openai("图 1 是本发明装置示意图。")
@@ -206,13 +206,13 @@ def test_caption_figures_uses_user_byok_config_not_env(client, registered_user, 
 
     assert res.status_code == 200
     assert "event: token" in res.text
-    _assert_byok_kwargs(mock_chat)
+    _assert_custom_kwargs(mock_chat)
 
 
 # ── 无配置：报错事件而非崩溃（阶段 0 strict mode）──
 
 def test_chat_emits_no_llm_config_error_when_unconfigured(client, registered_user, db_session):
-    """无 BYOK 且全局关闭时：chat 端点发 no_llm_config 错误事件，不崩溃。"""
+    """无自定义配置且全局关闭时：chat 端点发 no_llm_config 错误事件，不崩溃。"""
     ensure_default_template(db_session)
     user = db_session.scalar(select(User).where(User.email == registered_user["email"]))
     p = create_project(db_session, user=user, title="无配置发明")
@@ -221,7 +221,7 @@ def test_chat_emits_no_llm_config_error_when_unconfigured(client, registered_use
         "username": registered_user["username"], "password": registered_user["password"],
     })
 
-    # 确认此用户确实无配置（registered_user 不带 BYOK）
+    # 确认此用户确实无配置（registered_user 不带自定义配置）
     cfg = db_session.scalar(select(UserLLMConfig).where(UserLLMConfig.user_id == user.id))
     assert cfg is None
 
@@ -242,7 +242,7 @@ def test_review_raises_when_no_llm_config(db_session):
     from app.models import Project
     from app.services import review_service
 
-    # 建一个无 BYOK 的用户 + 项目
+    # 建一个无自定义配置的用户 + 项目
     u = User(username="noreview", email="noreview@test.com", password_hash=hash_password("Pass1234!"), name="t")
     db_session.add(u)
     db_session.commit()

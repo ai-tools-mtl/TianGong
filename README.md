@@ -124,7 +124,7 @@ cd apps/api && uv run alembic upgrade head
 | 5 版本/预览/导出 | ✅ 完成 | 章节版本快照 + 全篇预览 + Word/Markdown 导出渲染器 |
 | 6 知识库 RAG | ✅ 完成 | LangChain Embedding + pgvector + 分块归档 + 检索注入（注：弃用 LlamaIndex，见 GOTCHAS E3）|
 | 7 审查引擎+Rubric | ✅ 完成 | 确定性评估管线 + Rubric 覆盖式配置 + 自一致性 + 跨对话稳定验证 |
-| 7b 管理后台+BYOK | ✅ 完成 | 管理员 API + 三级 Provider 解析 + 全局开关 + 用户自配 Key + 前端管理/设置页 |
+| 7b 管理后台+自定义配置 | ✅ 完成 | 管理员 API + 三级 Provider 解析 + 全局开关 + 用户自配 Key + 前端管理/设置页 |
 
 > **MVP 全部 P0 功能已落地并端到端验证。** 下一步见设计文档 11.2（P1 迭代：专利检索 / PDF 导出 / 全篇质量报告 / 灵感补全 / agent 记忆）。
 

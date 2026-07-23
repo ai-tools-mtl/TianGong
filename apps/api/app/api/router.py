@@ -20,6 +20,6 @@ api_router.include_router(share.router)
 api_router.include_router(admin.router)
 # /skills/* 用户个人技能域（Task 18：/skills/mine CRUD + /skills/visible）
 api_router.include_router(skills.router)
-# /settings/* 用户 BYOK 域（从原 admin.py 剥离，refactor/admin-api-split）
+# /settings/* 用户自定义配置域（从原 admin.py 剥离，refactor/admin-api-split）
 api_router.include_router(settings.router)
 api_router.include_router(health.router)

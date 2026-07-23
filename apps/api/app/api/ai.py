@@ -219,7 +219,7 @@ async def chat(
     # 阶段 0：解析生效 LLM 配置（在 StreamingResponse 构造前解析，确保
     # ForbiddenError（如全局 Key 被撤销）能被全局异常处理器转成真正的 HTTP 403，
     # 而不是在 SSE 流已发出 200 头之后才抛出 → 客户端只能看到空响应）。
-    # source 由前端传入（"global" / "byok:{id}" / "env"），None 走 fallback。
+    # source 由前端传入（"global" / "custom:{id}" / "env"），None 走 fallback。
     llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id, source=payload.source)
 
     async def generate():

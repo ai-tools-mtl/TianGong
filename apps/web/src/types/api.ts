@@ -300,9 +300,9 @@ export interface AuditLogPage {
   items: AuditLogItem[]
 }
 
-// ── 用户 BYOK 配置（多配置，Task 4.0）──
+// ── 用户自定义配置（多配置，Task 4.0）──
 
-/** GET /settings/llm 列表项 / POST、PUT 返回的单条 BYOK 配置（key 掩码）。 */
+/** GET /settings/llm 列表项 / POST、PUT 返回的单条自定义配置（key 掩码）。 */
 export interface UserLLMConfig {
   id: string
   name: string

@@ -23,7 +23,7 @@
 ## 关键设计决策（本计划）
 
 1. **MVP 不用 LangGraph**：撰写流程的 AI 调用是请求-响应式的（用户提问→AI 流式回复），不需要状态机。LangGraph 留给计划 7（审查引擎需要 Checkpoint/Store 解决跨对话稳定）。这大幅降低计划 4 复杂度。
-2. **LLM 抽象**：`LLMClient` 封装 `ChatOpenAI`，从 settings 读 GLM 配置。后续计划 7 的 BYOK 在此基础上扩展。
+2. **LLM 抽象**：`LLMClient` 封装 `ChatOpenAI`，从 settings 读 GLM 配置。后续计划 7 的自定义配置在此基础上扩展。
 3. **Markdown→Tiptap 转换**：生成草稿时 AI 输出 Markdown，后端转 Tiptap JSON 入库。
 4. **对话按 Section 隔离**：Message 表存对话历史（计划 1 未建，本计划补）。
 5. **summary 异步生成**：确认章节时触发 summary 生成（MVP 同步，失败降级取前 N 字）。

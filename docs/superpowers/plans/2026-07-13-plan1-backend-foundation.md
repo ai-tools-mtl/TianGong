@@ -2163,4 +2163,4 @@ Expected: 所有测试通过。
 | 计划 3 模板 | Project.template_id 字段、SystemSetting 表 |
 | 计划 4 AI 引擎 | User/Project 模型、认证、资源权限 |
 | 计划 6 知识库 | pgvector 扩展已建、KnowledgeChunk 表待加 |
-| 计划 7 管理/BYOK | User.role、SystemSetting、encrypt_value、require_admin |
+| 计划 7 管理/自定义配置 | User.role、SystemSetting、encrypt_value、require_admin |

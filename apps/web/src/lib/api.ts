@@ -381,7 +381,7 @@ export const api = {
   getLLMHealth: (days = 7) =>
     request<import('@/types/api').LLMHealth>(`/admin/stats/llm/health?days=${days}`),
 
-  // ── 用户设置（多 BYOK 配置 CRUD，Task 4.0）──
+  // ── 用户设置（多自定义配置 CRUD，Task 4.0）──
   listMyLLM: () => request<UserLLMConfig[]>(`/settings/llm`),
   createMyLLM: (data: UserLLMConfigCreate) =>
     request<UserLLMConfig>(`/settings/llm`, { method: 'POST', body: JSON.stringify(data) }),

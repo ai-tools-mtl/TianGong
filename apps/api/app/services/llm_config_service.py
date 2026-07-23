@@ -2,12 +2,12 @@
 
 source 取值：
 - "global"：全局 Key（admin 免授权；非 admin 须有有效 grant）
-- "byok:{config_id}"：用户自配的指定配置（校验归属，越权 NotFound）
+- "custom:{config_id}"：用户自配的指定配置（校验归属，越权 NotFound）
 - "env"：env 兜底
 - None（内部调用方的自动解析路径，永久保留）：后台任务（archiver / retriever /
   knowledge_service / review / summary）无前端 source 上下文，依赖此分支
   “自动挑一个合理配置”。admin → global；非 admin → 若被授权则 global，
-  否则单条 BYOK，否则 env，否则 None。
+  否则单条自定义配置，否则 env，否则 None。
   前端 AI 调用（chat/generate/rewrite/caption）通过 source 显式指定，不走此分支。
 """
 
@@ -37,7 +37,7 @@ def resolve_llm_config(db: Session, *, user_id, source: str | None = None) -> Re
 
     source 取值：
     - "global"：全局 Key（admin 免授权；非 admin 须有有效 grant）
-    - "byok:{config_id}"：用户自配的指定配置（校验归属，越权 NotFound）
+    - "custom:{config_id}"：用户自配的指定配置（校验归属，越权 NotFound）
     - "env"：env 兜底
     - None（内部调用方的自动解析路径，永久保留）：后台任务
       （archiver/retriever/knowledge_service/review/summary）无前端 source 上下文，
@@ -61,11 +61,11 @@ def resolve_llm_config(db: Session, *, user_id, source: str | None = None) -> Re
             (UserGlobalLLMGrant.revoked_at.is_(None))
         ))
         if not grant:
-            raise ForbiddenError("未授权使用全局 Key，请在设置中自配 BYOK")
+            raise ForbiddenError("未授权使用全局 Key，请在设置中添加自定义配置")
         return _build_global_config(db, source="global")
 
-    if source.startswith("byok:"):
-        config_id = source[5:]
+    if source.startswith("custom:"):
+        config_id = source[7:]
         cfg = _get_user_config_by_id(db, user_id=user_id, config_id=config_id)  # 越权 NotFound
         if cfg is None:
             raise NotFoundError("LLM 配置不存在")
@@ -90,7 +90,7 @@ def _resolve_fallback(db: Session, *, user, user_id) -> ResolvedLLMConfig | None
     knowledge_service / review / summary，调用方共 5 处）。前端 AI 调用
     （chat/generate/rewrite/caption）通过 source 显式指定，不走此分支。
 
-    admin → global；非 admin → 有效 grant 则 global，否则单条 BYOK，否则 env，否则 None。
+    admin → global；非 admin → 有效 grant 则 global，否则单条自定义配置，否则 env，否则 None。
     """
     if user and user.role == "admin":
         cfg = _build_global_config(db, source="admin")
@@ -108,7 +108,7 @@ def _resolve_fallback(db: Session, *, user, user_id) -> ResolvedLLMConfig | None
         if cfg:
             return cfg
 
-    # 单条 BYOK：内部调用方未指定 source 时的自动选择，取最早创建的一条。
+    # 单条自定义配置：内部调用方未指定 source 时的自动选择，取最早创建的一条。
     # 显式 order_by(created_at) 保证确定性选择（I-2：避免无序查询选到任意一条）。
     user_cfg = db.scalar(
         select(UserLLMConfig)
@@ -143,7 +143,7 @@ def _build_global_config(db: Session, *, source: str) -> ResolvedLLMConfig | Non
     # 防御闸（1214 修复）：同时要求 api_key 和 model 非空。
     # 原来只校验 api_key，admin 漏填 model 时会返回 model="" 的配置，
     # 透传给 ChatOpenAI 触发智谱 1214。model 空 → 视同未配置返回 None，
-    # 让 resolve 降级到 BYOK/env。
+    # 让 resolve 降级到自定义配置/env。
     if global_cfg and global_cfg.value and global_cfg.value.get("api_key_encrypted") and global_cfg.value.get("model"):
         v = global_cfg.value
         return ResolvedLLMConfig(
@@ -172,7 +172,7 @@ def _build_env_config() -> ResolvedLLMConfig | None:
 
 
 def _get_user_config_by_id(db: Session, *, user_id, config_id) -> UserLLMConfig | None:
-    """按 id 查 BYOK 配置，校验归属。越权返回 None（调用方 NotFound，防探测）。"""
+    """按 id 查自定义配置，校验归属。越权返回 None（调用方 NotFound，防探测）。"""
     try:
         cid = uuid.UUID(config_id) if isinstance(config_id, str) else config_id
     except (ValueError, AttributeError):
@@ -183,10 +183,10 @@ def _get_user_config_by_id(db: Session, *, user_id, config_id) -> UserLLMConfig 
     return cfg
 
 
-# ── 用户 BYOK（多配置 CRUD，Task 2.3）──
+# ── 用户自定义配置（多配置 CRUD，Task 2.3）──
 
 def list_user_llm_configs(db: Session, *, user_id) -> list[dict]:
-    """列出用户所有 BYOK 配置（key 掩码）。按创建时间升序。"""
+    """列出用户所有自定义配置（key 掩码）。按创建时间升序。"""
     cfgs = db.scalars(
         select(UserLLMConfig)
         .where(UserLLMConfig.user_id == user_id)
@@ -199,7 +199,7 @@ def create_user_llm_config(
     db: Session, *, user_id, name: str, provider: str, base_url: str,
     api_key: str, model: str, embedding_model: str | None = None,
 ) -> UserLLMConfig:
-    """新增一条 BYOK 配置。"""
+    """新增一条自定义配置。"""
     cfg = UserLLMConfig(
         user_id=user_id, name=name, provider=provider, base_url=base_url,
         api_key_encrypted=encrypt_value(api_key), model=model,
@@ -217,7 +217,7 @@ def update_user_llm_config(
     api_key: str | None = None, model: str | None = None,
     embedding_model: str | None = None,
 ) -> UserLLMConfig:
-    """修改指定 BYOK 配置。仅提供才更新。越权/不存在 NotFoundError。
+    """修改指定自定义配置。仅提供才更新。越权/不存在 NotFoundError。
 
     注意 embedding_model 用 `is not None`，支持传空串清空（与 I2 一致）。
     """
@@ -240,7 +240,7 @@ def update_user_llm_config(
 
 
 def delete_user_llm_config(db: Session, *, user_id, config_id) -> None:
-    """删除指定 BYOK 配置。越权/不存在 NotFoundError。"""
+    """删除指定自定义配置。越权/不存在 NotFoundError。"""
     cfg = _get_owned_config(db, user_id=user_id, config_id=config_id)
     db.delete(cfg)
     db.commit()
@@ -249,7 +249,7 @@ def delete_user_llm_config(db: Session, *, user_id, config_id) -> None:
 def _get_owned_config(db: Session, *, user_id, config_id) -> UserLLMConfig:
     """查配置并校验归属。越权/不存在 NotFoundError（防探测，不泄露存在性）。
 
-    与 resolve_llm_config 的 byok 分支共用 _get_user_config_by_id 的 NotFound 语义。
+    与 resolve_llm_config 的 custom 分支共用 _get_user_config_by_id 的 NotFound 语义。
     """
     try:
         cid = uuid.UUID(config_id) if isinstance(config_id, str) else config_id
@@ -262,7 +262,7 @@ def _get_owned_config(db: Session, *, user_id, config_id) -> UserLLMConfig:
 
 
 def config_to_dict(cfg: UserLLMConfig) -> dict:
-    """BYOK 配置 → dict（key 掩码）。API 层和 service list 共用。"""
+    """自定义配置 → dict（key 掩码）。API 层和 service list 共用。"""
     return {
         "id": str(cfg.id),
         "name": cfg.name,

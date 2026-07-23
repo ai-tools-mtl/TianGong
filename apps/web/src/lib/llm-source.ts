@@ -3,7 +3,7 @@
  *
  * source 取值（与后端 resolve_llm_config 对齐）：
  * - "global"：全局 Key（须被 admin 授权）
- * - "byok:{config_id}"：用户自配的某条 BYOK 配置
+ * - "custom:{config_id}"：用户自配的某条自定义配置
  *
  * 仅在浏览器侧读写（settings 页与 ai-chat-panel 均为 'use client'）。
  * 调用方需自行处理 SSR 场景（typeof window === 'undefined' 时这些函数返回 null）。

@@ -1,5 +1,5 @@
 def _make_logged_in_section(client, registered_user, db_session):
-    """登录 + 建项目 + 给用户配 BYOK（阶段 0 strict：端点要求生效 LLM 配置）+ 返回第一个 section。"""
+    """登录 + 建项目 + 给用户配自定义配置（阶段 0 strict：端点要求生效 LLM 配置）+ 返回第一个 section。"""
     from app.services.seed_service import ensure_default_template
     from app.services.project_service import create_project
     from app.services.section_service import list_sections
@@ -9,7 +9,7 @@ def _make_logged_in_section(client, registered_user, db_session):
 
     ensure_default_template(db_session)
     user = db_session.scalar(select(User).where(User.email == registered_user["email"]))
-    # 配 BYOK（阶段 0 strict：无配置则端点发 no_llm_config 错误）
+    # 配自定义配置（阶段 0 strict：无配置则端点发 no_llm_config 错误）
     db_session.add(UserLLMConfig(
         user_id=user.id, name="test", provider="custom",
         base_url="https://test.example.com",
@@ -220,7 +220,7 @@ def test_list_messages_isolated_by_conversation(client, registered_user, db_sess
     assert contents_a == ["msg-in-A"], f"会话 A 不应包含 B 的消息，实际 {contents_a}"
 
 
-# ── Fix 5: get_llm 透传 BYOK / 全局配置 ──
+# ── Fix 5: get_llm 透传自定义配置 / 全局配置 ──
 # 本地 P2 设计：get_llm(llm_config: ResolvedLLMConfig) —— 接收已解析的配置对象，
 # 不做 settings 回退（调用方负责先 resolve_llm_config 并处理 None）。
 # 下面两个测试验证该契约：传入的 ResolvedLLMConfig 字段直接驱动 ChatOpenAI 构造。
@@ -239,14 +239,14 @@ def test_get_llm_uses_resolved_config_fields(monkeypatch):
     monkeypatch.setattr("app.ai.llm_client.ChatOpenAI", _FakeChatOpenAI)
 
     cfg = ResolvedLLMConfig(
-        base_url="https://user.byok.example/v1",
+        base_url="https://user.custom.example/v1",
         api_key="sk-user-key",
         model="user-model-x",
         source="user",
     )
     get_llm(cfg)
 
-    assert captured["base_url"] == "https://user.byok.example/v1"
+    assert captured["base_url"] == "https://user.custom.example/v1"
     assert captured["api_key"] == "sk-user-key"
     assert captured["model"] == "user-model-x"
 

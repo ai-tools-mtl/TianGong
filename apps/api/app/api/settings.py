@@ -1,6 +1,6 @@
-"""用户：自有 LLM 配置（BYOK 多配置 CRUD + 选源，/settings/*）。
+"""用户：自有 LLM 配置（自定义 LLM 配置多配置 CRUD + 选源，/settings/*）。
 
-从原 admin.py 拆出（refactor/admin-api-split）。语义属用户域（普通用户的 BYOK），
+从原 admin.py 拆出（refactor/admin-api-split）。语义属用户域（普通用户的自定义 LLM 配置），
 非管理员域。权限是 get_current_user（任何登录用户）。
 """
 
@@ -17,7 +17,7 @@ router = APIRouter(tags=["admin"])  # tag 保持 admin 与原一致，避免 Ope
 
 
 class UserLLMCreateRequest(BaseModel):
-    """新增 BYOK 配置。name 为配置名（如「公司Key」）。"""
+    """新增自定义 LLM 配置。name 为配置名（如「公司Key」）。"""
     name: str
     provider: str = "custom"
     base_url: str
@@ -28,7 +28,7 @@ class UserLLMCreateRequest(BaseModel):
 
 
 class UserLLMUpdateRequest(BaseModel):
-    """修改 BYOK 配置。所有字段可选，仅提供才更新（api_key 留空则不变）。"""
+    """修改自定义 LLM 配置。所有字段可选，仅提供才更新（api_key 留空则不变）。"""
     name: str | None = None
     provider: str | None = None
     base_url: str | None = None
@@ -54,7 +54,7 @@ def get_my_llm(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """列出当前用户的所有 BYOK 配置（key 掩码）。空时返回 []。"""
+    """列出当前用户的所有自定义配置（key 掩码）。空时返回 []。"""
     return llm_config_service.list_user_llm_configs(db, user_id=current_user.id)
 
 
@@ -78,7 +78,7 @@ def create_my_llm(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """新增一条 BYOK 配置。返回新建的配置（含 id，key 掩码）。"""
+    """新增一条自定义配置。返回新建的配置（含 id，key 掩码）。"""
     cfg = llm_config_service.create_user_llm_config(
         db, user_id=current_user.id,
         name=payload.name, provider=payload.provider, base_url=payload.base_url,
@@ -95,7 +95,7 @@ def update_my_llm(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """修改指定 BYOK 配置（校验归属，越权/不存在 404，防探测）。"""
+    """修改指定自定义配置（校验归属，越权/不存在 404，防探测）。"""
     cfg = llm_config_service.update_user_llm_config(
         db, user_id=current_user.id, config_id=config_id,
         name=payload.name, provider=payload.provider, base_url=payload.base_url,
@@ -111,7 +111,7 @@ def delete_my_llm(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """删除指定 BYOK 配置（校验归属，越权/不存在 404）。"""
+    """删除指定自定义配置（校验归属，越权/不存在 404）。"""
     llm_config_service.delete_user_llm_config(
         db, user_id=current_user.id, config_id=config_id,
     )

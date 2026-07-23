@@ -1,5 +1,5 @@
 # apps/api/app/ai/tool_support.py
-"""BYOK tool calling 降级检测（spec Q14-α）。
+"""自定义配置 tool calling 降级检测（spec Q14-α）。
 
 模型不支持 tool calling → 拒绝服务（抛 ToolSupportError），明确引导用户换模型。
 不静默降级（否决项 β，隐性降级是产品事故温床）。

@@ -4,7 +4,7 @@
 
 **Goal:** 引入 Agent Skills 开放标准（`SKILL.md` 目录式技能），建成两档可见性（admin 全局 / 用户个人）的技能管理体系，技能全量接入 deepagents agent 运行时（spec 合规三层渐进式披露 + 自建 Docker sandbox 跑用户脚本），并彻底删除旧的 `agent_skills` 表与项目级 skill 耦合。
 
-**Architecture:** 新建 `Skill` 数据模型（`scope`+`owner_id` 两档可见性）+ MinIO 对象前缀存储 skill 目录树；实现 LangGraph `BaseStore` 的 MinIO 适配器，由 deepagents `StoreBackend` 包装、`SkillsMiddleware` 加载；AI 层从一次性 `astream` 流式调用全量迁移到 `deepagents` agent loop（含 `rag_search` 工具化、BYOK 拒绝服务降级护栏）；自建 Docker sandbox 直读 MinIO 跑用户脚本；前端套现有统一面板布局，admin 全局管理 + 用户个人管理两页面。
+**Architecture:** 新建 `Skill` 数据模型（`scope`+`owner_id` 两档可见性）+ MinIO 对象前缀存储 skill 目录树；实现 LangGraph `BaseStore` 的 MinIO 适配器，由 deepagents `StoreBackend` 包装、`SkillsMiddleware` 加载；AI 层从一次性 `astream` 流式调用全量迁移到 `deepagents` agent loop（含 `rag_search` 工具化、自定义配置拒绝服务降级护栏）；自建 Docker sandbox 直读 MinIO 跑用户脚本；前端套现有统一面板布局，admin 全局管理 + 用户个人管理两页面。
 
 **Tech Stack:** Python 3.14 / FastAPI / SQLAlchemy 2.0 / Alembic / `deepagents` / `langgraph`（已装未用，本次激活）/ `langchain-openai`（现有）/ `docker`（Python SDK，新增）/ MinIO（现有 `app/core/storage.py`）/ Next.js App Router / TanStack Query / shadcn 3.x 手写组件（GOTCHAS F1/F8）
 
@@ -43,7 +43,7 @@ V1–V3 已在 spec §4 验证通过（glm-4.7 合法 / Python 3.14.6 / 自建 D
 | `apps/api/app/skills/service.py` | admin/user CRUD 业务逻辑 | 新建 |
 | `apps/api/app/sandbox/__init__.py` | sandbox 子包 | 新建 |
 | `apps/api/app/sandbox/docker_runner.py` | 自建 Docker sandbox | 新建 |
-| `apps/api/app/ai/agent.py` | deepagents agent 工厂 + BYOK 降级 | 新建 |
+| `apps/api/app/ai/agent.py` | deepagents agent 工厂 + 自定义配置降级 | 新建 |
 | `apps/api/app/ai/tools.py` | `rag_search` 等 `@tool` | 新建 |
 | `apps/api/app/ai/orchestrator.py` | 移除旧一次性流，委托给 agent loop | 改 |
 | `apps/api/app/core/config.py` | 默认 model 改 `glm-4.7` | 改 |
@@ -1271,7 +1271,7 @@ git commit -m "feat(api): skill 可见性合并服务（global ∪ personal，�
 
 ---
 
-## Phase 3: deepagents agent 重写 + BYOK 降级
+## Phase 3: deepagents agent 重写 + 自定义配置降级
 
 > **API 事实（deepagents 0.6.12 introspect 确认）：**
 > - `create_deep_agent(model=<ChatModel>, skills=[...sources], backend=<StoreBackend>, tools=[...])` 返回 `CompiledStateGraph`。
@@ -1384,7 +1384,7 @@ git commit -m "feat(api): rag_search 工具化（@tool，agent loop 按需调用
 
 ---
 
-### Task 11: BYOK tool calling 降级检测
+### Task 11: 自定义配置 tool calling 降级检测
 
 **Files:**
 - Create: `apps/api/app/ai/tool_support.py`
@@ -1396,7 +1396,7 @@ git commit -m "feat(api): rag_search 工具化（@tool，agent loop 按需调用
 
 ```python
 # apps/api/tests/test_tool_support.py
-"""BYOK tool calling 降级检测（spec Q14-α）。"""
+"""自定义配置 tool calling 降级检测（spec Q14-α）。"""
 import pytest
 
 
@@ -1430,7 +1430,7 @@ Expected: FAIL（`ImportError`）
 
 ```python
 # apps/api/app/ai/tool_support.py
-"""BYOK tool calling 降级检测（spec Q14-α）。
+"""自定义配置 tool calling 降级检测（spec Q14-α）。
 
 模型不支持 tool calling → 拒绝服务（抛 ToolSupportError），明确引导用户换模型。
 不静默降级（否决项 β，隐性降级是产品事故温床）。
@@ -1488,7 +1488,7 @@ Expected: 3 PASS
 
 ```bash
 git add apps/api/app/ai/tool_support.py apps/api/tests/test_tool_support.py
-git commit -m "feat(api): BYOK tool calling 降级检测（拒绝服务，spec Q14-α）"
+git commit -m "feat(api): 自定义配置 tool calling 降级检测（拒绝服务，spec Q14-α）"
 ```
 
 ---
@@ -1598,7 +1598,7 @@ def build_agent(
     from deepagents import create_deep_agent
     from deepagents.backends import StoreBackend
 
-    # 1. BYOK 降级检测
+    # 1. 自定义配置降级检测
     check_tool_support(model=llm_config.model)
 
     # 2. MinIO BaseStore + StoreBackend
@@ -3533,7 +3533,7 @@ git commit -m "test(api): 全量验证通过（agent-skills 模块 Phase 1-7 完
 | 旧 agent_skills 表彻底删除 | Task 3（删模型/服务/schema/路由/迁移）+ Task 4（前端） | ✅ |
 | 路线 B deepagents 全量重写 | Task 12（agent 工厂）+ Task 13（orchestrator 委托） | ✅ |
 | 默认模型 glm-4.7 | Task 5 | ✅ |
-| BYOK 拒绝服务降级 (α) | Task 11（check_tool_support） | ✅ |
+| 自定义配置拒绝服务降级 (α) | Task 11（check_tool_support） | ✅ |
 | MinIO BaseStore 适配 | Task 7（MinIOSkillStore） | ✅ |
 | 两档可见性（global + personal） | Task 9（visibility）+ Task 16（CRUD） | ✅ |
 | 纯运行时合并 (α) | Task 9（list_visible_skills 无项目状态） | ✅ |
@@ -3575,7 +3575,7 @@ git commit -m "test(api): 全量验证通过（agent-skills 模块 Phase 1-7 完
 | 0 | Task 0 | deepagents + docker 依赖、分支 |
 | 1 | Task 1-5 | Skill 模型 + 迁移 + 删除旧体系 + glm-4.7 |
 | 2 | Task 6-9 | schema + MinIO BaseStore + 目录管理 + 可见性 |
-| 3 | Task 10-13 | RAG 工具化 + BYOK 降级 + agent 工厂 + orchestrator 委托 |
+| 3 | Task 10-13 | RAG 工具化 + 自定义配置降级 + agent 工厂 + orchestrator 委托 |
 | 4 | Task 14-15 | Docker sandbox + backend 条件注入 |
 | 5 | Task 16-18 | CRUD service + admin 路由 + 用户路由 |
 | 6 | Task 19-22 | 前端类型/API/hooks + 编辑器 + admin 页 + 用户页 |
