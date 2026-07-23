@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from app.api import (
-    admin, ai, attachments, auth, export, health, knowledge, projects, review, sections, settings, share, tags, templates, versions,
+    admin, ai, attachments, auth, export, health, knowledge, projects, review, sections, settings, share, skills, tags, templates, versions,
 )
 
 api_router = APIRouter(prefix="/api/v1")
@@ -18,6 +18,8 @@ api_router.include_router(knowledge.router)
 api_router.include_router(review.router)
 api_router.include_router(share.router)
 api_router.include_router(admin.router)
+# /skills/* 用户个人技能域（Task 18：/skills/mine CRUD + /skills/visible）
+api_router.include_router(skills.router)
 # /settings/* 用户 BYOK 域（从原 admin.py 剥离，refactor/admin-api-split）
 api_router.include_router(settings.router)
 api_router.include_router(health.router)
