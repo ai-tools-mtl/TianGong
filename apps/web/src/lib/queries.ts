@@ -658,3 +658,19 @@ export function useDeleteMySkill() {
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.skills.mine }),
   })
 }
+
+export function useImportGlobalSkill() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (file: File) => api.importGlobalSkillZip(file),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.skills.admin }),
+  })
+}
+
+export function useImportMySkill() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (file: File) => api.importMySkillZip(file),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.skills.mine }),
+  })
+}

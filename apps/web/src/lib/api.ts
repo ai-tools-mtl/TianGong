@@ -512,6 +512,36 @@ export const api = {
     request<Skill>(`/skills/mine/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteMySkill: (id: string) =>
     request<{ ok: boolean }>(`/skills/mine/${id}`, { method: 'DELETE' }),
+
+  // zip 导入（FormData，绕过 JSON wrapper，仿 uploadAdminTemplate）
+  importGlobalSkillZip: async (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(`${BASE}/api/v1/admin/skills/import-zip`, {
+      method: 'POST',
+      credentials: 'include',
+      body: form,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: `HTTP ${res.status}` }))
+      throw err
+    }
+    return res.json() as Promise<Skill>
+  },
+  importMySkillZip: async (file: File) => {
+    const form = new FormData()
+    form.append('file', file)
+    const res = await fetch(`${BASE}/api/v1/skills/mine/import-zip`, {
+      method: 'POST',
+      credentials: 'include',
+      body: form,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ message: `HTTP ${res.status}` }))
+      throw err
+    }
+    return res.json() as Promise<Skill>
+  },
 }
 
 /**

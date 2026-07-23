@@ -1,7 +1,7 @@
 'use client'
 
-import { Plus, Trash2 } from 'lucide-react'
-import { useState } from 'react'
+import { Plus, Trash2, Upload } from 'lucide-react'
+import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
@@ -14,6 +14,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import {
   useCreateMySkill,
   useDeleteMySkill,
+  useImportMySkill,
   useMySkills,
   useUpdateMySkill,
   useVisibleSkills,
@@ -31,7 +32,9 @@ export function PersonalSkillManager() {
   const createSkill = useCreateMySkill()
   const updateSkill = useUpdateMySkill()
   const deleteSkill = useDeleteMySkill()
+  const importSkill = useImportMySkill()
   const [editing, setEditing] = useState<Skill | null | 'new'>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
 
   async function handleCreate(data: SkillCreate) {
     await createSkill.mutateAsync(data)
@@ -51,6 +54,18 @@ export function PersonalSkillManager() {
     }
   }
 
+  async function handleImportZip(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = '' // 重置，允许重复选同一文件
+    if (!file) return
+    try {
+      await importSkill.mutateAsync(file)
+      toast.success(`已导入：${file.name}`)
+    } catch (e) {
+      toast.error('导入失败：' + ((e as { message?: string })?.message ?? String(e)))
+    }
+  }
+
   const isEditing = editing !== null
   const visibleList: Skill[] = visibleSkills ?? []
   const globalSkills: Skill[] = visibleList.filter((s) => s.scope === 'global')
@@ -62,9 +77,26 @@ export function PersonalSkillManager() {
         title="我的技能"
         description="管理个人 Agent Skills（spec 合规 SKILL.md）"
       >
-        <Button onClick={() => setEditing('new')} className="gap-1.5">
-          <Plus className="size-3.5" /> 新建技能
-        </Button>
+        <div className="flex gap-2">
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".zip"
+            className="hidden"
+            onChange={handleImportZip}
+          />
+          <Button
+            variant="outline"
+            className="gap-1.5"
+            disabled={importSkill.isPending}
+            onClick={() => fileRef.current?.click()}
+          >
+            <Upload className="size-3.5" /> 导入 zip
+          </Button>
+          <Button onClick={() => setEditing('new')} className="gap-1.5">
+            <Plus className="size-3.5" /> 新建技能
+          </Button>
+        </div>
       </PageHeader>
 
       <div className="py-6">
