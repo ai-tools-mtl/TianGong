@@ -60,4 +60,5 @@ cd apps/api && uv run python -m scripts.create_admin --username admin --password
 - **密码**：用 bcrypt 库直接调用，不用 passlib（见 GOTCHAS G1）
 - **shadcn/ui**：锁 3.x，不用 4.x（见 GOTCHAS F1）；CLI 与 MCP SDK 冲突装不了组件，要新组件**手写**（见 GOTCHAS F8）
 - **开发端口**：后端 8000、前端 3000，都用 `localhost`（不用 127.0.0.1，见 GOTCHAS F4）
+- **LLM provider 模板**：新增/调整 LLM 供应商预设（智谱/OpenAI/DeepSeek 等，含 base_url、默认模型、拉模型端点）改 `apps/api/app/services/llm_provider_templates.py` 的 `PROVIDER_TEMPLATES`（静态数据，前端 `/settings` 与 `/admin/console/llm` 共用）。`models_endpoint` 字段是相对路径（OpenAI 兼容 `/models`，Ollama `/api/tags`），由 `llm_config_service.list_provider_models` 拼到 `base_url` 后。
 - **「BYOK」术语已更名为「自定义配置」**：本项目原称的 BYOK 实指「用户密钥加密托管」（L1 成本隔离型——每用户用自己的 key 调用，运营方不为用户 token 买单），非严格意义的 BYOK（密钥主权型，服务端零明文）。代码层面 source 协议前缀为 `custom:{config_id}`，用户可见文案统一称「自定义配置」。此为有意决策，非缺陷。
