@@ -22,7 +22,7 @@ from app.core.storage import Storage
 from app.models import KnowledgeChunk, KnowledgeFile, KnowledgeReview
 from app.rag.chunker import chunk_sections
 from app.rag.embedding import embed_texts
-from app.services.llm_config_service import resolve_llm_config
+from app.services.llm_config_service import resolve_embedding_config
 
 
 def upload_to_global(
@@ -249,7 +249,7 @@ def _ingest_chunks(
     chunks = chunk_sections([{"key": None, "title": title, "content": text}])
     if not chunks:
         return
-    embed_config = resolve_llm_config(db, user_id=user_id)
+    embed_config = resolve_embedding_config(db, user_id=user_id)
     if embed_config is None:
         # 无 LLM 配置：chunk 仍入库（embedding=None），该 chunk 不参与向量检索
         vectors: list[list[float] | None] = [None] * len(chunks)

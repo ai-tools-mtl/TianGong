@@ -59,3 +59,22 @@ def test_summary_service_calls_resolve_chat_config(db_session):
         summary_service.generate_summary(db_session, s)
     m.assert_called()
 
+
+def test_archiver_calls_resolve_embedding_config(db_session):
+    """archiver.archive_project 应调 resolve_embedding_config。"""
+    from app.rag import archiver
+    with patch("app.rag.archiver.resolve_embedding_config", return_value=None) as m:
+        from app.models import Project
+        import uuid
+        p = Project(id=uuid.uuid4(), user_id=uuid.uuid4(), title="t")
+        db_session.add(p); db_session.commit()
+        archiver.archive_project(db_session, project=p, user_id=p.user_id)
+    m.assert_called()
+
+
+def test_retriever_calls_resolve_embedding_config(db_session):
+    from app.rag import retriever
+    with patch("app.rag.retriever.resolve_embedding_config", return_value=None) as m:
+        retriever.retrieve(db_session, user_id="00000000-0000-0000-0000-000000000000", query="q")
+    m.assert_called()
+

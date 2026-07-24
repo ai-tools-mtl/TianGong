@@ -1,28 +1,29 @@
-"""Embedding 封装。用 LangChain OpenAIEmbeddings 接智谱 embedding-3。"""
+"""Embedding 封装。用 LangChain OpenAIEmbeddings（OpenAI 兼容协议）。"""
 
 from langchain_openai import OpenAIEmbeddings
 
-from app.services.llm_config_service import ResolvedLLMConfig
+from app.services.llm_config_service import ResolvedEmbeddingConfig
 
 
-def get_embedder(embed_config: ResolvedLLMConfig) -> OpenAIEmbeddings:
-    if embed_config.embedding_model is None:
-        raise ValueError(
-            "当前 LLM 配置未指定 embedding 模型，无法构造 embedder。"
-            "请在配置中补充 embedding_model 字段。"
-        )
+def get_embedder(embed_config: ResolvedEmbeddingConfig) -> OpenAIEmbeddings:
+    """构造 embedder。用解析后的 embedding 配置（与 chat 独立）。
+
+    embed_config 由 resolve_embedding_config 产出，model 已保证非空（resolve 的 build 分支都校验过）。
+    """
+    if not embed_config.model:
+        raise ValueError("embedding 配置缺少 model")
     return OpenAIEmbeddings(
-        model=embed_config.embedding_model,
+        model=embed_config.model,
         base_url=embed_config.base_url,
         api_key=embed_config.api_key,
     )
 
 
-def embed_text(text: str, *, embed_config: ResolvedLLMConfig) -> list[float]:
+def embed_text(text: str, *, embed_config: ResolvedEmbeddingConfig) -> list[float]:
     """单文本向量化。"""
     return get_embedder(embed_config).embed_query(text)
 
 
-def embed_texts(texts: list[str], *, embed_config: ResolvedLLMConfig) -> list[list[float]]:
+def embed_texts(texts: list[str], *, embed_config: ResolvedEmbeddingConfig) -> list[list[float]]:
     """批量向量化。"""
     return get_embedder(embed_config).embed_documents(texts)

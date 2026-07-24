@@ -40,14 +40,18 @@ def test_stream_llm_still_exists():
 
 
 def test_get_embedder_raises_when_embedding_model_none():
-    """embedding_model=None 时 get_embedder 抛清晰错误（而非 pydantic 晦涩报错）。"""
+    """embedding model 为空时 get_embedder 抛清晰错误（而非 pydantic 晦涩报错）。
+
+    get_embedder 现接收 ResolvedEmbeddingConfig（Task 5 改造后），model 字段即
+    embedding 模型名；为空（None 或空串）应在工厂入口拦截。
+    """
     import pytest
     from app.rag.embedding import get_embedder
-    cfg = ResolvedLLMConfig(
+    from app.services.llm_config_service import ResolvedEmbeddingConfig
+    cfg = ResolvedEmbeddingConfig(
         base_url="https://x.example.com",
         api_key="sk-test",
-        model="glm-4-flash",
-        embedding_model=None,
+        model="",  # ← 空 embedding 模型名
         source="user",
     )
     with pytest.raises(ValueError, match="embedding"):

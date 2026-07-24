@@ -42,14 +42,14 @@ def test_get_llm_uses_resolved_config_not_env():
 
 
 def test_get_embedder_uses_resolved_config():
-    """get_embedder 接收解析配置。"""
+    """get_embedder 接收解析后的 embedding 配置（ResolvedEmbeddingConfig）。"""
     from app.rag.embedding import get_embedder
+    from app.services.llm_config_service import ResolvedEmbeddingConfig
 
-    cfg = ResolvedLLMConfig(
+    cfg = ResolvedEmbeddingConfig(
         base_url="https://custom.example.com",
         api_key="sk-custom-xxx",
-        model="custom-model",
-        embedding_model="custom-embed",
+        model="custom-embed",
         source="user",
     )
     with patch("app.rag.embedding.OpenAIEmbeddings") as mock:
