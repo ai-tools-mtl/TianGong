@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.core.security import decrypt_value, encrypt_value
-from app.models import SystemSetting, User, UserGlobalLLMGrant, UserLLMConfig
+from app.models import SystemSetting, User, UserEmbeddingConfig, UserGlobalLLMGrant, UserLLMConfig
 
 
 @dataclass
@@ -496,3 +496,395 @@ def test_llm_connection(
         "embedding": embedding,
         "error": None if ok else (chat["error"] or (embedding["error"] if embedding else None)),
     }
+
+
+# ════════════════════════════════════════════════════════════
+# chat / embedding 独立凭据（B 轮拆分）
+# 与上面的耦合版（ResolvedLLMConfig/resolve_llm_config）并存，
+# Task 4-7 切 caller 后，Task 8 删掉老的。
+# ════════════════════════════════════════════════════════════
+
+
+@dataclass
+class ResolvedChatConfig:
+    """解析后的 chat 配置（独立于 embedding）。"""
+    base_url: str
+    api_key: str
+    model: str
+    source: str = "user"
+
+
+@dataclass
+class ResolvedEmbeddingConfig:
+    """解析后的 embedding 配置（独立于 chat）。"""
+    base_url: str
+    api_key: str
+    model: str
+    source: str = "user"
+
+
+# ── chat 解析 ──
+
+def resolve_chat_config(db: Session, *, user_id, chat_source: str | None = None) -> ResolvedChatConfig | None:
+    """解析 chat 配置。
+
+    chat_source 取值：
+    - "global"：全局 chat Key（admin 免授权；非 admin 须有效 grant）
+    - "custom-chat:{id}"：用户自配的指定 chat 配置（越权 NotFound）
+    - "env"：env 兜底
+    - None：内部 fallback（admin→global chat→env；非 admin→grant→global chat→最早 chat 配置→env）
+    """
+    user = db.get(User, user_id)
+    if chat_source is None:
+        return _resolve_chat_fallback(db, user=user, user_id=user_id)
+
+    if chat_source == "global":
+        if user and user.role == "admin":
+            return _build_global_chat_config(db, source="admin")
+        grant = _get_active_grant(db, user_id)
+        if not grant:
+            raise ForbiddenError("未授权使用全局 chat Key，请在设置中添加自定义配置")
+        return _build_global_chat_config(db, source="global")
+
+    if chat_source.startswith("custom-chat:"):
+        config_id = chat_source[len("custom-chat:"):]
+        cfg = _get_chat_config_by_id(db, user_id=user_id, config_id=config_id)
+        if cfg is None:
+            raise NotFoundError("chat 配置不存在")
+        return ResolvedChatConfig(
+            base_url=cfg.base_url,
+            api_key=decrypt_value(cfg.api_key_encrypted),
+            model=cfg.model,
+            source="user",
+        )
+
+    if chat_source == "env":
+        return _build_env_chat_config()
+
+    raise ValidationError(f"无效的 chat_source: {chat_source}")
+
+
+def _resolve_chat_fallback(db: Session, *, user, user_id) -> ResolvedChatConfig | None:
+    if user and user.role == "admin":
+        cfg = _build_global_chat_config(db, source="admin")
+        if cfg:
+            return cfg
+        return _build_env_chat_config()
+    grant = _get_active_grant(db, user_id)
+    if grant:
+        cfg = _build_global_chat_config(db, source="global")
+        if cfg:
+            return cfg
+    user_cfg = db.scalar(
+        select(UserLLMConfig)
+        .where(UserLLMConfig.user_id == user_id)
+        .order_by(UserLLMConfig.created_at)
+    )
+    if user_cfg:
+        return ResolvedChatConfig(
+            base_url=user_cfg.base_url,
+            api_key=decrypt_value(user_cfg.api_key_encrypted),
+            model=user_cfg.model,
+            source="user",
+        )
+    return _build_env_chat_config()
+
+
+def _build_global_chat_config(db: Session, *, source: str) -> ResolvedChatConfig | None:
+    enabled_setting = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_enabled"))
+    if enabled_setting and enabled_setting.value and enabled_setting.value.get("enabled") is False:
+        return None
+    cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_chat_config"))
+    if cfg and cfg.value and cfg.value.get("api_key_encrypted") and cfg.value.get("model"):
+        v = cfg.value
+        return ResolvedChatConfig(
+            base_url=v.get("base_url", ""),
+            api_key=decrypt_value(v["api_key_encrypted"]),
+            model=v.get("model", ""),
+            source=source,
+        )
+    return None
+
+
+def _build_env_chat_config() -> ResolvedChatConfig | None:
+    from app.core.config import get_settings
+    s = get_settings()
+    if s.glm_api_key:
+        return ResolvedChatConfig(
+            base_url=s.glm_base_url,
+            api_key=s.glm_api_key,
+            model=s.glm_model,
+            source="env",
+        )
+    return None
+
+
+def _get_chat_config_by_id(db: Session, *, user_id, config_id) -> UserLLMConfig | None:
+    try:
+        cid = uuid.UUID(config_id) if isinstance(config_id, str) else config_id
+    except (ValueError, AttributeError):
+        return None
+    cfg = db.get(UserLLMConfig, cid)
+    if cfg is None or cfg.user_id != user_id:
+        return None
+    return cfg
+
+
+# ── embedding 解析（与 chat 完全独立，fallback 不互通，D4）──
+
+def resolve_embedding_config(db: Session, *, user_id, embedding_source: str | None = None) -> ResolvedEmbeddingConfig | None:
+    """解析 embedding 配置。与 chat 完全独立（fallback 不互通，D4）。
+
+    embedding_source 取值：
+    - "global"：全局 embedding Key（admin 免授权；非 admin 须有效 grant）
+    - "custom-emb:{id}"：用户自配的指定 embedding 配置（越权 NotFound）
+    - "env"：env 兜底
+    - None：内部 fallback（admin→global emb→env；非 admin→grant→global emb→最早 emb 配置→env）
+    """
+    user = db.get(User, user_id)
+    if embedding_source is None:
+        return _resolve_embedding_fallback(db, user=user, user_id=user_id)
+
+    if embedding_source == "global":
+        if user and user.role == "admin":
+            return _build_global_embedding_config(db, source="admin")
+        grant = _get_active_grant(db, user_id)
+        if not grant:
+            raise ForbiddenError("未授权使用全局 embedding Key，请在设置中添加自定义配置")
+        return _build_global_embedding_config(db, source="global")
+
+    if embedding_source.startswith("custom-emb:"):
+        config_id = embedding_source[len("custom-emb:"):]
+        cfg = _get_embedding_config_by_id(db, user_id=user_id, config_id=config_id)
+        if cfg is None:
+            raise NotFoundError("embedding 配置不存在")
+        return ResolvedEmbeddingConfig(
+            base_url=cfg.base_url,
+            api_key=decrypt_value(cfg.api_key_encrypted),
+            model=cfg.model,
+            source="user",
+        )
+
+    if embedding_source == "env":
+        return _build_env_embedding_config()
+
+    raise ValidationError(f"无效的 embedding_source: {embedding_source}")
+
+
+def _resolve_embedding_fallback(db: Session, *, user, user_id) -> ResolvedEmbeddingConfig | None:
+    if user and user.role == "admin":
+        cfg = _build_global_embedding_config(db, source="admin")
+        if cfg:
+            return cfg
+        return _build_env_embedding_config()
+    grant = _get_active_grant(db, user_id)
+    if grant:
+        cfg = _build_global_embedding_config(db, source="global")
+        if cfg:
+            return cfg
+    emb_cfg = db.scalar(
+        select(UserEmbeddingConfig)
+        .where(UserEmbeddingConfig.user_id == user_id)
+        .order_by(UserEmbeddingConfig.created_at)
+    )
+    if emb_cfg:
+        return ResolvedEmbeddingConfig(
+            base_url=emb_cfg.base_url,
+            api_key=decrypt_value(emb_cfg.api_key_encrypted),
+            model=emb_cfg.model,
+            source="user",
+        )
+    return _build_env_embedding_config()
+
+
+def _build_global_embedding_config(db: Session, *, source: str) -> ResolvedEmbeddingConfig | None:
+    enabled_setting = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_enabled"))
+    if enabled_setting and enabled_setting.value and enabled_setting.value.get("enabled") is False:
+        return None
+    cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_embedding_config"))
+    if cfg and cfg.value and cfg.value.get("api_key_encrypted") and cfg.value.get("model"):
+        v = cfg.value
+        return ResolvedEmbeddingConfig(
+            base_url=v.get("base_url", ""),
+            api_key=decrypt_value(v["api_key_encrypted"]),
+            model=v.get("model", ""),
+            source=source,
+        )
+    return None
+
+
+def _build_env_embedding_config() -> ResolvedEmbeddingConfig | None:
+    from app.core.config import get_settings
+    s = get_settings()
+    if s.glm_api_key and s.glm_embedding_model:
+        return ResolvedEmbeddingConfig(
+            base_url=s.glm_base_url,
+            api_key=s.glm_api_key,
+            model=s.glm_embedding_model,
+            source="env",
+        )
+    return None
+
+
+def _get_embedding_config_by_id(db: Session, *, user_id, config_id) -> UserEmbeddingConfig | None:
+    try:
+        cid = uuid.UUID(config_id) if isinstance(config_id, str) else config_id
+    except (ValueError, AttributeError):
+        return None
+    cfg = db.get(UserEmbeddingConfig, cid)
+    if cfg is None or cfg.user_id != user_id:
+        return None
+    return cfg
+
+
+def _get_active_grant(db: Session, user_id):
+    """共享辅助：查有效 grant（chat 与 embedding 共用一个 grant，D5）。"""
+    return db.scalar(select(UserGlobalLLMGrant).where(
+        (UserGlobalLLMGrant.user_id == user_id) &
+        (UserGlobalLLMGrant.revoked_at.is_(None))
+    ))
+
+
+# ── embedding 配置 CRUD（镜像 chat）──
+
+def list_user_embedding_configs(db: Session, *, user_id) -> list[dict]:
+    cfgs = db.scalars(
+        select(UserEmbeddingConfig)
+        .where(UserEmbeddingConfig.user_id == user_id)
+        .order_by(UserEmbeddingConfig.created_at)
+    ).all()
+    return [embedding_config_to_dict(c) for c in cfgs]
+
+
+def create_user_embedding_config(
+    db: Session, *, user_id, name: str, base_url: str,
+    api_key: str, model: str,
+) -> UserEmbeddingConfig:
+    cfg = UserEmbeddingConfig(
+        user_id=user_id, name=name, base_url=base_url,
+        api_key_encrypted=encrypt_value(api_key), model=model,
+    )
+    db.add(cfg); db.commit(); db.refresh(cfg)
+    return cfg
+
+
+def update_user_embedding_config(
+    db: Session, *, user_id, config_id, name: str | None = None,
+    base_url: str | None = None, api_key: str | None = None, model: str | None = None,
+) -> UserEmbeddingConfig:
+    cfg = _get_owned_embedding_config(db, user_id=user_id, config_id=config_id)
+    if name is not None:
+        cfg.name = name
+    if base_url is not None:
+        cfg.base_url = base_url
+    if api_key is not None:
+        cfg.api_key_encrypted = encrypt_value(api_key)
+    if model is not None:
+        cfg.model = model
+    db.commit(); db.refresh(cfg)
+    return cfg
+
+
+def delete_user_embedding_config(db: Session, *, user_id, config_id) -> None:
+    cfg = _get_owned_embedding_config(db, user_id=user_id, config_id=config_id)
+    db.delete(cfg); db.commit()
+
+
+def _get_owned_embedding_config(db: Session, *, user_id, config_id) -> UserEmbeddingConfig:
+    try:
+        cid = uuid.UUID(config_id) if isinstance(config_id, str) else config_id
+    except (ValueError, AttributeError):
+        raise NotFoundError("embedding 配置不存在")
+    cfg = db.get(UserEmbeddingConfig, cid)
+    if cfg is None or cfg.user_id != user_id:
+        raise NotFoundError("embedding 配置不存在")
+    return cfg
+
+
+def embedding_config_to_dict(cfg: UserEmbeddingConfig) -> dict:
+    return {
+        "id": str(cfg.id),
+        "name": cfg.name,
+        "base_url": cfg.base_url,
+        "api_key_masked": _mask_key(decrypt_value(cfg.api_key_encrypted)),
+        "model": cfg.model,
+    }
+
+
+# ── 全局 chat / embedding 配置（拆两套 SystemSetting key）──
+
+def get_global_chat_settings(db: Session) -> dict:
+    cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_chat_config"))
+    return {
+        "base_url": cfg.value.get("base_url", "") if cfg else "",
+        "api_key_masked": _mask_key(decrypt_value(cfg.value["api_key_encrypted"])) if cfg and cfg.value.get("api_key_encrypted") else "",
+        "model": cfg.value.get("model", "") if cfg else "",
+    }
+
+
+def set_global_chat_settings(
+    db: Session, *, enabled: bool, base_url: str | None = None,
+    api_key: str | None = None, model: str | None = None,
+) -> dict:
+    """注意：enabled 开关是 chat+embedding 共用的（llm_global_enabled）。本函数也写它。"""
+    setting = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_enabled"))
+    if setting:
+        setting.value = {"enabled": enabled}
+    else:
+        db.add(SystemSetting(key="llm_global_enabled", value={"enabled": enabled}))
+
+    if base_url or api_key or model:
+        cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_chat_config"))
+        current = cfg.value if cfg else {}
+        new_value = {
+            "base_url": base_url or current.get("base_url", ""),
+            "model": model or current.get("model", ""),
+        }
+        if api_key:
+            new_value["api_key_encrypted"] = encrypt_value(api_key)
+        elif current.get("api_key_encrypted"):
+            new_value["api_key_encrypted"] = current["api_key_encrypted"]
+        if cfg:
+            cfg.value = new_value
+        else:
+            db.add(SystemSetting(key="llm_global_chat_config", value=new_value))
+    db.commit()
+    return get_global_chat_settings(db)
+
+
+def get_global_embedding_settings(db: Session) -> dict:
+    cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_embedding_config"))
+    return {
+        "base_url": cfg.value.get("base_url", "") if cfg else "",
+        "api_key_masked": _mask_key(decrypt_value(cfg.value["api_key_encrypted"])) if cfg and cfg.value.get("api_key_encrypted") else "",
+        "model": cfg.value.get("model", "") if cfg else "",
+    }
+
+
+def set_global_embedding_settings(
+    db: Session, *, enabled: bool, base_url: str | None = None,
+    api_key: str | None = None, model: str | None = None,
+) -> dict:
+    setting = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_enabled"))
+    if setting:
+        setting.value = {"enabled": enabled}
+    else:
+        db.add(SystemSetting(key="llm_global_enabled", value={"enabled": enabled}))
+
+    if base_url or api_key or model:
+        cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_embedding_config"))
+        current = cfg.value if cfg else {}
+        new_value = {
+            "base_url": base_url or current.get("base_url", ""),
+            "model": model or current.get("model", ""),
+        }
+        if api_key:
+            new_value["api_key_encrypted"] = encrypt_value(api_key)
+        elif current.get("api_key_encrypted"):
+            new_value["api_key_encrypted"] = current["api_key_encrypted"]
+        if cfg:
+            cfg.value = new_value
+        else:
+            db.add(SystemSetting(key="llm_global_embedding_config", value=new_value))
+    db.commit()
+    return get_global_embedding_settings(db)
