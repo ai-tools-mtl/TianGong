@@ -9,6 +9,7 @@ from app.models import KnowledgeChunk, Project, Section
 from app.rag.chunker import chunk_sections
 from app.rag.embedding import embed_texts
 from app.services.llm_config_service import resolve_embedding_config
+from app.services.llm_log_helper import log_embed_call
 
 
 def archive_project(db: Session, *, project: Project, user_id) -> int:
@@ -40,7 +41,22 @@ def archive_project(db: Session, *, project: Project, user_id) -> int:
 
     # 批量向量化
     texts = [c.content for c in chunks]
-    vectors = embed_texts(texts, embed_config=embed_config)
+    try:
+        vectors = embed_texts(texts, embed_config=embed_config)
+    except Exception:
+        # D7：embed 失败也记一条日志（仅元数据，不含内容），再向上抛
+        log_embed_call(
+            db, user_id=user_id, model=embed_config.model,
+            provider=embed_config.source, project_id=project.id,
+            status="failed",
+        )
+        raise
+    # D7：写 embedding 调用日志（仅元数据，让 admin 统计区分 chat/embedding）
+    log_embed_call(
+        db, user_id=user_id, model=embed_config.model,
+        provider=embed_config.source, project_id=project.id,
+        status="success",
+    )
 
     # 写入
     for chunk, vec in zip(chunks, vectors, strict=False):

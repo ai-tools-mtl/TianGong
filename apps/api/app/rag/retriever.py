@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.models import KnowledgeChunk
 from app.rag.embedding import embed_text
 from app.services.llm_config_service import resolve_embedding_config
+from app.services.llm_log_helper import log_embed_call
 
 SIMILARITY_THRESHOLD = 0.5
 
@@ -34,7 +35,20 @@ def retrieve(
     embed_config = resolve_embedding_config(db, user_id=user_id)
     if embed_config is None:
         return []
-    query_vec = embed_text(query, embed_config=embed_config)
+    try:
+        query_vec = embed_text(query, embed_config=embed_config)
+    except Exception:
+        # D7：embed 失败也记一条日志，再向上抛
+        log_embed_call(
+            db, user_id=user_id, model=embed_config.model,
+            provider=embed_config.source, status="failed",
+        )
+        raise
+    # D7：写 embedding 调用日志（无 project_id，检索与具体 project 无关）
+    log_embed_call(
+        db, user_id=user_id, model=embed_config.model,
+        provider=embed_config.source, status="success",
+    )
 
     stmt = (
         select(

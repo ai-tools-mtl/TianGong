@@ -23,6 +23,7 @@ from app.models import KnowledgeChunk, KnowledgeFile, KnowledgeReview
 from app.rag.chunker import chunk_sections
 from app.rag.embedding import embed_texts
 from app.services.llm_config_service import resolve_embedding_config
+from app.services.llm_log_helper import log_embed_call
 
 
 def upload_to_global(
@@ -254,7 +255,20 @@ def _ingest_chunks(
         # 无 LLM 配置：chunk 仍入库（embedding=None），该 chunk 不参与向量检索
         vectors: list[list[float] | None] = [None] * len(chunks)
     else:
-        vectors = embed_texts([c.content for c in chunks], embed_config=embed_config)
+        try:
+            vectors = embed_texts([c.content for c in chunks], embed_config=embed_config)
+        except Exception:
+            # D7：embed 失败也记一条日志（仅元数据），再向上抛
+            log_embed_call(
+                db, user_id=user_id, model=embed_config.model,
+                provider=embed_config.source, status="failed",
+            )
+            raise
+        # D7：写 embedding 调用日志（让 admin 统计区分 chat/embedding）
+        log_embed_call(
+            db, user_id=user_id, model=embed_config.model,
+            provider=embed_config.source, status="success",
+        )
     for c, vec in zip(chunks, vectors, strict=False):
         db.add(KnowledgeChunk(
             user_id=user_id, scope=scope, file_id=file_id,
