@@ -1,6 +1,7 @@
 import type {
   ApiError,
   DiffResponse,
+  ListModelsResult,
   LoginRequest,
   Member,
   MyGrant,
@@ -8,6 +9,7 @@ import type {
   ProjectCreate,
   ProjectTag,
   ProjectUpdate,
+  ProviderTemplate,
   RegisterRequest,
   Section,
   ShareLink,
@@ -21,6 +23,7 @@ import type {
   TagCreate,
   TagMerge,
   TagUpdate,
+  TestConnectionResult,
   User,
   UserLLMConfig,
   UserLLMConfigCreate,
@@ -350,6 +353,29 @@ export const api = {
   }) =>
     request<import('@/types/api').GlobalLLMSettings>(`/admin/llm-config`, { method: 'PUT', body: JSON.stringify(data) }),
 
+  // admin LLM 连接测试 / 模型拉取（feat/llm-config-redesign）
+  /** admin 测试全局 LLM 连接（chat + embedding 双测）。字段全可选：留空走当前已存配置。 */
+  testGlobalLLM: (data: {
+    base_url?: string
+    api_key?: string
+    model?: string
+    embedding_model?: string | null
+  }) =>
+    request<TestConnectionResult>(`/admin/llm-config/test`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  /** admin 按 base_url + api_key 拉取 provider 的可用模型列表。 */
+  listGlobalProviderModels: (data: {
+    base_url: string
+    api_key: string
+    provider_template_id?: string | null
+  }) =>
+    request<ListModelsResult>(`/admin/llm-config/models`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
   banUser: (userId: string, status: 'active' | 'disabled') =>
     request<{ id: string; status: string }>(`/admin/users/${userId}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   resetUserPassword: (userId: string, newPassword: string) =>
@@ -399,10 +425,33 @@ export const api = {
     request<UserLLMConfig>(`/settings/llm/${configId}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteMyLLM: (configId: string) =>
     request<{ message: string }>(`/settings/llm/${configId}`, { method: 'DELETE' }),
-  testMyLLM: (data: { base_url: string; api_key: string; model: string }) =>
-    request<{ ok: boolean; response?: string; error?: string }>(`/settings/llm/test`, { method: 'POST', body: JSON.stringify(data) }),
+  testMyLLM: (data: {
+    base_url: string
+    api_key: string
+    model: string
+    embedding_model?: string | null
+  }) =>
+    request<TestConnectionResult>(`/settings/llm/test`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
   /** 普通用户查自己的全局 Key 授权状态（选源器用）。 */
   getMyGrant: () => request<MyGrant>(`/settings/my-grant`),
+
+  // ── LLM provider 模板 / 模型拉取（feat/llm-config-redesign）──
+  /** 内置 provider 模板列表（选模板自动填 base_url/model 等）。 */
+  listProviderTemplates: () =>
+    request<ProviderTemplate[]>(`/settings/llm/templates`),
+  /** 按 base_url + api_key 拉取 provider 的可用模型列表。 */
+  listProviderModels: (data: {
+    base_url: string
+    api_key: string
+    provider_template_id?: string | null
+  }) =>
+    request<ListModelsResult>(`/settings/llm/models`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 
   // ── 知识库(三域 + 审核流)──
   uploadKnowledgeFile: async (file: File) => {

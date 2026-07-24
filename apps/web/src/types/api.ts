@@ -521,3 +521,40 @@ export interface SkillUpdate {
   skill_md?: string
   status?: SkillStatus
 }
+
+// ── LLM provider 模板（添加配置时选模板自动填）──
+export interface ProviderTemplate {
+  id: string
+  name: string
+  base_url: string
+  default_model: string
+  default_embedding_model: string | null
+  models_endpoint: string
+  docs_url: string | null
+  note: string | null
+}
+
+// ── 测试连接结果（chat + embedding 双测）──
+export interface TestConnectionResult {
+  ok: boolean
+  chat: {
+    ok: boolean
+    latency_ms: number | null
+    sample: string | null
+    error: string | null
+  }
+  embedding: {
+    ok: boolean
+    latency_ms: number | null
+    dim: number | null
+    error: string | null
+  } | null
+  error: string | null
+}
+
+// ── 拉取模型列表结果 ──
+export interface ListModelsResult {
+  models: string[]
+  truncated: boolean
+  error: string | null
+}

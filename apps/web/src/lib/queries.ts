@@ -45,6 +45,8 @@ export const queryKeys = {
     admin: ['skills', 'admin'] as const,
     detail: (id: string) => ['skills', 'detail', id] as const,
   },
+  // 内置 LLM provider 模板（静态数据）。模型拉取/测试连接是命令式动作，用 mutation，不进 queryKeys。
+  llmTemplates: ['llm-templates'] as const,
   // admin 域（refactor/admin-ia-phase1 切片 1）。all 用于一刀切失效所有 admin 缓存。
   admin: {
     all: ['admin'] as const,
@@ -712,5 +714,77 @@ export function useImportMySkill() {
   return useMutation({
     mutationFn: (file: File) => api.importMySkillZip(file),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.skills.mine }),
+  })
+}
+
+// ── LLM provider 模板 / 模型拉取 / 测试连接（feat/llm-config-redesign）──
+
+/**
+ * 内置 provider 模板列表（选模板自动填 base_url/model）。
+ * 静态数据：staleTime=Infinity，不主动刷新。
+ */
+export function useProviderTemplates() {
+  return useQuery({
+    queryKey: queryKeys.llmTemplates,
+    queryFn: api.listProviderTemplates,
+    staleTime: Infinity,
+  })
+}
+
+/**
+ * 按 base_url + api_key 拉取 provider 的可用模型列表。
+ * 命令式动作（按需触发），用 mutation，不在 onSuccess 失效缓存。
+ */
+export function useListProviderModels() {
+  return useMutation({
+    mutationFn: (data: {
+      base_url: string
+      api_key: string
+      provider_template_id?: string | null
+    }) => api.listProviderModels(data),
+  })
+}
+
+/**
+ * 测试用户 LLM 连接（chat + embedding 双测）。
+ * 命令式动作，用 mutation。
+ */
+export function useTestLLMConnection() {
+  return useMutation({
+    mutationFn: (data: {
+      base_url: string
+      api_key: string
+      model: string
+      embedding_model?: string | null
+    }) => api.testMyLLM(data),
+  })
+}
+
+/**
+ * admin 测试全局 LLM 连接（chat + embedding 双测）。
+ * 字段全可选：留空走当前已存配置。命令式动作，用 mutation。
+ */
+export function useTestGlobalLLM() {
+  return useMutation({
+    mutationFn: (data: {
+      base_url?: string
+      api_key?: string
+      model?: string
+      embedding_model?: string | null
+    }) => api.testGlobalLLM(data),
+  })
+}
+
+/**
+ * admin 按 base_url + api_key 拉取 provider 的可用模型列表。
+ * 命令式动作，用 mutation。
+ */
+export function useListGlobalProviderModels() {
+  return useMutation({
+    mutationFn: (data: {
+      base_url: string
+      api_key: string
+      provider_template_id?: string | null
+    }) => api.listGlobalProviderModels(data),
   })
 }

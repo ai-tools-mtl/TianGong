@@ -356,9 +356,9 @@ function CreateDialog({ open, onOpenChange, onCreated }: CreateDialogProps) {
     try {
       const res = await api.testMyLLM({ base_url: baseUrl, api_key: apiKey, model })
       if (res.ok) {
-        toast.success(`连通成功：${res.response}`)
+        toast.success(`连通成功：${res.chat.sample ?? ''}`)
       } else {
-        toast.error(`连通失败：${res.error}`)
+        toast.error(`连通失败：${res.error ?? res.chat.error ?? '未知错误'}`)
       }
     } catch {
       toast.error('测试失败')
