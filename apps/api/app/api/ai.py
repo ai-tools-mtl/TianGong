@@ -200,8 +200,8 @@ async def chat(
     # 阶段 0：解析生效 LLM 配置（在 StreamingResponse 构造前解析，确保
     # ForbiddenError（如全局 Key 被撤销）能被全局异常处理器转成真正的 HTTP 403，
     # 而不是在 SSE 流已发出 200 头之后才抛出 → 客户端只能看到空响应）。
-    # source 由前端传入（"global" / "custom:{id}" / "env"），None 走 fallback。
-    llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id, source=payload.source)
+    # chat_source 由前端传入（"global" / "custom-chat:{id}" / "env"），None 走 fallback。
+    llm_config = llm_config_service.resolve_chat_config(db, user_id=current_user.id, chat_source=payload.chat_source)
 
     async def generate():
         full_response = ""
@@ -290,14 +290,14 @@ async def generate_draft(
     db: Session = Depends(get_db),
     payload: GenerateRequest | None = Body(default=None),
 ):
-    # body 可选：前端传 {source} 时解析；无 body（旧调用方）默认 source=None。
-    source = payload.source if payload else None
+    # body 可选：前端传 {chat_source} 时解析；无 body（旧调用方）默认 chat_source=None。
+    chat_source = payload.chat_source if payload else None
     section, history = _get_section_with_history(db, current_user.id, section_id)
 
     # 阶段 0：解析生效 LLM 配置（在 StreamingResponse 构造前解析，确保
     # ForbiddenError（如全局 Key 被撤销）能被全局异常处理器转成真正的 HTTP 403，
     # 而不是在 SSE 流已发出 200 头之后才抛出 → 客户端只能看到空响应）。
-    llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id, source=source)
+    llm_config = llm_config_service.resolve_chat_config(db, user_id=current_user.id, chat_source=chat_source)
 
     async def generate():
         full_md = ""
@@ -379,7 +379,7 @@ async def rewrite(
 
     # 在 StreamingResponse 构造前解析，确保 ForbiddenError（如全局 Key 被撤销）能被
     # 全局异常处理器转成真正的 HTTP 403，而非 SSE 流已发 200 头后才抛（Task 4.1 同款修复）。
-    llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id, source=payload.source)
+    llm_config = llm_config_service.resolve_chat_config(db, user_id=current_user.id, chat_source=payload.chat_source)
 
     async def generate():
         usage = {}  # 断链 C3：astream_llm 把最后一块 usage_metadata 写入此 holder
@@ -575,7 +575,7 @@ def delete_conversation(
 
 class CaptionRequest(BaseModel):
     descriptions: list[str]
-    source: str | None = None
+    chat_source: str | None = None
 
 
 @router.post("/sections/{section_id}/caption-figures")
@@ -597,8 +597,8 @@ async def caption_figures(
 
     from langchain_core.messages import HumanMessage, SystemMessage
 
-    # source 由前端传入；在 StreamingResponse 构造前解析，与其它端点保持一致
-    llm_config = llm_config_service.resolve_llm_config(db, user_id=current_user.id, source=payload.source)
+    # chat_source 由前端传入；在 StreamingResponse 构造前解析，与其它端点保持一致
+    llm_config = llm_config_service.resolve_chat_config(db, user_id=current_user.id, chat_source=payload.chat_source)
 
     descs = "\n".join(f"- {d}" for d in payload.descriptions)
     system = (
