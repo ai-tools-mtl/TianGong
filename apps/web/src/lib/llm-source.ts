@@ -1,44 +1,82 @@
 /**
- * 默认 LLM 源 localStorage 持久化（Task 4.0）。
+ * 默认 LLM 源 localStorage 持久化（feat/llm-chat-embedding-split：chat / embedding 双 key）。
  *
- * source 取值（与后端 resolve_llm_config 对齐）：
- * - "global"：全局 Key（须被 admin 授权）
- * - "custom:{config_id}"：用户自配的某条自定义配置
+ * chat 与 embedding 各自独立记默认源，互不影响：
+ * - chat 走 KEY_CHAT，取值：`"global"` / `"custom-chat:{config_id}"` / null
+ * - embedding 走 KEY_EMB，取值：`"global"` / `"custom-emb:{config_id}"` / null
  *
+ * `"global"`：使用全局 Key（chat 侧须被 admin 授权；后端 chat/embedding 各自查授权与全局配置）。
  * 仅在浏览器侧读写（settings 页与 ai-chat-panel 均为 'use client'）。
- * 调用方需自行处理 SSR 场景（typeof window === 'undefined' 时这些函数返回 null）。
+ * SSR 场景（typeof window === 'undefined'）下读函数返回 null、写函数 no-op。
  */
 
-const KEY = 'tg_default_llm_source'
+const KEY_CHAT = 'tg_default_chat_source'
+const KEY_EMB = 'tg_default_embedding_source'
 
-/** 读默认 source；SSR 或未设置返回 null。 */
-export function getDefaultSource(): string | null {
+// ── Chat 默认源 ──
+
+/** 读 chat 默认 source；SSR 或未设置返回 null。 */
+export function getChatDefaultSource(): string | null {
   if (typeof window === 'undefined') return null
-  return window.localStorage.getItem(KEY)
+  return window.localStorage.getItem(KEY_CHAT)
 }
 
-/** 写默认 source。 */
-export function setDefaultSource(source: string): void {
+/** 写 chat 默认 source。 */
+export function setChatDefaultSource(source: string): void {
   if (typeof window === 'undefined') return
-  window.localStorage.setItem(KEY, source)
+  window.localStorage.setItem(KEY_CHAT, source)
 }
 
-/** 清除默认 source（配置失效/撤销时调用）。 */
-export function clearDefaultSource(): void {
+/** 清除 chat 默认 source（chat 配置失效/撤销时调用）。 */
+export function clearChatDefaultSource(): void {
   if (typeof window === 'undefined') return
-  window.localStorage.removeItem(KEY)
+  window.localStorage.removeItem(KEY_CHAT)
 }
 
-/** 当前默认是否为全局 Key。 */
-export function isGlobalDefault(): boolean {
-  return getDefaultSource() === 'global'
+/** chat 当前默认是否为全局 Key。 */
+export function isChatGlobalDefault(): boolean {
+  return getChatDefaultSource() === 'global'
 }
 
-/** 设/取消「全局 Key 作为默认」。set(true) → source='global'；set(false) 且当前是 global → 清空。 */
-export function setGlobalDefault(value: boolean): void {
+/** 设/取消「全局 Key 作为 chat 默认」。set(true) → 'global'；set(false) 且当前是 global → 清空。 */
+export function setChatGlobalDefault(value: boolean): void {
   if (value) {
-    setDefaultSource('global')
-  } else if (isGlobalDefault()) {
-    clearDefaultSource()
+    setChatDefaultSource('global')
+  } else if (isChatGlobalDefault()) {
+    clearChatDefaultSource()
+  }
+}
+
+// ── Embedding 默认源 ──
+
+/** 读 embedding 默认 source；SSR 或未设置返回 null。 */
+export function getEmbeddingDefaultSource(): string | null {
+  if (typeof window === 'undefined') return null
+  return window.localStorage.getItem(KEY_EMB)
+}
+
+/** 写 embedding 默认 source。 */
+export function setEmbeddingDefaultSource(source: string): void {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(KEY_EMB, source)
+}
+
+/** 清除 embedding 默认 source（embedding 配置失效/撤销时调用）。 */
+export function clearEmbeddingDefaultSource(): void {
+  if (typeof window === 'undefined') return
+  window.localStorage.removeItem(KEY_EMB)
+}
+
+/** embedding 当前默认是否为全局 Key。 */
+export function isEmbeddingGlobalDefault(): boolean {
+  return getEmbeddingDefaultSource() === 'global'
+}
+
+/** 设/取消「全局 Key 作为 embedding 默认」。set(true) → 'global'；set(false) 且当前是 global → 清空。 */
+export function setEmbeddingGlobalDefault(value: boolean): void {
+  if (value) {
+    setEmbeddingDefaultSource('global')
+  } else if (isEmbeddingGlobalDefault()) {
+    clearEmbeddingDefaultSource()
   }
 }

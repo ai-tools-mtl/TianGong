@@ -21,11 +21,11 @@ import { LLMConfigRow } from '@/components/llm-config/LLMConfigRow'
 import { LLMConfigEditPanel } from '@/components/llm-config/LLMConfigEditPanel'
 import { api } from '@/lib/api'
 import {
-  clearDefaultSource,
-  getDefaultSource,
-  isGlobalDefault,
-  setDefaultSource,
-  setGlobalDefault,
+  clearChatDefaultSource,
+  getChatDefaultSource,
+  isChatGlobalDefault,
+  setChatDefaultSource,
+  setChatGlobalDefault,
 } from '@/lib/llm-source'
 import type { MyGrant, UserLLMConfig, UserLLMConfigUpdate } from '@/types/api'
 
@@ -49,7 +49,7 @@ export default function SettingsPage() {
 
   const configs: UserLLMConfig[] = configsQuery.data ?? []
   const grantActive = !!grantQuery.data?.is_active
-  const currentDefault = getDefaultSource()
+  const currentDefault = getChatDefaultSource()
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ['my-llm'] })
 
@@ -81,7 +81,7 @@ export default function SettingsPage() {
     onSuccess: () => {
       invalidate()
       toast.success('配置已删除')
-      if (deleting && getDefaultSource() === `custom:${deleting.id}`) clearDefaultSource()
+      if (deleting && getChatDefaultSource() === `custom-chat:${deleting.id}`) clearChatDefaultSource()
       setDeleting(null)
       refreshDefault()
     },
@@ -106,9 +106,9 @@ export default function SettingsPage() {
               <p className="text-[12px] text-muted-foreground">你已被授权使用管理员配置的全局 Key</p>
             </div>
             <Switch
-              checked={isGlobalDefault()}
+              checked={isChatGlobalDefault()}
               onCheckedChange={(v) => {
-                setGlobalDefault(v)
+                setChatGlobalDefault(v)
                 refreshDefault()
               }}
             />
@@ -130,10 +130,10 @@ export default function SettingsPage() {
             <div key={c.id}>
               <LLMConfigRow
                 config={c}
-                isDefault={currentDefault === `custom:${c.id}`}
+                isDefault={currentDefault === `custom-chat:${c.id}`}
                 isEditing={editingId === c.id}
                 onSetDefault={() => {
-                  setDefaultSource(`custom:${c.id}`)
+                  setChatDefaultSource(`custom-chat:${c.id}`)
                   refreshDefault()
                 }}
                 onEdit={() => setEditingId(c.id)}

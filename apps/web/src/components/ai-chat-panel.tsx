@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button'
 import { ConversationList } from '@/components/conversation-list'
 import { DiffReviewPanel } from '@/components/diff-review-panel'
 import { api } from '@/lib/api'
-import { clearDefaultSource, getDefaultSource } from '@/lib/llm-source'
+import { clearChatDefaultSource, getChatDefaultSource } from '@/lib/llm-source'
 import {
   queryKeys,
   useApplyDiff,
@@ -45,7 +45,7 @@ function isForbiddenSourceError(err: unknown): boolean {
 
 /** 选定的 LLM 源失效：清默认源 + 引导用户去设置重选。 */
 function handleStaleSourceError() {
-  clearDefaultSource()
+  clearChatDefaultSource()
   toast.error('当前 LLM 源已失效（授权被撤销或配置已删除），已清除默认源，请前往「设置」重新选择')
 }
 
@@ -172,7 +172,7 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
 
   async function handleSend() {
     if (!input.trim() || phase === 'chatting' || phase === 'generating') return
-    const source = getDefaultSource()
+    const source = getChatDefaultSource()
     if (!source) {
       toast.error('请先在设置中选择 LLM 源')
       return
@@ -263,7 +263,7 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
   }
 
   async function handleGenerate() {
-    const source = getDefaultSource()
+    const source = getChatDefaultSource()
     if (!source) {
       toast.error('请先在设置中选择 LLM 源')
       return
