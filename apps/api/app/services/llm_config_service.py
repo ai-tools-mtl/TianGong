@@ -11,6 +11,7 @@ source 取值：
   前端 AI 调用（chat/generate/rewrite/caption）通过 source 显式指定，不走此分支。
 """
 
+import time
 import uuid
 from dataclasses import dataclass
 
@@ -430,3 +431,68 @@ def list_provider_models(
     unique = sorted(set(raw))
     truncated = len(unique) > _LIST_MODELS_MAX
     return {"models": unique[:_LIST_MODELS_MAX], "truncated": truncated, "error": None}
+
+
+# ── 测试连通性（增强版：chat + embedding 双测）──
+
+_TEST_TIMEOUT = 15
+
+
+def test_llm_connection(
+    db: Session | None = None, *,  # 保留位置兼容 service 风格，本函数不用
+    base_url: str,
+    api_key: str,
+    model: str,
+    embedding_model: str | None = None,
+) -> dict:
+    """测试 LLM 连通性。chat 必测；embedding_model 提供则一并测。不落库、不写 LLMCallLog。
+
+    返回 TestConnectionResult：
+      {ok, chat:{ok,latency_ms,sample,error}, embedding:{...}|None, error}
+    chat 与 embedding 独立 try/except，互不影响。
+    所有错误经 friendly_llm_error 友好化。
+    """
+    from langchain_core.messages import HumanMessage
+    from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+
+    from app.ai.llm_errors import friendly_llm_error
+
+    # ---- chat ----
+    chat = {"ok": False, "latency_ms": None, "sample": None, "error": None}
+    try:
+        llm = ChatOpenAI(
+            model=model, base_url=base_url, api_key=api_key,
+            request_timeout=_TEST_TIMEOUT,
+        )
+        t0 = time.perf_counter()
+        resp = llm.invoke([HumanMessage(content="hi")])
+        chat["latency_ms"] = int((time.perf_counter() - t0) * 1000)
+        chat["ok"] = True
+        chat["sample"] = (resp.content or "")[:50]
+    except Exception as e:
+        chat["error"] = friendly_llm_error(e)
+
+    # ---- embedding（仅当 embedding_model 非空）----
+    embedding = None
+    if embedding_model:
+        embedding = {"ok": False, "latency_ms": None, "dim": None, "error": None}
+        try:
+            emb = OpenAIEmbeddings(
+                model=embedding_model, base_url=base_url, api_key=api_key,
+                request_timeout=_TEST_TIMEOUT,
+            )
+            t0 = time.perf_counter()
+            vec = emb.embed_query("hi")
+            embedding["latency_ms"] = int((time.perf_counter() - t0) * 1000)
+            embedding["ok"] = True
+            embedding["dim"] = len(vec) if vec else None
+        except Exception as e:
+            embedding["error"] = friendly_llm_error(e)
+
+    ok = chat["ok"] and (embedding is None or embedding["ok"])
+    return {
+        "ok": ok,
+        "chat": chat,
+        "embedding": embedding,
+        "error": None if ok else (chat["error"] or (embedding["error"] if embedding else None)),
+    }
