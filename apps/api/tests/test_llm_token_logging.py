@@ -46,7 +46,6 @@ def _setup_custom_user(client, registered_user, db_session):
         base_url="https://custom-fake.example.com",
         api_key_encrypted=encrypt_value("sk-custom-fake-key"),
         model="custom-model",
-        embedding_model="custom-embed",
     ))
     db_session.commit()
     p = create_project(db_session, user=user, title="Token 用量测试发明")

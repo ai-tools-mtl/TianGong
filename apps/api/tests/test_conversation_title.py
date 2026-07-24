@@ -1,19 +1,19 @@
 """summarize_conversation_title 回归测试（F1：修复 get_llm 调用 bug）。
 
-原 bug：get_llm(**{base_url,api_key,model}) 传错参数（get_llm 期望 ResolvedLLMConfig），
+原 bug：get_llm(**{base_url,api_key,model}) 传错参数（get_llm 期望 ResolvedChatConfig），
 TypeError 被 except Exception 吞掉，标题摘要始终 fallback。
 """
 
 from unittest.mock import MagicMock, patch
 
 from app.services.conversation_service import summarize_conversation_title
-from app.services.llm_config_service import ResolvedLLMConfig
+from app.services.llm_config_service import ResolvedChatConfig
 
 
 def _cfg():
-    return ResolvedLLMConfig(
+    return ResolvedChatConfig(
         base_url="https://x.com/v1", api_key="sk-test",
-        model="glm-4-flash", embedding_model=None, source="user",
+        model="glm-4-flash", source="user",
     )
 
 
@@ -27,10 +27,10 @@ def test_title_calls_llm_when_config_provided(db_session):
         title = summarize_conversation_title(
             db_session, conv, "帮我写一份关于新型电机的交底书", "好的，这是初稿…", llm_config=_cfg(),
         )
-    # get_llm 被调用，且传的是 ResolvedLLMConfig（不是 kwargs）
+    # get_llm 被调用，且传的是 ResolvedChatConfig（不是 kwargs）
     m_get.assert_called_once()
     arg = m_get.call_args.args[0]
-    assert isinstance(arg, ResolvedLLMConfig)
+    assert isinstance(arg, ResolvedChatConfig)
     assert title == "专利交底书撰写"
 
 

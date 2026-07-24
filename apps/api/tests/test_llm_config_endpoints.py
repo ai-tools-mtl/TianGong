@@ -70,7 +70,7 @@ def test_test_endpoint_new_shape(client, db_session):
         }
         res = client.post("/api/v1/settings/llm/test", json={
             "base_url": "https://x.com/v1", "api_key": "sk-test",
-            "model": "m1", "embedding_model": "emb",
+            "model": "m1",
         })
     assert res.status_code == 200
     body = res.json()

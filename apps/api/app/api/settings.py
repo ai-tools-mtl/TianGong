@@ -17,18 +17,20 @@ router = APIRouter(tags=["admin"])  # tag 保持 admin 与原一致，避免 Ope
 
 
 class UserLLMCreateRequest(BaseModel):
-    """新增自定义 LLM 配置。name 为配置名（如「公司Key」）。"""
+    """新增自定义 chat LLM 配置。name 为配置名（如「公司Key」）。
+
+    仅管 chat：embedding 凭据走独立的 /settings/embedding 端点（Task 9）。
+    """
     name: str
     provider: str = "custom"
     base_url: str
     api_key: str
     # 1214 修复闸 3：model 必填且非空，防止存入空 model 触发智谱 1214。
     model: str = Field(..., min_length=1)
-    embedding_model: str | None = None
 
 
 class UserLLMUpdateRequest(BaseModel):
-    """修改自定义 LLM 配置。所有字段可选，仅提供才更新（api_key 留空则不变）。"""
+    """修改自定义 chat LLM 配置。所有字段可选，仅提供才更新（api_key 留空则不变）。"""
     name: str | None = None
     provider: str | None = None
     base_url: str | None = None
@@ -36,16 +38,14 @@ class UserLLMUpdateRequest(BaseModel):
     # model 可选更新：None=不改。不强制 min_length（否则无法表达"不改 model"），
     # 空 model 由闸 1（get_llm）/闸 2（global 解析）兜底拦截。
     model: str | None = None
-    embedding_model: str | None = None
 
 
 class UserLLMTestRequest(BaseModel):
-    """测试 LLM 连通性（不落库）。chat 必测；embedding_model 提供则一并测。"""
+    """测试 chat LLM 连通性（不落库）。仅测 chat（embedding 凭据另有测试端点）。"""
     base_url: str
     api_key: str
     # 1214 修复闸 3：测试连通性也必须有 model（无 model 必报 1214）。
     model: str = Field(..., min_length=1)
-    embedding_model: str | None = None
 
 
 class ListModelsRequest(BaseModel):
@@ -117,7 +117,6 @@ def create_my_llm(
         db, user_id=current_user.id,
         name=payload.name, provider=payload.provider, base_url=payload.base_url,
         api_key=payload.api_key, model=payload.model,
-        embedding_model=payload.embedding_model,
     )
     return llm_config_service.config_to_dict(cfg)
 
@@ -134,7 +133,6 @@ def update_my_llm(
         db, user_id=current_user.id, config_id=config_id,
         name=payload.name, provider=payload.provider, base_url=payload.base_url,
         api_key=payload.api_key, model=payload.model,
-        embedding_model=payload.embedding_model,
     )
     return llm_config_service.config_to_dict(cfg)
 
@@ -157,8 +155,8 @@ def test_my_llm(
     payload: UserLLMTestRequest,
     current_user: User = Depends(get_current_user),
 ):
-    """测试 LLM 连通性（不存库，直接用传入配置测试 chat + 可选 embedding）。"""
+    """测试 chat LLM 连通性（不存库，直接用传入配置测试 chat）。"""
     return llm_config_service.test_llm_connection(
         base_url=payload.base_url, api_key=payload.api_key,
-        model=payload.model, embedding_model=payload.embedding_model,
+        model=payload.model,
     )

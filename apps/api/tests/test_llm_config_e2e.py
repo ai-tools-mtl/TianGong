@@ -1,7 +1,7 @@
 """端到端断链证明：用户配的自定义配置真正驱动 LLM 调用（而非 env）。
 
-这是阶段 0 的核心交付：证明 resolve_llm_config 解析出的自定义配置
-（base_url / api_key / model）真正一路传到 ChatOpenAI/OpenAIEmbeddings 构造处，
+这是阶段 0 的核心交付：证明解析出的自定义 chat 配置
+（base_url / api_key / model）真正一路传到 ChatOpenAI 构造处，
 而不是被 env 兜底覆盖（即「断链」确实修复）。
 
 测试策略：用 TestClient 走真实 HTTP → FastAPI 路由 → orchestrator → llm_client，
@@ -35,7 +35,6 @@ def _no_env_llm_fallback(monkeypatch):
 CUSTOM_BASE_URL = "https://custom-fake.example.com"
 CUSTOM_API_KEY = "sk-custom-fake-key-12345"
 CUSTOM_MODEL = "custom-model"
-CUSTOM_EMBED = "custom-embed"
 
 
 def _setup_custom_user(client, registered_user, db_session):
@@ -50,7 +49,6 @@ def _setup_custom_user(client, registered_user, db_session):
         base_url=CUSTOM_BASE_URL,
         api_key_encrypted=encrypt_value(CUSTOM_API_KEY),
         model=CUSTOM_MODEL,
-        embedding_model=CUSTOM_EMBED,
     ))
     db_session.commit()
     p = create_project(db_session, user=user, title="自定义配置测试发明")
@@ -142,7 +140,7 @@ def _fake_agent_factory(token_text, captured):
 def test_chat_uses_user_custom_config_not_env(client, registered_user, db_session):
     """chat 端点：用户配了自定义配置，调 chat 时自定义配置一路传到 build_agent（非 env）。
 
-    Task 13：chat 走 agent loop。断链意图不变——resolve_llm_config 解析出的
+    Task 13：chat 走 agent loop。断链意图不变——resolve_chat_config 解析出的
     配置传到 build_agent 的 llm_config 形参（build_agent 内部仍 get_llm → ChatOpenAI）。
     本测试 patch build_agent 捕获 llm_config，断言其携带自定义配置值；同时跳过
     check_tool_support（假模型 custom-model 不支持 tool calling）与真实 agent 构造。
@@ -250,7 +248,7 @@ def test_review_raises_when_no_llm_config(db_session):
     db_session.add(p)
     db_session.commit()
 
-    # mock 掉上游依赖（rubric），让流程走到 resolve_llm_config 检查
+    # mock 掉上游依赖（rubric），让流程走到 resolve_chat_config 检查
     # 旧 project-scoped skill 开关已删除（Task 3），review 默认全开
     with patch("app.services.review_service.get_effective_rubric") as gr:
         class FakeRubric:

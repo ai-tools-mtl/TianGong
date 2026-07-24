@@ -110,14 +110,12 @@ def test_post_creates_config_returns_id(client, logged_in_user, db_session):
         "base_url": "https://api.example.com",
         "api_key": "sk-super-secret-1234567890",
         "model": "glm-4-flash",
-        "embedding_model": "embedding-3",
     })
     assert res.status_code == 200
     body = res.json()
     assert "id" in body
     assert body["name"] == "公司Key"
     assert body["model"] == "glm-4-flash"
-    assert body["embedding_model"] == "embedding-3"
     # 红线：返回掩码 key，绝不返回明文
     assert body["api_key_masked"].endswith("7890")
     assert "sk-super-secret-1234567890" not in str(body)

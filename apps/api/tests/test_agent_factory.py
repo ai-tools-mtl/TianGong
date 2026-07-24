@@ -44,7 +44,7 @@ def _mock_llm():
 def test_build_agent_returns_compiled_graph(db_session, monkeypatch):
     """build_agent 返回 CompiledStateGraph，含 skills + tools。"""
     from app.ai import agent as agent_mod
-    from app.services.llm_config_service import ResolvedLLMConfig
+    from app.services.llm_config_service import ResolvedChatConfig
 
     # mock get_llm 返回假模型（不真实调 GLM）
     monkeypatch.setattr(agent_mod, "get_llm", lambda config, **kw: _mock_llm())
@@ -62,11 +62,10 @@ def test_build_agent_returns_compiled_graph(db_session, monkeypatch):
 
     monkeypatch.setattr(storage_mod, "get_storage", lambda: _FakeStorage())
 
-    config = ResolvedLLMConfig(
+    config = ResolvedChatConfig(
         base_url="http://x",
         api_key="k",
         model="glm-4.7",
-        embedding_model="embedding-3",
         source="env",
     )
     user_id = uuid.uuid4()
@@ -81,13 +80,12 @@ def test_build_agent_unsupported_model_raises(db_session):
     """不支持 tool calling 的模型抛 ToolSupportError（Q14-α）。"""
     from app.ai.agent import build_agent
     from app.ai.tool_support import ToolSupportError
-    from app.services.llm_config_service import ResolvedLLMConfig
+    from app.services.llm_config_service import ResolvedChatConfig
 
-    config = ResolvedLLMConfig(
+    config = ResolvedChatConfig(
         base_url="http://x",
         api_key="k",
         model="old-unsupported-model",
-        embedding_model="e",
         source="env",
     )
     with pytest.raises(ToolSupportError):
@@ -98,13 +96,12 @@ def test_build_agent_empty_model_raises(db_session):
     """空 model 抛 ToolSupportError。"""
     from app.ai.agent import build_agent
     from app.ai.tool_support import ToolSupportError
-    from app.services.llm_config_service import ResolvedLLMConfig
+    from app.services.llm_config_service import ResolvedChatConfig
 
-    config = ResolvedLLMConfig(
+    config = ResolvedChatConfig(
         base_url="http://x",
         api_key="k",
         model="",
-        embedding_model="e",
         source="env",
     )
     with pytest.raises(ToolSupportError):
@@ -122,7 +119,7 @@ def test_build_agent_assembly_args(db_session, monkeypatch):
     """
     from app.ai import agent as agent_mod
     from app.ai.tools import rag_search_tool
-    from app.services.llm_config_service import ResolvedLLMConfig
+    from app.services.llm_config_service import ResolvedChatConfig
     from app.skills.storage import MinIOSkillStore
     from deepagents.backends import StoreBackend
 
@@ -156,11 +153,10 @@ def test_build_agent_assembly_args(db_session, monkeypatch):
 
     monkeypatch.setattr(storage_mod, "get_storage", lambda: _FakeStorage())
 
-    config = ResolvedLLMConfig(
+    config = ResolvedChatConfig(
         base_url="http://x",
         api_key="k",
         model="glm-4.7",
-        embedding_model="e",
         source="env",
     )
     user_id = uuid.uuid4()
@@ -187,7 +183,7 @@ def test_build_agent_storebackend_namespace_is_valid(db_session, monkeypatch):
     真实 agent 执行（加载 skill）会崩。本测试直接调用 _get_namespace 验证不抛。
     """
     from app.ai import agent as agent_mod
-    from app.services.llm_config_service import ResolvedLLMConfig
+    from app.services.llm_config_service import ResolvedChatConfig
 
     monkeypatch.setattr(agent_mod, "get_llm", lambda config, **kw: _mock_llm())
     monkeypatch.setattr(agent_mod, "create_deep_agent", lambda **kw: type("_S", (), {"ainvoke": lambda *a: None, "astream_events": lambda *a: None})())
@@ -198,9 +194,9 @@ def test_build_agent_storebackend_namespace_is_valid(db_session, monkeypatch):
         def _resolve(self, a): return a
     monkeypatch.setattr(storage_mod, "get_storage", lambda: _FakeStorage())
 
-    config = ResolvedLLMConfig(
+    config = ResolvedChatConfig(
         base_url="http://x", api_key="k", model="glm-4.7",
-        embedding_model="e", source="env",
+        source="env",
     )
     agent_mod.build_agent(db_session, llm_config=config, user_id=uuid.uuid4())
 

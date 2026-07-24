@@ -14,7 +14,7 @@ def _make_logged_in_section(client, registered_user, db_session):
         user_id=user.id, name="test", provider="custom",
         base_url="https://test.example.com",
         api_key_encrypted=encrypt_value("sk-test-key"),
-        model="test-model", embedding_model="test-embed",
+        model="test-model",
     ))
     db_session.commit()
     p = create_project(db_session, user=user, title="测试发明")
@@ -221,14 +221,14 @@ def test_list_messages_isolated_by_conversation(client, registered_user, db_sess
 
 
 # ── Fix 5: get_llm 透传自定义配置 / 全局配置 ──
-# 本地 P2 设计：get_llm(llm_config: ResolvedLLMConfig) —— 接收已解析的配置对象，
-# 不做 settings 回退（调用方负责先 resolve_llm_config 并处理 None）。
-# 下面两个测试验证该契约：传入的 ResolvedLLMConfig 字段直接驱动 ChatOpenAI 构造。
+# 本地 P2 设计：get_llm(llm_config: ResolvedChatConfig) —— 接收已解析的配置对象，
+# 不做 settings 回退（调用方负责先 resolve_chat_config 并处理 None）。
+# 下面两个测试验证该契约：传入的 ResolvedChatConfig 字段直接驱动 ChatOpenAI 构造。
 
 def test_get_llm_uses_resolved_config_fields(monkeypatch):
-    """get_llm(llm_config) 应把 ResolvedLLMConfig 的 base_url/api_key/model 透传给 ChatOpenAI。"""
+    """get_llm(llm_config) 应把 ResolvedChatConfig 的 base_url/api_key/model 透传给 ChatOpenAI。"""
     from app.ai.llm_client import get_llm
-    from app.services.llm_config_service import ResolvedLLMConfig
+    from app.services.llm_config_service import ResolvedChatConfig
 
     captured = {}
 
@@ -238,7 +238,7 @@ def test_get_llm_uses_resolved_config_fields(monkeypatch):
 
     monkeypatch.setattr("app.ai.llm_client.ChatOpenAI", _FakeChatOpenAI)
 
-    cfg = ResolvedLLMConfig(
+    cfg = ResolvedChatConfig(
         base_url="https://user.custom.example/v1",
         api_key="sk-user-key",
         model="user-model-x",
@@ -254,7 +254,7 @@ def test_get_llm_uses_resolved_config_fields(monkeypatch):
 def test_get_llm_streaming_enables_stream_usage(monkeypatch):
     """streaming=True 时同步开启 stream_usage（断链 C3：流式回传 token 用量给 usage_sink）。"""
     from app.ai.llm_client import get_llm
-    from app.services.llm_config_service import ResolvedLLMConfig
+    from app.services.llm_config_service import ResolvedChatConfig
 
     captured = {}
 
@@ -264,7 +264,7 @@ def test_get_llm_streaming_enables_stream_usage(monkeypatch):
 
     monkeypatch.setattr("app.ai.llm_client.ChatOpenAI", _FakeChatOpenAI)
 
-    cfg = ResolvedLLMConfig(
+    cfg = ResolvedChatConfig(
         base_url="https://global.example/v1",
         api_key="sk-global",
         model="global-model",

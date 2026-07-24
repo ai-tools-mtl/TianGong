@@ -1,14 +1,19 @@
-"""LLM 配置服务：按 source 解析 LLM 配置 + 用户/全局配置管理（P2 白名单授权模型）。
+"""LLM 配置服务：chat / embedding 独立解析 + 用户/全局配置管理。
 
-source 取值：
-- "global"：全局 Key（admin 免授权；非 admin 须有有效 grant）
-- "custom:{config_id}"：用户自配的指定配置（校验归属，越权 NotFound）
+chat 解析（resolve_chat_config）与 embedding 解析（resolve_embedding_config）
+完全独立：各自的 source 取值、fallback 不互通（D4）。内部后台任务（archiver /
+retriever / knowledge_service / review / summary）通过 chat_source=None 自动
+解析路径调用（admin→global chat→env；非 admin→grant→global chat→最早 chat 配置→env）。
+
+chat source 取值：
+- "global"：全局 chat Key（admin 免授权；非 admin 须有有效 grant）
+- "custom-chat:{config_id}"：用户自配的指定 chat 配置（校验归属，越权 NotFound）
 - "env"：env 兜底
-- None（内部调用方的自动解析路径，永久保留）：后台任务（archiver / retriever /
-  knowledge_service / review / summary）无前端 source 上下文，依赖此分支
-  “自动挑一个合理配置”。admin → global；非 admin → 若被授权则 global，
-  否则单条自定义配置，否则 env，否则 None。
-  前端 AI 调用（chat/generate/rewrite/caption）通过 source 显式指定，不走此分支。
+- None：内部 fallback 路径（见上）
+
+用户自定义配置 CRUD（list/create/update/delete_user_llm_config）只管 chat 配置；
+全局配置仍保留耦合版 get/set_global_llm_settings（admin 控制台使用，字段含
+embedding_model/allowed_models）。
 """
 
 import time
@@ -24,171 +29,10 @@ from app.core.security import decrypt_value, encrypt_value
 from app.models import SystemSetting, User, UserEmbeddingConfig, UserGlobalLLMGrant, UserLLMConfig
 
 
-@dataclass
-class ResolvedLLMConfig:
-    """解析后的生效配置。"""
-    base_url: str
-    api_key: str
-    model: str
-    embedding_model: str | None = None  # 新增（断链 A2 修复）
-    source: str = "user"  # "user" / "global" / "env" / "admin"
-
-
-def resolve_llm_config(db: Session, *, user_id, source: str | None = None) -> ResolvedLLMConfig | None:
-    """按 source 解析 LLM 配置（P2 白名单授权模型）。
-
-    source 取值：
-    - "global"：全局 Key（admin 免授权；非 admin 须有有效 grant）
-    - "custom:{config_id}"：用户自配的指定配置（校验归属，越权 NotFound）
-    - "env"：env 兜底
-    - None（内部调用方的自动解析路径，永久保留）：后台任务
-      （archiver/retriever/knowledge_service/review/summary）无前端 source 上下文，
-      依赖此分支“自动挑一个合理配置”。前端 AI 调用通过 source 显式指定，不走此分支。
-    """
-    user = db.get(User, user_id)
-
-    # ---- source=None：内部调用方（archiver/retriever/knowledge/review/summary）的
-    #      自动解析路径，永久保留（非临时）。前端 AI 调用始终显式传 source。
-    if source is None:
-        return _resolve_fallback(db, user=user, user_id=user_id)
-
-    # ---- source 显式解析 ----
-    if source == "global":
-        # admin 免授权
-        if user and user.role == "admin":
-            return _build_global_config(db, source="admin")
-        # 非 admin 须有有效 grant（revoked_at is null）
-        grant = db.scalar(select(UserGlobalLLMGrant).where(
-            (UserGlobalLLMGrant.user_id == user_id) &
-            (UserGlobalLLMGrant.revoked_at.is_(None))
-        ))
-        if not grant:
-            raise ForbiddenError("未授权使用全局 Key，请在设置中添加自定义配置")
-        return _build_global_config(db, source="global")
-
-    if source.startswith("custom:"):
-        config_id = source[7:]
-        cfg = _get_user_config_by_id(db, user_id=user_id, config_id=config_id)  # 越权 NotFound
-        if cfg is None:
-            raise NotFoundError("LLM 配置不存在")
-        return ResolvedLLMConfig(
-            base_url=cfg.base_url,
-            api_key=decrypt_value(cfg.api_key_encrypted),
-            model=cfg.model,
-            embedding_model=cfg.embedding_model,
-            source="user",
-        )
-
-    if source == "env":
-        return _build_env_config()  # 返回 env 兜底或 None
-
-    raise ValidationError(f"无效的 source: {source}")
-
-
-def _resolve_fallback(db: Session, *, user, user_id) -> ResolvedLLMConfig | None:
-    """内部调用方的自动解析路径（永久保留，非临时 fallback）。
-
-    供无前端 source 上下文的后台任务使用（archiver / retriever /
-    knowledge_service / review / summary，调用方共 5 处）。前端 AI 调用
-    （chat/generate/rewrite/caption）通过 source 显式指定，不走此分支。
-
-    admin → global；非 admin → 有效 grant 则 global，否则单条自定义配置，否则 env，否则 None。
-    """
-    if user and user.role == "admin":
-        cfg = _build_global_config(db, source="admin")
-        if cfg:
-            return cfg
-        return _build_env_config()
-
-    # 非 admin
-    grant = db.scalar(select(UserGlobalLLMGrant).where(
-        (UserGlobalLLMGrant.user_id == user_id) &
-        (UserGlobalLLMGrant.revoked_at.is_(None))
-    ))
-    if grant:
-        cfg = _build_global_config(db, source="global")
-        if cfg:
-            return cfg
-
-    # 单条自定义配置：内部调用方未指定 source 时的自动选择，取最早创建的一条。
-    # 显式 order_by(created_at) 保证确定性选择（I-2：避免无序查询选到任意一条）。
-    user_cfg = db.scalar(
-        select(UserLLMConfig)
-        .where(UserLLMConfig.user_id == user_id)
-        .order_by(UserLLMConfig.created_at)
-    )
-    if user_cfg:
-        return ResolvedLLMConfig(
-            base_url=user_cfg.base_url,
-            api_key=decrypt_value(user_cfg.api_key_encrypted),
-            model=user_cfg.model,
-            embedding_model=user_cfg.embedding_model,
-            source="user",
-        )
-
-    return _build_env_config()
-
-
-def _build_global_config(db: Session, *, source: str) -> ResolvedLLMConfig | None:
-    """从 SystemSetting 构造全局配置。
-
-    I1 修复：admin 显式关闭（llm_global_enabled 存在且 enabled=False）则不可用，
-    即使配了 global_config 也返回 None。enabled 记录不存在时视为开启（兼容旧部署）。
-    全局未配返回 None。
-    """
-    # enabled 开关（I1：admin 关闭全局则不可用；记录不存在视为开启，兼容旧部署）
-    enabled_setting = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_enabled"))
-    if enabled_setting and enabled_setting.value and enabled_setting.value.get("enabled") is False:
-        return None  # admin 显式关闭
-
-    global_cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_config"))
-    # 防御闸（1214 修复）：同时要求 api_key 和 model 非空。
-    # 原来只校验 api_key，admin 漏填 model 时会返回 model="" 的配置，
-    # 透传给 ChatOpenAI 触发智谱 1214。model 空 → 视同未配置返回 None，
-    # 让 resolve 降级到自定义配置/env。
-    if global_cfg and global_cfg.value and global_cfg.value.get("api_key_encrypted") and global_cfg.value.get("model"):
-        v = global_cfg.value
-        return ResolvedLLMConfig(
-            base_url=v.get("base_url", ""),
-            api_key=decrypt_value(v["api_key_encrypted"]),
-            model=v.get("model", ""),
-            embedding_model=v.get("embedding_model"),
-            source=source,
-        )
-    return None
-
-
-def _build_env_config() -> ResolvedLLMConfig | None:
-    """env 兜底。glm_api_key 空则 None。"""
-    from app.core.config import get_settings
-    s = get_settings()
-    if s.glm_api_key:
-        return ResolvedLLMConfig(
-            base_url=s.glm_base_url,
-            api_key=s.glm_api_key,
-            model=s.glm_model,
-            embedding_model=s.glm_embedding_model or None,
-            source="env",
-        )
-    return None
-
-
-def _get_user_config_by_id(db: Session, *, user_id, config_id) -> UserLLMConfig | None:
-    """按 id 查自定义配置，校验归属。越权返回 None（调用方 NotFound，防探测）。"""
-    try:
-        cid = uuid.UUID(config_id) if isinstance(config_id, str) else config_id
-    except (ValueError, AttributeError):
-        return None
-    cfg = db.get(UserLLMConfig, cid)
-    if cfg is None or cfg.user_id != user_id:
-        return None
-    return cfg
-
-
-# ── 用户自定义配置（多配置 CRUD，Task 2.3）──
+# ── 用户自定义 chat 配置（多配置 CRUD，Task 2.3）──
 
 def list_user_llm_configs(db: Session, *, user_id) -> list[dict]:
-    """列出用户所有自定义配置（key 掩码）。按创建时间升序。"""
+    """列出用户所有自定义 chat 配置（key 掩码）。按创建时间升序。"""
     cfgs = db.scalars(
         select(UserLLMConfig)
         .where(UserLLMConfig.user_id == user_id)
@@ -199,13 +43,12 @@ def list_user_llm_configs(db: Session, *, user_id) -> list[dict]:
 
 def create_user_llm_config(
     db: Session, *, user_id, name: str, provider: str, base_url: str,
-    api_key: str, model: str, embedding_model: str | None = None,
+    api_key: str, model: str,
 ) -> UserLLMConfig:
-    """新增一条自定义配置。"""
+    """新增一条自定义 chat 配置。"""
     cfg = UserLLMConfig(
         user_id=user_id, name=name, provider=provider, base_url=base_url,
         api_key_encrypted=encrypt_value(api_key), model=model,
-        embedding_model=embedding_model,
     )
     db.add(cfg)
     db.commit()
@@ -217,12 +60,8 @@ def update_user_llm_config(
     db: Session, *, user_id, config_id, name: str | None = None,
     provider: str | None = None, base_url: str | None = None,
     api_key: str | None = None, model: str | None = None,
-    embedding_model: str | None = None,
 ) -> UserLLMConfig:
-    """修改指定自定义配置。仅提供才更新。越权/不存在 NotFoundError。
-
-    注意 embedding_model 用 `is not None`，支持传空串清空（与 I2 一致）。
-    """
+    """修改指定自定义 chat 配置。仅提供才更新。越权/不存在 NotFoundError。"""
     cfg = _get_owned_config(db, user_id=user_id, config_id=config_id)  # 越权 NotFound
     if name is not None:
         cfg.name = name
@@ -234,8 +73,6 @@ def update_user_llm_config(
         cfg.api_key_encrypted = encrypt_value(api_key)
     if model is not None:
         cfg.model = model
-    if embedding_model is not None:
-        cfg.embedding_model = embedding_model
     db.commit()
     db.refresh(cfg)
     return cfg
@@ -249,10 +86,7 @@ def delete_user_llm_config(db: Session, *, user_id, config_id) -> None:
 
 
 def _get_owned_config(db: Session, *, user_id, config_id) -> UserLLMConfig:
-    """查配置并校验归属。越权/不存在 NotFoundError（防探测，不泄露存在性）。
-
-    与 resolve_llm_config 的 custom 分支共用 _get_user_config_by_id 的 NotFound 语义。
-    """
+    """查配置并校验归属。越权/不存在 NotFoundError（防探测，不泄露存在性）。"""
     try:
         cid = uuid.UUID(config_id) if isinstance(config_id, str) else config_id
     except (ValueError, AttributeError):
@@ -264,7 +98,7 @@ def _get_owned_config(db: Session, *, user_id, config_id) -> UserLLMConfig:
 
 
 def config_to_dict(cfg: UserLLMConfig) -> dict:
-    """自定义配置 → dict（key 掩码）。API 层和 service list 共用。"""
+    """自定义 chat 配置 → dict（key 掩码）。API 层和 service list 共用。"""
     return {
         "id": str(cfg.id),
         "name": cfg.name,
@@ -272,7 +106,6 @@ def config_to_dict(cfg: UserLLMConfig) -> dict:
         "base_url": cfg.base_url,
         "api_key_masked": _mask_key(decrypt_value(cfg.api_key_encrypted)),
         "model": cfg.model,
-        "embedding_model": cfg.embedding_model,
     }
 
 
@@ -281,7 +114,7 @@ def config_to_dict(cfg: UserLLMConfig) -> dict:
 def get_global_llm_settings(db: Session) -> dict:
     """获取全局 LLM 设置（掩码 key）。
 
-    enabled 默认值与 _build_global_config 对齐：记录不存在时视为开启（True），
+    enabled 默认值与 `_build_global_chat_config` 的 enabled 检查对齐：记录不存在时视为开启（True），
     避免 admin UI 显示「关闭」但 resolve 实际当「开启」的不一致（I-1）。
     """
     enabled = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_enabled"))
@@ -499,9 +332,7 @@ def test_llm_connection(
 
 
 # ════════════════════════════════════════════════════════════
-# chat / embedding 独立凭据（B 轮拆分）
-# 与上面的耦合版（ResolvedLLMConfig/resolve_llm_config）并存，
-# Task 4-7 切 caller 后，Task 8 删掉老的。
+# chat / embedding 独立凭据解析（Task 3 拆分；旧耦合版已删除）
 # ════════════════════════════════════════════════════════════
 
 
