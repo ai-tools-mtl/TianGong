@@ -15,8 +15,9 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.security import decrypt_value
 from app.deps import require_admin
-from app.models import AuditLog, User
+from app.models import AuditLog, SystemSetting, User
 from app.services import admin_service, llm_config_service, stats_service
 
 router = APIRouter(tags=["admin"])
@@ -31,6 +32,24 @@ class GlobalLLMSettings(BaseModel):
     model: str | None = Field(default=None, min_length=1)
     embedding_model: str | None = None
     allowed_models: list[str] | None = None
+
+
+class GlobalLLMTestRequest(BaseModel):
+    """admin 测试全局配置连通性。
+    字段全可选：留空 → 用 SystemSetting 已存的（解密后）测（保存后复检）；
+    提供则用传入值测（保存前预检）。
+    """
+    base_url: str | None = None
+    api_key: str | None = None
+    model: str | None = None
+    embedding_model: str | None = None
+
+
+class ListModelsRequest(BaseModel):
+    """拉取 provider 可用模型列表（不落库）。"""
+    base_url: str
+    api_key: str
+    provider_template_id: str | None = None
 
 
 # ── LLM 调用统计（设计 8.2④，仅元数据聚合）──
@@ -151,3 +170,52 @@ def set_global_llm(
         },
     )
     return result
+
+
+@router.post("/admin/llm-config/test")
+def test_global_llm(
+    payload: GlobalLLMTestRequest,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """测试全局 LLM 配置连通性。
+
+    - 提供完整字段 → 用传入值测（保存前预检）。
+    - 字段留空 → 从 SystemSetting 读已存的（api_key 解密）测（保存后复检）。
+    - 已存配置不完整（缺 base_url/api_key/model）→ 返回 ok=False + 友好错误，不抛 500。
+    """
+    base_url = payload.base_url
+    api_key = payload.api_key
+    model = payload.model
+    embedding_model = payload.embedding_model
+
+    # 任一关键字段缺 → 用已存值补全
+    if not (base_url and api_key and model):
+        cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_config"))
+        stored = cfg.value if cfg else {}
+        base_url = base_url or stored.get("base_url", "")
+        model = model or stored.get("model", "")
+        embedding_model = embedding_model if embedding_model is not None else stored.get("embedding_model")
+        enc = stored.get("api_key_encrypted")
+        api_key = api_key or (decrypt_value(enc) if enc else "")
+        # 仍不完整 → 友好错误（不抛 500）
+        if not (base_url and api_key and model):
+            return {"ok": False, "chat": {"ok": False, "latency_ms": None, "sample": None,
+                                          "error": "全局配置未设置完整"},
+                    "embedding": None, "error": "全局配置未设置完整（缺 base_url / api_key / model）"}
+
+    return llm_config_service.test_llm_connection(
+        base_url=base_url, api_key=api_key, model=model, embedding_model=embedding_model,
+    )
+
+
+@router.post("/admin/llm-config/models")
+def list_global_provider_models(
+    payload: ListModelsRequest,
+    admin: User = Depends(require_admin),
+):
+    """admin 拉取 provider 可用模型列表（不落库）。"""
+    return llm_config_service.list_provider_models(
+        base_url=payload.base_url, api_key=payload.api_key,
+        provider_template_id=payload.provider_template_id,
+    )
