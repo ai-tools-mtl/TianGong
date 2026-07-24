@@ -28,3 +28,17 @@ export function clearDefaultSource(): void {
   if (typeof window === 'undefined') return
   window.localStorage.removeItem(KEY)
 }
+
+/** 当前默认是否为全局 Key。 */
+export function isGlobalDefault(): boolean {
+  return getDefaultSource() === 'global'
+}
+
+/** 设/取消「全局 Key 作为默认」。set(true) → source='global'；set(false) 且当前是 global → 清空。 */
+export function setGlobalDefault(value: boolean): void {
+  if (value) {
+    setDefaultSource('global')
+  } else if (isGlobalDefault()) {
+    clearDefaultSource()
+  }
+}
