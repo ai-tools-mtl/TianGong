@@ -1,7 +1,9 @@
 'use client'
 
+import Link from 'next/link'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { ChevronRight, Wrench } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
@@ -182,6 +184,26 @@ export default function SettingsPage() {
             />
           )}
         </div>
+
+        {/* 我的技能 — 入口卡片（普通用户从此进入技能管理） */}
+        <Link
+          href="/settings/skills"
+          className="flex items-center justify-between rounded-2xl border border-black/[0.07] bg-card p-5 transition-colors hover:bg-black/[0.02] dark:border-white/10 dark:hover:bg-white/[0.03]"
+          style={{ boxShadow: 'var(--shadow-card)' }}
+        >
+          <div className="flex items-center gap-3">
+            <div className="flex size-9 items-center justify-center rounded-xl bg-black/[0.04] dark:bg-white/[0.06]">
+              <Wrench className="size-4.5" />
+            </div>
+            <div>
+              <p className="text-[15px] font-medium">我的技能</p>
+              <p className="text-[12px] text-muted-foreground">
+                管理 Agent Skills（SKILL.md），支持导入 zip
+              </p>
+            </div>
+          </div>
+          <ChevronRight className="size-4.5 text-muted-foreground" />
+        </Link>
       </div>
 
       {/* 删除确认（项目无通用 ConfirmDialog，用 Dialog 手写——与 delete-confirm-dialog.tsx 同构） */}
