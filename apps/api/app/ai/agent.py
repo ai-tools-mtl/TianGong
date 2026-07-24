@@ -23,7 +23,7 @@ from app.ai.context_assembler import SYSTEM_PROMPT
 from app.ai.llm_client import get_llm
 from app.ai.tools import rag_search_tool
 from app.ai.tool_support import ToolSupportError, check_tool_support
-from app.services.llm_config_service import ResolvedLLMConfig
+from app.services.llm_config_service import ResolvedChatConfig
 from app.skills.storage import MinIOSkillStore
 from app.skills.visibility import build_agent_skill_sources
 
@@ -35,7 +35,7 @@ __all__ = ["build_agent"]
 
 
 def build_agent(
-    db, *, llm_config: ResolvedLLMConfig, user_id,
+    db, *, llm_config: ResolvedChatConfig, user_id,
 ) -> CompiledStateGraph:
     """构造 deepagents agent（路线 B 的装配入口）。
 

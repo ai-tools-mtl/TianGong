@@ -1,12 +1,11 @@
-from app.services.llm_config_service import ResolvedLLMConfig
+from app.services.llm_config_service import ResolvedChatConfig
 
 
 def _cfg():
-    return ResolvedLLMConfig(
+    return ResolvedChatConfig(
         base_url="https://x.example.com",
         api_key="sk-test",
         model="glm-4-flash",
-        embedding_model="embedding-3",
         source="user",
     )
 
@@ -66,7 +65,7 @@ def test_get_llm_raises_when_model_empty():
     """model 为空串时 get_llm 抛 ValueError（含 'model' 关键字），不发请求。"""
     import pytest
     from app.ai.llm_client import get_llm
-    cfg = ResolvedLLMConfig(
+    cfg = ResolvedChatConfig(
         base_url="https://x.example.com",
         api_key="sk-test",
         model="",  # ← 空 model
@@ -77,10 +76,10 @@ def test_get_llm_raises_when_model_empty():
 
 
 def test_get_llm_raises_when_model_none():
-    """model 为 None 时同样抛 ValueError（防御 ResolvedLLMConfig 被构造时 model=None）。"""
+    """model 为 None 时同样抛 ValueError（防御 ResolvedChatConfig 被构造时 model=None）。"""
     import pytest
     from app.ai.llm_client import get_llm
-    cfg = ResolvedLLMConfig(
+    cfg = ResolvedChatConfig(
         base_url="https://x.example.com",
         api_key="sk-test",
         model=None,  # type: ignore[arg-type]  # 故意测异常输入

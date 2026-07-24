@@ -8,12 +8,12 @@ from app.ai.context_assembler import assemble_messages, get_project_summaries
 from app.ai.llm_client import astream_llm, stream_llm
 from app.ai.section_prompts import get_section_prompt
 from app.models import Message, Section
-from app.services.llm_config_service import ResolvedLLMConfig
+from app.services.llm_config_service import ResolvedChatConfig
 
 
 def stream_chat(
     db, section: Section, history: list[Message], user_input: str,
-    *, llm_config: ResolvedLLMConfig,
+    *, llm_config: ResolvedChatConfig,
 ) -> Iterator[str]:
     """引导对话：流式回复用户问题。"""
     summaries = get_project_summaries(db, section.project_id)
@@ -24,7 +24,7 @@ def stream_chat(
 
 def stream_generate(
     db, section: Section, history: list[Message],
-    *, llm_config: ResolvedLLMConfig,
+    *, llm_config: ResolvedChatConfig,
 ) -> Iterator[str]:
     """生成草稿：基于对话历史生成本章草稿（Markdown 流式）。"""
     summaries = get_project_summaries(db, section.project_id)
@@ -48,7 +48,7 @@ def _retrieve_knowledge(db, section: Section, query: str) -> list[dict] | None:
 
 def stream_rewrite(
     section: Section, selected_text: str, instruction: str,
-    *, llm_config: ResolvedLLMConfig,
+    *, llm_config: ResolvedChatConfig,
 ) -> Iterator[str]:
     """段落重写：基于选中文字 + 指令，流式输出重写结果。"""
     from langchain_core.messages import SystemMessage
@@ -80,7 +80,7 @@ def _section_owner(db, section: Section):
 
 async def astream_chat(
     db, section: Section, history: list[Message], user_input: str,
-    *, llm_config: ResolvedLLMConfig, usage_sink: dict | None = None,
+    *, llm_config: ResolvedChatConfig, usage_sink: dict | None = None,
 ) -> AsyncIterator[tuple[str, dict | str]]:
     """异步引导对话：委托 deepagents agent loop（路线 B）。
 
@@ -126,7 +126,7 @@ async def astream_chat(
 
 async def astream_generate(
     db, section: Section, history: list[Message],
-    *, llm_config: ResolvedLLMConfig, usage_sink: dict | None = None,
+    *, llm_config: ResolvedChatConfig, usage_sink: dict | None = None,
 ) -> AsyncIterator[tuple[str, dict | str]]:
     """异步生成草稿：委托 deepagents agent loop（路线 B）。
 
@@ -177,7 +177,7 @@ async def astream_generate(
 
 async def astream_rewrite(
     section: Section, selected_text: str, instruction: str,
-    *, llm_config: ResolvedLLMConfig, usage_sink: dict | None = None,
+    *, llm_config: ResolvedChatConfig, usage_sink: dict | None = None,
 ) -> AsyncIterator[str]:
     """异步段落重写：基于选中文字 + 指令，流式输出重写结果。
 

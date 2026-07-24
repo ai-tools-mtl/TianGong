@@ -5,10 +5,10 @@ from collections.abc import AsyncIterator, Iterator
 from langchain_core.messages import BaseMessage
 from langchain_openai import ChatOpenAI
 
-from app.services.llm_config_service import ResolvedLLMConfig
+from app.services.llm_config_service import ResolvedChatConfig
 
 
-def get_llm(llm_config: ResolvedLLMConfig, *, streaming: bool = False) -> ChatOpenAI:
+def get_llm(llm_config: ResolvedChatConfig, *, streaming: bool = False) -> ChatOpenAI:
     """构造 LLM 实例。用解析后的配置（用户自配/全局/admin）。
 
     streaming=True 时同时开 stream_usage：LangChain 在流的最后一块
@@ -30,7 +30,7 @@ def get_llm(llm_config: ResolvedLLMConfig, *, streaming: bool = False) -> ChatOp
     )
 
 
-def stream_llm(messages: list[BaseMessage], *, llm_config: ResolvedLLMConfig) -> Iterator[str]:
+def stream_llm(messages: list[BaseMessage], *, llm_config: ResolvedChatConfig) -> Iterator[str]:
     """流式调用 LLM，逐 token yield 文本。"""
     llm = get_llm(llm_config, streaming=True)
     for chunk in llm.stream(messages):
@@ -39,7 +39,7 @@ def stream_llm(messages: list[BaseMessage], *, llm_config: ResolvedLLMConfig) ->
 
 
 async def astream_llm(
-    messages: list[BaseMessage], *, llm_config: ResolvedLLMConfig,
+    messages: list[BaseMessage], *, llm_config: ResolvedChatConfig,
     usage_sink: dict | None = None,
 ) -> AsyncIterator[str]:
     """异步流式调用 LLM，逐 token yield 文本。
