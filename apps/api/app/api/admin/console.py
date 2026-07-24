@@ -23,26 +23,25 @@ from app.services import admin_service, llm_config_service, stats_service
 router = APIRouter(tags=["admin"])
 
 
-class GlobalLLMSettings(BaseModel):
-    enabled: bool
+class GlobalScopeConfigBody(BaseModel):
+    """chat 或 embedding 全局配置的单边 body。"""
     base_url: str | None = None
     api_key: str | None = None
-    # 1214 修复闸 3：model 可选（不更新时不传），但给了就必须非空，
-    # 防止 admin 漏填 model 存入空串 → 后续触发智谱 1214。
     model: str | None = Field(default=None, min_length=1)
-    embedding_model: str | None = None
-    allowed_models: list[str] | None = None
 
 
-class GlobalLLMTestRequest(BaseModel):
-    """admin 测试全局配置连通性。
-    字段全可选：留空 → 用 SystemSetting 已存的（解密后）测（保存后复检）；
-    提供则用传入值测（保存前预检）。
-    """
+class GlobalLLMSettings(BaseModel):
+    """admin 设置全局 LLM 配置。chat_config 与 embedding_config 各自独立可更新。"""
+    enabled: bool
+    chat_config: GlobalScopeConfigBody | None = None
+    embedding_config: GlobalScopeConfigBody | None = None
+
+
+class GlobalScopeTestRequest(BaseModel):
+    """admin 测试全局 chat 或 embedding（支持传值或用已存值复检）。"""
     base_url: str | None = None
     api_key: str | None = None
     model: str | None = None
-    embedding_model: str | None = None
 
 
 class ListModelsRequest(BaseModel):
@@ -133,14 +132,19 @@ def list_audit_logs(
     }
 
 
-# ── 全局 LLM 配置 ──
+# ── 全局 LLM 配置（chat / embedding 拆两套，各自独立可更新）──
 
 @router.get("/admin/llm-config")
 def get_global_llm(
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    return llm_config_service.get_global_llm_settings(db)
+    enabled = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_enabled"))
+    return {
+        "llm_global_enabled": enabled.value.get("enabled", True) if enabled else True,
+        "chat_config": llm_config_service.get_global_chat_settings(db),
+        "embedding_config": llm_config_service.get_global_embedding_settings(db),
+    }
 
 
 @router.put("/admin/llm-config")
@@ -149,12 +153,22 @@ def set_global_llm(
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    result = llm_config_service.set_global_llm_settings(
-        db, enabled=payload.enabled,
-        base_url=payload.base_url, api_key=payload.api_key, model=payload.model,
-        embedding_model=payload.embedding_model, allowed_models=payload.allowed_models,
-    )
-    # 审计：detail 只记非敏感字段，绝不传 api_key 明文（设计 8.3 脱敏）
+    if payload.chat_config:
+        c = payload.chat_config
+        llm_config_service.set_global_chat_settings(
+            db, enabled=payload.enabled,
+            base_url=c.base_url, api_key=c.api_key, model=c.model,
+        )
+    if payload.embedding_config:
+        e = payload.embedding_config
+        llm_config_service.set_global_embedding_settings(
+            db, enabled=payload.enabled,
+            base_url=e.base_url, api_key=e.api_key, model=e.model,
+        )
+    # 若两个都没传，仍要更新 enabled 开关（set_global_chat_settings 会写 enabled）
+    if not payload.chat_config and not payload.embedding_config:
+        llm_config_service.set_global_chat_settings(db, enabled=payload.enabled)
+    # 审计（不含 api_key 明文）
     admin_service._audit(
         db,
         actor=admin,
@@ -163,59 +177,70 @@ def set_global_llm(
         target_id="llm_global_config",
         detail={
             "enabled": payload.enabled,
-            "base_url": payload.base_url,
-            "model": payload.model,
-            "embedding_model": payload.embedding_model,
-            "allowed_models": payload.allowed_models,
+            "chat_base_url": payload.chat_config.base_url if payload.chat_config else None,
+            "chat_model": payload.chat_config.model if payload.chat_config else None,
+            "embedding_base_url": payload.embedding_config.base_url if payload.embedding_config else None,
+            "embedding_model": payload.embedding_config.model if payload.embedding_config else None,
         },
     )
-    return result
+    return {
+        "llm_global_enabled": payload.enabled,
+        "chat_config": llm_config_service.get_global_chat_settings(db),
+        "embedding_config": llm_config_service.get_global_embedding_settings(db),
+    }
 
 
-@router.post("/admin/llm-config/test")
-def test_global_llm(
-    payload: GlobalLLMTestRequest,
-    admin: User = Depends(require_admin),
-    db: Session = Depends(get_db),
-):
-    """测试全局 LLM 配置连通性。
-
-    - 提供完整字段 → 用传入值测（保存前预检）。
-    - 字段留空 → 从 SystemSetting 读已存的（api_key 解密）测（保存后复检）。
-    - 已存配置不完整（缺 base_url/api_key/model）→ 返回 ok=False + 友好错误，不抛 500。
-    """
+def _resolve_admin_test_values(payload, db, scope):
+    """两模式：传值 → 用传入值；不传 → 用已存的 SystemSetting 值（chat 或 embedding 各自的 key）复检。"""
     base_url = payload.base_url
     api_key = payload.api_key
     model = payload.model
-    embedding_model = payload.embedding_model
-
-    # 任一关键字段缺 → 用已存值补全
     if not (base_url and api_key and model):
-        cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_config"))
+        key = "llm_global_chat_config" if scope == "chat" else "llm_global_embedding_config"
+        cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == key))
         stored = cfg.value if cfg else {}
         base_url = base_url or stored.get("base_url", "")
         model = model or stored.get("model", "")
-        embedding_model = embedding_model if embedding_model is not None else stored.get("embedding_model")
         enc = stored.get("api_key_encrypted")
         api_key = api_key or (decrypt_value(enc) if enc else "")
-        # 仍不完整 → 友好错误（不抛 500）
-        if not (base_url and api_key and model):
-            return {"ok": False, "chat": {"ok": False, "latency_ms": None, "sample": None,
-                                          "error": "全局配置未设置完整"},
-                    "embedding": None, "error": "全局配置未设置完整（缺 base_url / api_key / model）"}
-
-    return llm_config_service.test_llm_connection(
-        base_url=base_url, api_key=api_key, model=model, embedding_model=embedding_model,
-    )
+    return base_url, api_key, model
 
 
-@router.post("/admin/llm-config/models")
-def list_global_provider_models(
+@router.post("/admin/llm-config/chat/test")
+def test_global_chat(
+    payload: GlobalScopeTestRequest,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    base_url, api_key, model = _resolve_admin_test_values(payload, db, scope="chat")
+    if not (base_url and api_key and model):
+        return {"ok": False, "chat": {"ok": False, "latency_ms": None, "sample": None, "error": "全局 chat 配置未设置完整"}, "embedding": None, "error": "全局 chat 配置未设置完整（缺 base_url / api_key / model）"}
+    return llm_config_service.test_llm_connection(base_url=base_url, api_key=api_key, model=model, scope="chat")
+
+
+@router.post("/admin/llm-config/embedding/test")
+def test_global_embedding(
+    payload: GlobalScopeTestRequest,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    base_url, api_key, model = _resolve_admin_test_values(payload, db, scope="embedding")
+    if not (base_url and api_key and model):
+        return {"ok": False, "chat": None, "embedding": {"ok": False, "latency_ms": None, "dim": None, "error": "全局 embedding 配置未设置完整"}, "error": "全局 embedding 配置未设置完整"}
+    return llm_config_service.test_llm_connection(base_url=base_url, api_key=api_key, model=model, scope="embedding")
+
+
+@router.post("/admin/llm-config/chat/models")
+def list_global_chat_models(
     payload: ListModelsRequest,
     admin: User = Depends(require_admin),
 ):
-    """admin 拉取 provider 可用模型列表（不落库）。"""
-    return llm_config_service.list_provider_models(
-        base_url=payload.base_url, api_key=payload.api_key,
-        provider_template_id=payload.provider_template_id,
-    )
+    return llm_config_service.list_provider_models(base_url=payload.base_url, api_key=payload.api_key, provider_template_id=payload.provider_template_id)
+
+
+@router.post("/admin/llm-config/embedding/models")
+def list_global_embedding_models(
+    payload: ListModelsRequest,
+    admin: User = Depends(require_admin),
+):
+    return llm_config_service.list_provider_models(base_url=payload.base_url, api_key=payload.api_key, provider_template_id=payload.provider_template_id)

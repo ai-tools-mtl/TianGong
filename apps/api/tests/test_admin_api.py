@@ -136,9 +136,11 @@ def test_set_global_llm_writes_audit_without_api_key(client, admin_and_login, db
     """设置全局 LLM 后，审计日志记录变更但 detail 绝不含 api_key 明文。"""
     res = client.put("/api/v1/admin/llm-config", json={
         "enabled": True,
-        "base_url": "https://open.bigmodel.cn/api/paas/v4",
-        "api_key": "sk-super-secret-key-1234567890",
-        "model": "glm-4-flash",
+        "chat_config": {
+            "base_url": "https://open.bigmodel.cn/api/paas/v4",
+            "api_key": "sk-super-secret-key-1234567890",
+            "model": "glm-4-flash",
+        },
     })
     assert res.status_code == 200
 
@@ -153,8 +155,8 @@ def test_set_global_llm_writes_audit_without_api_key(client, admin_and_login, db
     assert "api_key_encrypted" not in detail
     assert "sk-super-secret-key-1234567890" not in str(detail)
     # 记录了变更摘要
-    assert detail.get("model") == "glm-4-flash"
-    assert detail.get("base_url") == "https://open.bigmodel.cn/api/paas/v4"
+    assert detail.get("chat_model") == "glm-4-flash"
+    assert detail.get("chat_base_url") == "https://open.bigmodel.cn/api/paas/v4"
     assert detail.get("enabled") is True
     assert log.actor_username == admin_and_login.username
     assert log.target_type == "system_setting"

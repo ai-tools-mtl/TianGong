@@ -13,16 +13,16 @@ from pydantic import ValidationError
 
 
 def test_global_llm_settings_rejects_empty_model():
-    """GlobalLLMSettings 的 model 给了空串 → ValidationError。"""
-    from app.api.admin.console import GlobalLLMSettings
+    """GlobalScopeConfigBody 的 model 给了空串 → ValidationError（防止 admin 漏填存空串）。"""
+    from app.api.admin.console import GlobalScopeConfigBody
     with pytest.raises(ValidationError):
-        GlobalLLMSettings(enabled=True, model="")
+        GlobalScopeConfigBody(model="")
 
 
 def test_global_llm_settings_allows_none_model():
-    """GlobalLLMSettings 的 model 不传 → None（保留可选语义，不更新时用）。"""
-    from app.api.admin.console import GlobalLLMSettings
-    s = GlobalLLMSettings(enabled=True)
+    """GlobalScopeConfigBody 的 model 不传 → None（保留可选语义，不更新时用）。"""
+    from app.api.admin.console import GlobalScopeConfigBody
+    s = GlobalScopeConfigBody()
     assert s.model is None
 
 

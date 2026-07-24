@@ -12,8 +12,9 @@ chat source 取值：
 - None：内部 fallback 路径（见上）
 
 用户自定义配置 CRUD（list/create/update/delete_user_llm_config）只管 chat 配置；
-全局配置仍保留耦合版 get/set_global_llm_settings（admin 控制台使用，字段含
-embedding_model/allowed_models）。
+全局配置已拆成 chat / embedding 两套独立的 SystemSetting key
+（get/set_global_chat_settings、get/set_global_embedding_settings），admin 控制台
+GET/PUT /admin/llm-config 同步拆两套。
 """
 
 import time
@@ -109,81 +110,7 @@ def config_to_dict(cfg: UserLLMConfig) -> dict:
     }
 
 
-# ── 全局配置（管理员）──
-
-def get_global_llm_settings(db: Session) -> dict:
-    """获取全局 LLM 设置（掩码 key）。
-
-    enabled 默认值与 `_build_global_chat_config` 的 enabled 检查对齐：记录不存在时视为开启（True），
-    避免 admin UI 显示「关闭」但 resolve 实际当「开启」的不一致（I-1）。
-    """
-    enabled = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_enabled"))
-    cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_config"))
-    return {
-        "llm_global_enabled": enabled.value.get("enabled", True) if enabled else True,
-        "global_config": {
-            "base_url": cfg.value.get("base_url", "") if cfg else "",
-            "api_key_masked": _mask_key(decrypt_value(cfg.value["api_key_encrypted"])) if cfg and cfg.value.get("api_key_encrypted") else "",
-            "model": cfg.value.get("model", "") if cfg else "",
-            "embedding_model": cfg.value.get("embedding_model") if cfg else None,
-            "allowed_models": cfg.value.get("allowed_models") if cfg else [],
-        } if cfg else None,
-    }
-
-
-def set_global_llm_settings(
-    db: Session, *, enabled: bool, base_url: str | None = None,
-    api_key: str | None = None, model: str | None = None,
-    embedding_model: str | None = None,
-    allowed_models: list[str] | None = None,
-) -> dict:
-    """管理员设置全局 LLM。
-
-    - enabled: 开关（总是写入）。
-    - base_url/api_key/model/embedding_model: 提供才更新，不提供保留现有。
-    - allowed_models: 提供则覆盖（含空 list 清空），不提供保留现有。
-    """
-    # 开关
-    setting = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_enabled"))
-    if setting:
-        setting.value = {"enabled": enabled}
-    else:
-        db.add(SystemSetting(key="llm_global_enabled", value={"enabled": enabled}))
-
-    # 配置：有任一字段提供则更新（含 allowed_models 显式空 list / embedding_model 空串清空场景）。
-    # 注意 embedding_model 用 `is not None`，否则 "" 无法清空（I2）。
-    if (base_url or api_key or model
-            or embedding_model is not None
-            or allowed_models is not None):
-        cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_config"))
-        current = cfg.value if cfg else {}
-        new_value = {
-            "base_url": base_url or current.get("base_url", ""),
-            "model": model or current.get("model", ""),
-        }
-        # embedding_model: 提供则更新（含空串清空，I2 修复），否则保留现有。
-        # 注意用 `is not None` 而非 truthiness，否则 "" 无法清空。
-        if embedding_model is not None:
-            new_value["embedding_model"] = embedding_model
-        elif current.get("embedding_model") is not None:
-            new_value["embedding_model"] = current["embedding_model"]
-        # allowed_models: 提供则覆盖（含空 list），否则保留现有
-        if allowed_models is not None:
-            new_value["allowed_models"] = list(allowed_models)
-        elif current.get("allowed_models"):
-            new_value["allowed_models"] = current["allowed_models"]
-        if api_key:
-            new_value["api_key_encrypted"] = encrypt_value(api_key)
-        elif current.get("api_key_encrypted"):
-            new_value["api_key_encrypted"] = current["api_key_encrypted"]
-
-        if cfg:
-            cfg.value = new_value
-        else:
-            db.add(SystemSetting(key="llm_global_config", value=new_value))
-
-    db.commit()
-    return get_global_llm_settings(db)
+# ── 全局配置（管理员）：见文件底部拆分版 set/get_global_chat/embedding_settings ──
 
 
 def _mask_key(key: str) -> str:

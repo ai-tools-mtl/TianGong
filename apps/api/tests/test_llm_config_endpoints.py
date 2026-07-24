@@ -79,7 +79,7 @@ def test_test_endpoint_new_shape(client, db_session):
     assert body["embedding"]["dim"] == 128
 
 
-# ── admin 端点（/admin/llm-config/test + /admin/llm-config/models）──
+# ── admin 端点（拆分版：/admin/llm-config/chat/test、/embedding/test、chat/models、embedding/models）──
 
 def _login_admin(client, db_session):
     a = User(username="admin", email="admin@example.com",
@@ -89,13 +89,13 @@ def _login_admin(client, db_session):
     return a
 
 
-def test_admin_test_with_provided_values(client, db_session):
-    """admin 用传入值测（保存前预检）。"""
+def test_admin_chat_test_with_provided_values(client, db_session):
+    """admin 用传入值测 chat（保存前预检）。"""
     _login_admin(client, db_session)
     with patch("app.api.admin.console.llm_config_service.test_llm_connection") as m:
         m.return_value = {"ok": True, "chat": {"ok": True, "latency_ms": 10, "sample": "hi", "error": None},
                           "embedding": None, "error": None}
-        res = client.post("/api/v1/admin/llm-config/test", json={
+        res = client.post("/api/v1/admin/llm-config/chat/test", json={
             "base_url": "https://x.com/v1", "api_key": "sk-new", "model": "m1",
         })
     assert res.status_code == 200
@@ -103,26 +103,25 @@ def test_admin_test_with_provided_values(client, db_session):
     m.assert_called_once()
     _, kwargs = m.call_args
     assert kwargs["api_key"] == "sk-new"  # 用传入值
+    assert kwargs["scope"] == "chat"
 
 
-def test_admin_test_with_stored_values(client, db_session):
-    """admin 不传值 → 用 SystemSetting 已存的（解密后）测（保存后复检）。"""
+def test_admin_chat_test_with_stored_values(client, db_session):
+    """admin chat 不传值 → 用 SystemSetting 已存的 chat config（解密后）测（保存后复检）。"""
     _login_admin(client, db_session)
-    # 先存一份全局配置
     from app.core.security import encrypt_value
     from app.models import SystemSetting
-    db_session.add(SystemSetting(key="llm_global_config", value={
+    db_session.add(SystemSetting(key="llm_global_chat_config", value={
         "base_url": "https://stored.com/v1",
         "api_key_encrypted": encrypt_value("sk-stored-1234567890"),
         "model": "stored-model",
-        "embedding_model": "stored-emb",
     }))
     db_session.commit()
 
     with patch("app.api.admin.console.llm_config_service.test_llm_connection") as m:
         m.return_value = {"ok": True, "chat": {"ok": True, "latency_ms": 5, "sample": "x", "error": None},
                           "embedding": None, "error": None}
-        res = client.post("/api/v1/admin/llm-config/test", json={})  # 空 body
+        res = client.post("/api/v1/admin/llm-config/chat/test", json={})  # 空 body
     assert res.status_code == 200
     _, kwargs = m.call_args
     assert kwargs["base_url"] == "https://stored.com/v1"
@@ -130,31 +129,67 @@ def test_admin_test_with_stored_values(client, db_session):
     assert kwargs["model"] == "stored-model"
 
 
-def test_admin_test_stored_incomplete_returns_error(client, db_session):
-    """已存全局配置不完整（缺 model/api_key）→ 返回友好错误。"""
+def test_admin_embedding_test_with_stored_values(client, db_session):
+    """admin embedding 不传值 → 用 SystemSetting 已存的 embedding config（解密后）测。"""
+    _login_admin(client, db_session)
+    from app.core.security import encrypt_value
+    from app.models import SystemSetting
+    db_session.add(SystemSetting(key="llm_global_embedding_config", value={
+        "base_url": "https://emb.com/v1",
+        "api_key_encrypted": encrypt_value("sk-emb-1234567890"),
+        "model": "embedding-3",
+    }))
+    db_session.commit()
+
+    with patch("app.api.admin.console.llm_config_service.test_llm_connection") as m:
+        m.return_value = {"ok": True, "chat": None,
+                          "embedding": {"ok": True, "latency_ms": 5, "dim": 128, "error": None},
+                          "error": None}
+        res = client.post("/api/v1/admin/llm-config/embedding/test", json={})
+    assert res.status_code == 200
+    _, kwargs = m.call_args
+    assert kwargs["base_url"] == "https://emb.com/v1"
+    assert kwargs["api_key"] == "sk-emb-1234567890"
+    assert kwargs["model"] == "embedding-3"
+    assert kwargs["scope"] == "embedding"
+
+
+def test_admin_chat_test_stored_incomplete_returns_error(client, db_session):
+    """已存全局 chat 配置不完整（缺 model/api_key）→ 返回友好错误。"""
     _login_admin(client, db_session)
     from app.models import SystemSetting
-    db_session.add(SystemSetting(key="llm_global_config", value={"base_url": "https://x.com"}))
+    db_session.add(SystemSetting(key="llm_global_chat_config", value={"base_url": "https://x.com"}))
     db_session.commit()
-    res = client.post("/api/v1/admin/llm-config/test", json={})
+    res = client.post("/api/v1/admin/llm-config/chat/test", json={})
     assert res.status_code == 200
     assert res.json()["ok"] is False
     assert "未设置" in res.json()["error"] or "不完整" in res.json()["error"]
 
 
-def test_admin_test_requires_admin(client, db_session):
+def test_admin_chat_test_requires_admin(client, db_session):
     """非 admin → 403。"""
     _login_user(client, db_session)  # 普通用户
-    res = client.post("/api/v1/admin/llm-config/test", json={})
+    res = client.post("/api/v1/admin/llm-config/chat/test", json={})
     assert res.status_code == 403
 
 
-def test_admin_models_endpoint(client, db_session):
+def test_admin_chat_models_endpoint(client, db_session):
     _login_admin(client, db_session)
     with patch("app.api.admin.console.llm_config_service.list_provider_models") as m:
         m.return_value = {"models": ["m1"], "truncated": False, "error": None}
-        res = client.post("/api/v1/admin/llm-config/models", json={
+        res = client.post("/api/v1/admin/llm-config/chat/models", json={
             "base_url": "https://x.com/v1", "api_key": "sk",
         })
     assert res.status_code == 200
     assert res.json()["models"] == ["m1"]
+
+
+def test_admin_embedding_models_endpoint(client, db_session):
+    _login_admin(client, db_session)
+    with patch("app.api.admin.console.llm_config_service.list_provider_models") as m:
+        m.return_value = {"models": ["e1"], "truncated": False, "error": None}
+        res = client.post("/api/v1/admin/llm-config/embedding/models", json={
+            "base_url": "https://x.com/v1", "api_key": "sk",
+        })
+    assert res.status_code == 200
+    assert res.json()["models"] == ["e1"]
