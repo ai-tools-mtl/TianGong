@@ -22,7 +22,6 @@ export interface LLMConfigEditPanelProps {
     base_url?: string
     api_key_masked?: string
     model?: string
-    embedding_model?: string | null
     provider_template_id?: string | null
   } | null
   /** 保存回调。返回 Promise。apiKey 留空串 = 不改。 */
@@ -31,34 +30,24 @@ export interface LLMConfigEditPanelProps {
     base_url: string
     api_key: string            // 留空 = 不改（由调用方判断）
     model: string
-    embedding_model: string | null
     provider_template_id?: string | null
-    allowed_models?: string    // admin 模式下逗号分隔的白名单字符串
   }) => Promise<void>
   onCancel: () => void
-  /** admin 模式：额外渲染 allowed_models 编辑框。 */
-  adminMode?: boolean
-  initialAllowedModels?: string[]
   saveLabel?: string
 }
 
 export function LLMConfigEditPanel({
-  initial, onSave, onCancel, adminMode, initialAllowedModels, saveLabel = '保存',
+  initial, onSave, onCancel, saveLabel = '保存',
 }: LLMConfigEditPanelProps) {
   const [name, setName] = useState(initial?.name ?? '')
   const [baseUrl, setBaseUrl] = useState(initial?.base_url ?? '')
   const [apiKey, setApiKey] = useState('')   // 始终空起步；留空=不改（编辑）或必填（新增由调用方校验）
   const [model, setModel] = useState(initial?.model ?? '')
-  const [embeddingModel, setEmbeddingModel] = useState(initial?.embedding_model ?? '')
   const [selectedTplId, setSelectedTplId] = useState<string | null>(initial?.provider_template_id ?? null)
   const [showKey, setShowKey] = useState(false)
-  const [allowedModelsStr, setAllowedModelsStr] = useState(
-    (initialAllowedModels ?? []).join(', '),
-  )
 
   // 拉取的模型列表（本地 state，不持久化）
   const [chatModels, setChatModels] = useState<string[]>([])
-  const [embedModels, setEmbedModels] = useState<string[]>([])
 
   const [testResult, setTestResult] = useState<TestConnectionResult | null>(null)
   const [saving, setSaving] = useState(false)
@@ -71,10 +60,9 @@ export function LLMConfigEditPanel({
     // 自动填（仅在字段为空时填，避免覆盖用户已输入）
     if (!baseUrl) setBaseUrl(t.base_url)
     if (!model) setModel(t.default_model)
-    if (!embeddingModel && t.default_embedding_model) setEmbeddingModel(t.default_embedding_model)
   }
 
-  async function handleFetchModels(target: 'chat' | 'embed') {
+  async function handleFetchModels() {
     if (!baseUrl || !apiKey) {
       toast.error('请先填写 Base URL 和 API Key')
       return
@@ -86,8 +74,7 @@ export function LLMConfigEditPanel({
       toast.error(`拉取失败：${res.error}`)
       return
     }
-    if (target === 'chat') setChatModels(res.models)
-    else setEmbedModels(res.models)
+    setChatModels(res.models)
     toast.success(`已拉取 ${res.models.length} 个模型${res.truncated ? '（已截断前 100）' : ''}`)
   }
 
@@ -107,7 +94,6 @@ export function LLMConfigEditPanel({
     }
     const res = await testConn.mutateAsync({
       base_url: baseUrl, api_key: apiKey, model,
-      embedding_model: embeddingModel || null,
     })
     setTestResult(res)
   }
@@ -129,9 +115,7 @@ export function LLMConfigEditPanel({
         base_url: baseUrl.trim(),
         api_key: apiKey,   // 留空=不改（编辑）或已校验非空（新增）
         model: model.trim(),
-        embedding_model: embeddingModel.trim() || null,
         provider_template_id: selectedTplId,
-        ...(adminMode ? { allowed_models: allowedModelsStr } : {}),
       })
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -197,7 +181,7 @@ export function LLMConfigEditPanel({
           <Button
             type="button" size="xs" variant="outline"
             disabled={listModels.isPending}
-            onClick={() => handleFetchModels('chat')}
+            onClick={handleFetchModels}
           >
             {listModels.isPending ? '拉取中…' : '⤓ 拉取模型'}
           </Button>
@@ -209,39 +193,6 @@ export function LLMConfigEditPanel({
           placeholder="如 glm-4-plus"
         />
       </div>
-
-      {/* embedding 模型 + 拉取 */}
-      <div className="space-y-1.5">
-        <div className="flex items-center justify-between">
-          <Label className="text-[12px]">嵌入模型（可选，知识库 RAG 用）</Label>
-          <Button
-            type="button" size="xs" variant="outline"
-            disabled={listModels.isPending}
-            onClick={() => handleFetchModels('embed')}
-          >
-            ⤓ 拉取
-          </Button>
-        </div>
-        <ModelSelectInput
-          value={embeddingModel}
-          onChange={setEmbeddingModel}
-          options={embedModels}
-          placeholder="如 embedding-3（留空则不测）"
-        />
-      </div>
-
-      {/* admin: allowed_models */}
-      {adminMode && (
-        <div className="space-y-1.5">
-          <Label className="text-[12px]">允许的模型（逗号分隔，留空不限制）</Label>
-          <Input
-            value={allowedModelsStr}
-            onChange={(e) => setAllowedModelsStr(e.target.value)}
-            placeholder="glm-4-plus, glm-4-flash"
-          />
-          <p className="text-[11px] text-muted-foreground">保存时按英文逗号拆分为列表。</p>
-        </div>
-      )}
 
       {/* 测试结果 */}
       {testResult && <TestResultBadge result={testResult} />}

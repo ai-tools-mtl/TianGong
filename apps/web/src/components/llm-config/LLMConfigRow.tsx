@@ -43,12 +43,6 @@ export function LLMConfigRow({
           <span className="font-mono">{config.model}</span>
           <span>·</span>
           <span className="font-mono">{config.api_key_masked}</span>
-          {config.embedding_model && (
-            <>
-              <span>·</span>
-              <span>embed: {config.embedding_model}</span>
-            </>
-          )}
         </div>
       </div>
 

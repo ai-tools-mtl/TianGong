@@ -246,15 +246,24 @@ export interface LLMHealth {
   status: 'ok' | 'warning'
 }
 
+/**
+ * 全局 chat / embedding 单边配置的掩码回显形态。
+ * GET /admin/llm-config 返回的 chat_config / embedding_config 子对象就是这个形状。
+ */
+export interface GlobalScopeConfig {
+  base_url: string
+  api_key_masked: string
+  model: string
+}
+
+/**
+ * GET /admin/llm-config 返回；admin 设置全局 LLM 配置。
+ * chat_config 与 embedding_config 各自独立、各自可单独更新（feat/llm-chat-embedding-split）。
+ */
 export interface GlobalLLMSettings {
   llm_global_enabled: boolean
-  global_config: {
-    base_url: string
-    api_key_masked: string
-    model: string
-    embedding_model: string | null
-    allowed_models: string[]
-  } | null
+  chat_config: GlobalScopeConfig
+  embedding_config: GlobalScopeConfig
 }
 
 // ── 全局 Key 授权（Task 2.2）──
@@ -329,9 +338,9 @@ export interface AuditLogPage {
   items: AuditLogItem[]
 }
 
-// ── 用户自定义配置（多配置，Task 4.0）──
+// ── 用户自定义配置（chat / embedding 拆两套，feat/llm-chat-embedding-split）──
 
-/** GET /settings/llm 列表项 / POST、PUT 返回的单条自定义配置（key 掩码）。 */
+/** GET /settings/llm 列表项 / POST、PUT 返回的单条 chat 配置（key 掩码）。 */
 export interface UserLLMConfig {
   id: string
   name: string
@@ -339,7 +348,6 @@ export interface UserLLMConfig {
   base_url: string
   api_key_masked: string
   model: string
-  embedding_model: string | null
 }
 
 /** POST /settings/llm 新增请求体。 */
@@ -349,7 +357,6 @@ export interface UserLLMConfigCreate {
   base_url: string
   api_key: string
   model: string
-  embedding_model?: string | null
 }
 
 /** PUT /settings/llm/{id} 修改请求体（全可选，api_key 留空则不变）。 */
@@ -359,7 +366,34 @@ export interface UserLLMConfigUpdate {
   base_url?: string
   api_key?: string
   model?: string
-  embedding_model?: string | null
+}
+
+/**
+ * GET /settings/embedding 列表项 / POST、PUT 返回的单条 embedding 配置（key 掩码）。
+ * 与 UserLLMConfig 同形但无 provider 字段（embedding 不区分 provider）。
+ */
+export interface UserEmbeddingConfig {
+  id: string
+  name: string
+  base_url: string
+  api_key_masked: string
+  model: string
+}
+
+/** POST /settings/embedding 新增请求体。 */
+export interface UserEmbeddingConfigCreate {
+  name: string
+  base_url: string
+  api_key: string
+  model: string
+}
+
+/** PUT /settings/embedding/{id} 修改请求体（全可选，api_key 留空则不变）。 */
+export interface UserEmbeddingConfigUpdate {
+  name?: string
+  base_url?: string
+  api_key?: string
+  model?: string
 }
 
 /**

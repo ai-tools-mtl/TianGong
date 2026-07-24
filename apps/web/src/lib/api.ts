@@ -28,6 +28,9 @@ import type {
   UserLLMConfig,
   UserLLMConfigCreate,
   UserLLMConfigUpdate,
+  UserEmbeddingConfig,
+  UserEmbeddingConfigCreate,
+  UserEmbeddingConfigUpdate,
 } from '@/types/api'
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -343,35 +346,56 @@ export const api = {
   adminCreateUser: (data: import('@/types/api').AdminCreateUserRequest) =>
     request<import('@/types/api').AdminUser>(`/admin/users`, { method: 'POST', body: JSON.stringify(data) }),
   getGlobalLLM: () => request<import('@/types/api').GlobalLLMSettings>(`/admin/llm-config`),
+  /**
+   * 保存全局 LLM 配置（PUT /admin/llm-config）。
+   * chat_config / embedding_config 各自可选、各自独立更新；两个都不传只切 enabled 开关。
+   * api_key 留空 = 不改（后端只在传值时加密落库）。
+   */
   setGlobalLLM: (data: {
     enabled: boolean
-    base_url?: string
-    api_key?: string
-    model?: string
-    embedding_model?: string
-    allowed_models?: string[]
+    chat_config?: { base_url?: string; api_key?: string; model?: string }
+    embedding_config?: { base_url?: string; api_key?: string; model?: string }
   }) =>
     request<import('@/types/api').GlobalLLMSettings>(`/admin/llm-config`, { method: 'PUT', body: JSON.stringify(data) }),
 
-  // admin LLM 连接测试 / 模型拉取（feat/llm-config-redesign）
-  /** admin 测试全局 LLM 连接（chat + embedding 双测）。字段全可选：留空走当前已存配置。 */
-  testGlobalLLM: (data: {
+  // admin LLM 连接测试 / 模型拉取（feat/llm-chat-embedding-split：chat/embedding 各拆两端点）
+  /** admin 测试全局 chat 连接。字段全可选：留空走当前已存的 chat 配置复检。 */
+  testGlobalChat: (data: {
     base_url?: string
     api_key?: string
     model?: string
-    embedding_model?: string | null
   }) =>
-    request<TestConnectionResult>(`/admin/llm-config/test`, {
+    request<TestConnectionResult>(`/admin/llm-config/chat/test`, {
       method: 'POST',
       body: JSON.stringify(data),
     }),
-  /** admin 按 base_url + api_key 拉取 provider 的可用模型列表。 */
-  listGlobalProviderModels: (data: {
+  /** admin 测试全局 embedding 连接。字段全可选：留空走当前已存的 embedding 配置复检。 */
+  testGlobalEmbedding: (data: {
+    base_url?: string
+    api_key?: string
+    model?: string
+  }) =>
+    request<TestConnectionResult>(`/admin/llm-config/embedding/test`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  /** admin 按 base_url + api_key 拉取 provider 的可用 chat 模型列表。 */
+  listGlobalChatModels: (data: {
     base_url: string
     api_key: string
     provider_template_id?: string | null
   }) =>
-    request<ListModelsResult>(`/admin/llm-config/models`, {
+    request<ListModelsResult>(`/admin/llm-config/chat/models`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  /** admin 按 base_url + api_key 拉取 provider 的可用 embedding 模型列表。 */
+  listGlobalEmbeddingModels: (data: {
+    base_url: string
+    api_key: string
+    provider_template_id?: string | null
+  }) =>
+    request<ListModelsResult>(`/admin/llm-config/embedding/models`, {
       method: 'POST',
       body: JSON.stringify(data),
     }),
@@ -429,7 +453,6 @@ export const api = {
     base_url: string
     api_key: string
     model: string
-    embedding_model?: string | null
   }) =>
     request<TestConnectionResult>(`/settings/llm/test`, {
       method: 'POST',
@@ -437,6 +460,35 @@ export const api = {
     }),
   /** 普通用户查自己的全局 Key 授权状态（选源器用）。 */
   getMyGrant: () => request<MyGrant>(`/settings/my-grant`),
+
+  // ── 用户自定义 embedding 配置 CRUD（feat/llm-chat-embedding-split）──
+  listMyEmbeddingConfigs: () => request<UserEmbeddingConfig[]>(`/settings/embedding`),
+  createMyEmbeddingConfig: (data: UserEmbeddingConfigCreate) =>
+    request<UserEmbeddingConfig>(`/settings/embedding`, { method: 'POST', body: JSON.stringify(data) }),
+  updateMyEmbeddingConfig: (configId: string, data: UserEmbeddingConfigUpdate) =>
+    request<UserEmbeddingConfig>(`/settings/embedding/${configId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteMyEmbeddingConfig: (configId: string) =>
+    request<{ message: string }>(`/settings/embedding/${configId}`, { method: 'DELETE' }),
+  /** 测试 embedding 连通性（scope=embedding，返回结构 chat=null）。不落库。 */
+  testMyEmbeddingConfig: (data: {
+    base_url: string
+    api_key: string
+    model: string
+  }) =>
+    request<TestConnectionResult>(`/settings/embedding/test`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  /** 按 base_url + api_key 拉取 provider 的可用 embedding 模型列表。 */
+  listMyEmbeddingModels: (data: {
+    base_url: string
+    api_key: string
+    provider_template_id?: string | null
+  }) =>
+    request<ListModelsResult>(`/settings/embedding/models`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 
   // ── LLM provider 模板 / 模型拉取（feat/llm-config-redesign）──
   /** 内置 provider 模板列表（选模板自动填 base_url/model 等）。 */

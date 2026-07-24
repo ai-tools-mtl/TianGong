@@ -557,11 +557,8 @@ export function useSaveGlobalLLM() {
   return useMutation({
     mutationFn: (data: {
       enabled: boolean
-      base_url?: string
-      api_key?: string
-      model?: string
-      embedding_model?: string
-      allowed_models?: string[]
+      chat_config?: { base_url?: string; api_key?: string; model?: string }
+      embedding_config?: { base_url?: string; api_key?: string; model?: string }
     }) => api.setGlobalLLM(data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.admin.llmConfig })
@@ -745,8 +742,71 @@ export function useListProviderModels() {
   })
 }
 
+// ── 用户自定义 embedding 配置（feat/llm-chat-embedding-split）──
+
+import type { UserEmbeddingConfig } from '@/types/api'
+
+/** 当前用户的自定义 embedding 配置列表（GET /settings/embedding）。 */
+export function useMyEmbeddingConfigs() {
+  return useQuery<UserEmbeddingConfig[]>({
+    queryKey: ['my-embedding'],
+    queryFn: () => api.listMyEmbeddingConfigs(),
+  })
+}
+
+/** 新增 embedding 配置。成功后失效列表。 */
+export function useCreateMyEmbeddingConfig() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: import('@/types/api').UserEmbeddingConfigCreate) =>
+      api.createMyEmbeddingConfig(data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['my-embedding'] }),
+  })
+}
+
+/** 修改 embedding 配置。成功后失效列表。 */
+export function useUpdateMyEmbeddingConfig() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: import('@/types/api').UserEmbeddingConfigUpdate }) =>
+      api.updateMyEmbeddingConfig(id, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['my-embedding'] }),
+  })
+}
+
+/** 删除 embedding 配置。成功后失效列表。 */
+export function useDeleteMyEmbeddingConfig() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.deleteMyEmbeddingConfig(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['my-embedding'] }),
+  })
+}
+
+/** 测试 embedding 连通性（命令式动作，用 mutation，不失效缓存）。 */
+export function useTestMyEmbeddingConfig() {
+  return useMutation({
+    mutationFn: (data: {
+      base_url: string
+      api_key: string
+      model: string
+    }) => api.testMyEmbeddingConfig(data),
+  })
+}
+
+/** 按 base_url + api_key 拉取 provider 的可用 embedding 模型列表（命令式动作）。 */
+export function useListMyEmbeddingModels() {
+  return useMutation({
+    mutationFn: (data: {
+      base_url: string
+      api_key: string
+      provider_template_id?: string | null
+    }) => api.listMyEmbeddingModels(data),
+  })
+}
+
 /**
- * 测试用户 LLM 连接（chat + embedding 双测）。
+ * 测试用户 LLM 连接（chat 单测；embedding 另有 useTestMyEmbeddingConfig）。
  * 命令式动作，用 mutation。
  */
 export function useTestLLMConnection() {
@@ -755,36 +815,62 @@ export function useTestLLMConnection() {
       base_url: string
       api_key: string
       model: string
-      embedding_model?: string | null
     }) => api.testMyLLM(data),
   })
 }
 
 /**
- * admin 测试全局 LLM 连接（chat + embedding 双测）。
- * 字段全可选：留空走当前已存配置。命令式动作，用 mutation。
+ * admin 测试全局 chat 连接（POST /admin/llm-config/chat/test）。
+ * 字段全可选：留空走当前已存 chat 配置复检。命令式动作，用 mutation。
  */
-export function useTestGlobalLLM() {
+export function useTestGlobalChat() {
   return useMutation({
     mutationFn: (data: {
       base_url?: string
       api_key?: string
       model?: string
-      embedding_model?: string | null
-    }) => api.testGlobalLLM(data),
+    }) => api.testGlobalChat(data),
   })
 }
 
 /**
- * admin 按 base_url + api_key 拉取 provider 的可用模型列表。
+ * admin 测试全局 embedding 连接（POST /admin/llm-config/embedding/test）。
+ * 字段全可选：留空走当前已存 embedding 配置复检。命令式动作，用 mutation。
+ */
+export function useTestGlobalEmbedding() {
+  return useMutation({
+    mutationFn: (data: {
+      base_url?: string
+      api_key?: string
+      model?: string
+    }) => api.testGlobalEmbedding(data),
+  })
+}
+
+/**
+ * admin 按 base_url + api_key 拉取 provider 的可用 chat 模型列表。
  * 命令式动作，用 mutation。
  */
-export function useListGlobalProviderModels() {
+export function useListGlobalChatModels() {
   return useMutation({
     mutationFn: (data: {
       base_url: string
       api_key: string
       provider_template_id?: string | null
-    }) => api.listGlobalProviderModels(data),
+    }) => api.listGlobalChatModels(data),
+  })
+}
+
+/**
+ * admin 按 base_url + api_key 拉取 provider 的可用 embedding 模型列表。
+ * 命令式动作，用 mutation。
+ */
+export function useListGlobalEmbeddingModels() {
+  return useMutation({
+    mutationFn: (data: {
+      base_url: string
+      api_key: string
+      provider_template_id?: string | null
+    }) => api.listGlobalEmbeddingModels(data),
   })
 }

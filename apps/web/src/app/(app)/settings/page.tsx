@@ -59,7 +59,6 @@ export default function SettingsPage() {
       base_url: string
       api_key: string
       model: string
-      embedding_model: string | null
     }) => api.createMyLLM(d),
     onSuccess: () => {
       invalidate()
@@ -147,7 +146,6 @@ export default function SettingsPage() {
                     base_url: c.base_url,
                     api_key_masked: c.api_key_masked,
                     model: c.model,
-                    embedding_model: c.embedding_model,
                   }}
                   onCancel={() => setEditingId(null)}
                   onSave={async (d) => {
@@ -158,7 +156,6 @@ export default function SettingsPage() {
                         base_url: d.base_url,
                         api_key: d.api_key || undefined, // 留空不传=不改
                         model: d.model,
-                        embedding_model: d.embedding_model,
                       },
                     })
                   }}
@@ -178,7 +175,6 @@ export default function SettingsPage() {
                   base_url: d.base_url,
                   api_key: d.api_key,
                   model: d.model,
-                  embedding_model: d.embedding_model,
                 })
               }}
             />
