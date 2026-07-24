@@ -53,7 +53,8 @@ TianGong/
 │   │   ├── specs/              # 设计文档
 │   │   └── plans/              # 实施计划
 │   └── GOTCHAS.md              # 踩坑记录 ⚠️
-├── docker-compose.yml          # PostgreSQL + pgvector
+├── docker-compose.yml          # 数据层(PG+MinIO)+ 全栈部署(profile=full)
+├── .env.production.example     # 内网部署配置模板
 ├── AGENTS.md                   # 项目指引（新会话必读）
 └── README.md                   # 本文件
 ```
@@ -63,8 +64,8 @@ TianGong/
 ### 环境要求
 
 - Python 3.11+
-- Node.js 18+ / pnpm
-- Docker（用于 PostgreSQL）
+- Node.js 22+ / pnpm（容器镜像与本地对齐）
+- Docker（用于 PostgreSQL + MinIO）
 
 ### 1. 启动数据库 + 对象存储
 
@@ -83,7 +84,7 @@ cd apps/api
 cp .env.example .env          # 编辑配置（数据库/JWT/加密密钥）
 uv sync --extra dev            # 安装依赖
 uv run alembic upgrade head    # 执行数据库迁移
-uv run python -m scripts.create_admin --email admin@tiangong.dev --password 你的密码  # 创建管理员
+uv run python -m scripts.create_admin --username admin --email admin@tiangong.dev --password 你的密码  # 创建管理员
 uv run uvicorn app.main:app --reload    # 启动开发服务器（http://localhost:8000）
 ```
 
@@ -113,6 +114,61 @@ cd apps/api && uv run alembic revision --autogenerate -m "描述变更"
 cd apps/api && uv run alembic upgrade head
 ```
 
+## 内网部署
+
+天工作为内部产品使用,通过 Docker 一键部署到内网服务器,团队成员用浏览器访问。
+
+> **两种部署形态**
+> - **本地开发**(上面「快速开始」):只起数据层容器,后端/前端用 `uv`/`pnpm` 手动起
+> - **内网部署**(本节):API + Web + 数据层全进容器,`docker compose up` 一键起
+
+### 前置条件
+
+内网服务器(Linux / Windows 均可)只需安装 **Docker Engine + Docker Compose v2**,无需 Python / Node / pnpm。
+
+### 部署步骤
+
+```bash
+# 1. 拉代码
+git clone <仓库地址> tiangong && cd tiangong
+
+# 2. 生成安全密钥(记下输出)
+openssl rand -hex 32        # → 填 JWT_SECRET
+openssl rand -base64 32     # → 填 ENCRYPTION_KEY
+
+# 3. 填生产配置(编辑 .env.production,至少改 COOKIE_DOMAIN/CORS/JWT/ENCRYPTION/MINIO/GLM)
+cp .env.production.example .env.production
+
+# 4. 构建并启动全部服务
+docker compose --env-file .env.production --profile full up -d --build
+
+# 5. 数据库迁移
+docker compose exec api uv run alembic upgrade head
+
+# 6. 创建首个管理员
+docker compose exec api uv run python -m scripts.create_admin \
+  --username admin --password '强密码' --email admin@tiangong.dev
+```
+
+浏览器打开团队访问地址(如 `http://192.168.1.100:3000`),用管理员登录即可。
+
+### 关键配置说明
+
+`.env.production` 中必须改的项:
+
+| 变量 | 说明 |
+|---|---|
+| `INTRANET_URL` / `COOKIE_DOMAIN` / `CORS_ORIGINS` | 团队访问地址(三者主机部分一致,否则登录态丢失)|
+| `JWT_SECRET` / `ENCRYPTION_KEY` | 安全密钥,按步骤 2 生成 |
+| `MINIO_SECRET_KEY` | 改掉默认密码 |
+| `GLM_API_KEY` | 智谱 API Key(用户也可在设置页配自己的 BYOK) |
+
+> **网络受限**:若构建拉 npm 包超时,在 `.env.production` 加 `NPM_REGISTRY=https://registry.npmmirror.com`。
+
+> **账号发放**:开放注册已关闭。新账号两种途径——admin 在后台「用户管理」直接创建,或 admin 在「邀请码」页生成邀请码发给同事自助注册。
+
+> 📖 完整部署细节(cookie domain 排错、运维命令、备份、HTTPS)见 [内网部署指南](docs/deploy-internal.md)。
+
 ## 开发进度
 
 | 计划 | 状态 | 说明 |
@@ -125,12 +181,14 @@ cd apps/api && uv run alembic upgrade head
 | 6 知识库 RAG | ✅ 完成 | LangChain Embedding + pgvector + 分块归档 + 检索注入（注：弃用 LlamaIndex，见 GOTCHAS E3）|
 | 7 审查引擎+Rubric | ✅ 完成 | 确定性评估管线 + Rubric 覆盖式配置 + 自一致性 + 跨对话稳定验证 |
 | 7b 管理后台+自定义配置 | ✅ 完成 | 管理员 API + 三级 Provider 解析 + 全局开关 + 用户自配 Key + 前端管理/设置页 |
+| 8 内部产品化 | ✅ 完成 | 关闭开放注册 + 邀请码发号 + admin 创建用户 + 全容器化一键部署 |
 
 > **MVP 全部 P0 功能已落地并端到端验证。** 下一步见设计文档 11.2（P1 迭代：专利检索 / PDF 导出 / 全篇质量报告 / 灵感补全 / agent 记忆）。
 
 ## 文档
 
 - [设计文档](docs/superpowers/specs/2026-07-13-tiangong-mvp-design.md) —— 完整架构设计（13 章）
+- [内网部署指南](docs/deploy-internal.md) —— 全容器化部署、cookie 排错、运维、备份
 - [踩坑记录](docs/GOTCHAS.md) —— ⚠️ 开发前必读
 - [项目指引](AGENTS.md) —— 新会话/新开发者上手指南
 - [实施计划](docs/superpowers/plans/) —— 按子系统拆分的 TDD 计划
