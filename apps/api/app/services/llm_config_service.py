@@ -277,11 +277,16 @@ def test_llm_connection(
     api_key: str,
     model: str,
     embedding_model: str | None = None,
+    scope: str = "all",  # "all"（chat+embedding，需 embedding_model）/ "chat"（只 chat）/ "embedding"（只 embedding）
 ) -> dict:
-    """测试 LLM 连通性。chat 必测；embedding_model 提供则一并测。不落库、不写 LLMCallLog。
+    """测试 LLM 连通性。scope 控制测什么。不落库、不写 LLMCallLog。
+
+    - scope="all"：chat 必测；embedding_model 提供则一并测（兼容旧默认行为）。
+    - scope="chat"：只测 chat（忽略 embedding_model）。
+    - scope="embedding"：只测 embedding（model 参数当 embedding 模型名用）。
 
     返回 TestConnectionResult：
-      {ok, chat:{ok,latency_ms,sample,error}, embedding:{...}|None, error}
+      {ok, chat:{ok,latency_ms,sample,error}|None, embedding:{ok,latency_ms,dim,error}|None, error}
     chat 与 embedding 独立 try/except，互不影响。
     所有错误经 friendly_llm_error 友好化。
     """
@@ -290,28 +295,32 @@ def test_llm_connection(
 
     from app.ai.llm_errors import friendly_llm_error
 
-    # ---- chat ----
-    chat = {"ok": False, "latency_ms": None, "sample": None, "error": None}
-    try:
-        llm = ChatOpenAI(
-            model=model, base_url=base_url, api_key=api_key,
-            request_timeout=_TEST_TIMEOUT,
-        )
-        t0 = time.perf_counter()
-        resp = llm.invoke([HumanMessage(content="hi")])
-        chat["latency_ms"] = int((time.perf_counter() - t0) * 1000)
-        chat["ok"] = True
-        chat["sample"] = (resp.content or "")[:50]
-    except Exception as e:
-        chat["error"] = friendly_llm_error(e)
+    # ---- chat（scope=all 或 chat 时测）----
+    chat = None
+    if scope in ("all", "chat"):
+        chat = {"ok": False, "latency_ms": None, "sample": None, "error": None}
+        try:
+            llm = ChatOpenAI(
+                model=model, base_url=base_url, api_key=api_key,
+                request_timeout=_TEST_TIMEOUT,
+            )
+            t0 = time.perf_counter()
+            resp = llm.invoke([HumanMessage(content="hi")])
+            chat["latency_ms"] = int((time.perf_counter() - t0) * 1000)
+            chat["ok"] = True
+            chat["sample"] = (resp.content or "")[:50]
+        except Exception as e:
+            chat["error"] = friendly_llm_error(e)
 
-    # ---- embedding（仅当 embedding_model 非空）----
+    # ---- embedding（scope=embedding，或 scope=all 且 embedding_model 非空时测）----
+    # embedding scope 下 model 即 emb 模型名（无需另传 embedding_model）
     embedding = None
-    if embedding_model:
+    emb_model = embedding_model if scope != "embedding" else model
+    if scope == "embedding" or (scope == "all" and emb_model):
         embedding = {"ok": False, "latency_ms": None, "dim": None, "error": None}
         try:
             emb = OpenAIEmbeddings(
-                model=embedding_model, base_url=base_url, api_key=api_key,
+                model=emb_model, base_url=base_url, api_key=api_key,
                 request_timeout=_TEST_TIMEOUT,
             )
             t0 = time.perf_counter()
@@ -322,12 +331,14 @@ def test_llm_connection(
         except Exception as e:
             embedding["error"] = friendly_llm_error(e)
 
-    ok = chat["ok"] and (embedding is None or embedding["ok"])
+    tested = [x for x in (chat, embedding) if x is not None]
+    ok = all(x["ok"] for x in tested) if tested else False
+    first_err = next((x["error"] for x in tested if x["error"]), None)
     return {
         "ok": ok,
         "chat": chat,
         "embedding": embedding,
-        "error": None if ok else (chat["error"] or (embedding["error"] if embedding else None)),
+        "error": None if ok else first_err,
     }
 
 

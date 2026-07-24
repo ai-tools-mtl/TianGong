@@ -155,8 +155,118 @@ def test_my_llm(
     payload: UserLLMTestRequest,
     current_user: User = Depends(get_current_user),
 ):
-    """测试 chat LLM 连通性（不存库，直接用传入配置测试 chat）。"""
+    """测试 chat LLM 连通性（不存库，直接用传入配置测试 chat）。
+
+    scope="chat"：只测 chat，不连带测 embedding（embedding 凭据另有测试端点）。
+    """
     return llm_config_service.test_llm_connection(
         base_url=payload.base_url, api_key=payload.api_key,
-        model=payload.model,
+        model=payload.model, scope="chat",
+    )
+
+
+# ── 用户自定义 embedding 配置（镜像 chat，Task 9）──
+
+class EmbeddingConfigCreateRequest(BaseModel):
+    """新增自定义 embedding 配置。与 chat 不同：无 provider 字段。"""
+    name: str
+    base_url: str
+    api_key: str
+    # 1214 修复闸 3：model 必填且非空。
+    model: str = Field(..., min_length=1)
+
+
+class EmbeddingConfigUpdateRequest(BaseModel):
+    """修改自定义 embedding 配置。所有字段可选，仅提供才更新（api_key 留空则不变）。"""
+    name: str | None = None
+    base_url: str | None = None
+    api_key: str | None = None
+    # model 可选更新：None=不改。不强制 min_length（否则无法表达"不改 model"）。
+    model: str | None = None
+
+
+class EmbeddingTestRequest(BaseModel):
+    """测试 embedding 连通性（不落库）。仅测 embedding。"""
+    base_url: str
+    api_key: str
+    model: str = Field(..., min_length=1)
+
+
+@router.get("/settings/embedding")
+def list_my_embedding_configs(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """列出当前用户的所有自定义 embedding 配置（key 掩码）。空时返回 []。"""
+    return llm_config_service.list_user_embedding_configs(db, user_id=current_user.id)
+
+
+@router.post("/settings/embedding")
+def create_my_embedding_config(
+    payload: EmbeddingConfigCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """新增一条自定义 embedding 配置。返回新建的配置（含 id，key 掩码）。"""
+    cfg = llm_config_service.create_user_embedding_config(
+        db, user_id=current_user.id, name=payload.name, base_url=payload.base_url,
+        api_key=payload.api_key, model=payload.model,
+    )
+    return llm_config_service.embedding_config_to_dict(cfg)
+
+
+@router.put("/settings/embedding/{config_id}")
+def update_my_embedding_config(
+    config_id: str,
+    payload: EmbeddingConfigUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """修改指定自定义 embedding 配置（校验归属，越权/不存在 404，防探测）。"""
+    cfg = llm_config_service.update_user_embedding_config(
+        db, user_id=current_user.id, config_id=config_id,
+        name=payload.name, base_url=payload.base_url,
+        api_key=payload.api_key, model=payload.model,
+    )
+    return llm_config_service.embedding_config_to_dict(cfg)
+
+
+@router.delete("/settings/embedding/{config_id}")
+def delete_my_embedding_config(
+    config_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """删除指定自定义 embedding 配置（校验归属，越权/不存在 404）。"""
+    llm_config_service.delete_user_embedding_config(
+        db, user_id=current_user.id, config_id=config_id,
+    )
+    return {"message": "已删除"}
+
+
+@router.post("/settings/embedding/test")
+def test_my_embedding_config(
+    payload: EmbeddingTestRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """测试 embedding 连通性（不存库，直接用传入配置测试 embedding）。
+
+    scope="embedding"：只测 embedding，不连带测 chat（chat 凭据另有测试端点）。
+    返回结构中 chat 字段为 None。
+    """
+    return llm_config_service.test_llm_connection(
+        base_url=payload.base_url, api_key=payload.api_key,
+        model=payload.model, scope="embedding",
+    )
+
+
+@router.post("/settings/embedding/models")
+def list_my_embedding_models(
+    payload: ListModelsRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """拉取 provider 可用模型列表（不落库）。复用 ListModelsRequest（与 chat models 同形）。"""
+    return llm_config_service.list_provider_models(
+        base_url=payload.base_url, api_key=payload.api_key,
+        provider_template_id=payload.provider_template_id,
     )
