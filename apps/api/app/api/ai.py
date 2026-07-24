@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.ai.llm_client import astream_llm
+from app.ai.llm_errors import friendly_llm_error
 from app.ai.orchestrator import astream_chat, astream_generate, astream_rewrite
 from app.core.database import get_db
 from app.core.exceptions import ValidationError
@@ -95,28 +96,8 @@ def _resolve_model(llm_config) -> str:
 
 
 def _friendly_llm_error(e: Exception) -> str:
-    """把 LLM provider 原始异常（晦涩英文）转成中文友好提示（1214 修复闸 4）。
-
-    覆盖智谱 GLM / OpenAI 兼容协议的常见错误码：
-    - 1214 model 空 → 提示补模型名
-    - 1002 / 401 key 无效 → 提示查 API Key
-    - 超时 / 连接 → 提示网络
-    未匹配的错误保留 str(e)（截断 200 字符），不丢信息。
-    """
-    msg = str(e)
-    # 1214：model 为空（含上游 get_llm 的 ValueError 也归到"缺模型"语义）
-    if "1214" in msg or "model code cannot be empty" in msg or "缺少 model" in msg:
-        return "LLM 配置缺少模型名，请前往设置补全「模型」字段"
-    # 1002 / key 非法 / 401
-    if "1002" in msg or "Authorization" in msg or "API Key" in msg or "Invalid API Key" in msg:
-        return "API Key 无效或已过期，请前往设置检查密钥"
-    # 超时 / 连接
-    if "timed out" in msg.lower() or "timeout" in msg.lower():
-        return "LLM 请求超时，请稍后重试"
-    if "connection" in msg.lower() or "unreachable" in msg.lower():
-        return "无法连接 LLM 服务，请检查网络或 base_url"
-    # 未匹配：保留原文（截断），不丢信息
-    return msg[:200]
+    """友好化 LLM 异常。实现已抽到 app.ai.llm_errors（供 test_llm_connection 共用）。"""
+    return friendly_llm_error(e)
 
 
 def _log_llm_call(
