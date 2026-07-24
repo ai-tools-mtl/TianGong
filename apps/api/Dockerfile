@@ -29,8 +29,12 @@ WORKDIR /app
 # 拷虚拟环境(含全部运行依赖)
 COPY --from=builder /app/.venv /app/.venv
 
-# 拷应用代码
+# 拷应用代码 + entrypoint
 COPY . .
+
+# Windows checkout 的 shell 脚本带 CRLF,容器内执行会报 bad interpreter。
+# 这里强制转 LF(幂等,已经是 LF 也无妨)。
+RUN sed -i 's/\r$//' entrypoint.sh && chmod +x entrypoint.sh
 
 # venv 进 PATH,直接用 python/uvicorn(不再经 uv run,省一层)
 ENV PATH="/app/.venv/bin:$PATH" \
@@ -39,5 +43,5 @@ ENV PATH="/app/.venv/bin:$PATH" \
 
 EXPOSE 8000
 
-# 生产配置:去掉 --reload
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# entrypoint 先跑 init_db(迁移+admin+seed,幂等),再 exec uvicorn
+ENTRYPOINT ["./entrypoint.sh"]

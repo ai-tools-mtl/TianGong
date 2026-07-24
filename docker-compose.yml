@@ -76,6 +76,10 @@ services:
       GLM_BASE_URL: ${GLM_BASE_URL:-https://open.bigmodel.cn/api/paas/v4}
       GLM_MODEL: ${GLM_MODEL:-glm-4.7}
       GLM_EMBEDDING_MODEL: ${GLM_EMBEDDING_MODEL:-embedding-3}
+      # 首个 admin 账号(entrypoint 跑 init_db 时读取,已存在则跳过)
+      INIT_ADMIN_USERNAME: ${INIT_ADMIN_USERNAME:-admin}
+      INIT_ADMIN_PASSWORD: ${INIT_ADMIN_PASSWORD}
+      INIT_ADMIN_EMAIL: ${INIT_ADMIN_EMAIL:-admin@tiangong.dev}
     ports:
       - "8000:8000"
     depends_on:
@@ -84,11 +88,12 @@ services:
       minio:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 20s
+      # 启动含 init_db(迁移+admin+seed),首次部署较慢,放宽启动宽限期
+      start_period: 90s
     restart: unless-stopped
 
   web:

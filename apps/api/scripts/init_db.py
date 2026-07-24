@@ -11,8 +11,13 @@
     cd apps/api
     # 仅初始化表结构
     uv run python -m scripts.init_db
-    # 初始化并同时建 admin
+    # 初始化并同时建 admin（命令行参数）
     uv run python -m scripts.init_db --admin-username admin --admin-password 'admin.123' --admin-email admin@tiangong.dev
+
+管理员账号来源（优先级：命令行参数 > 环境变量 > 跳过）：
+    --admin-username / --admin-password / --admin-email
+    或环境变量 INIT_ADMIN_USERNAME / INIT_ADMIN_PASSWORD / INIT_ADMIN_EMAIL
+    容器启动时通过 entrypoint.sh 调用本脚本，由 compose 注入环境变量。
 
 注意：
 - 本脚本不做 docker 容器启停，也不删数据。若要彻底重置库，请手动执行
@@ -97,6 +102,8 @@ def _seed_system_defaults() -> None:
 
 
 def main() -> int:
+    import os
+
     parser = argparse.ArgumentParser(
         description="初始化数据库（迁移到 head，可选建管理员）"
     )
@@ -116,6 +123,15 @@ def main() -> int:
         help="管理员联系方式邮箱（可选，须用合法域名）",
     )
     args = parser.parse_args()
+
+    # 环境变量兜底：命令行参数未传时，读 INIT_ADMIN_*（容器启动用）。
+    # 优先级：命令行参数 > 环境变量 > 跳过。
+    if not args.admin_username:
+        args.admin_username = os.environ.get("INIT_ADMIN_USERNAME") or None
+    if not args.admin_password:
+        args.admin_password = os.environ.get("INIT_ADMIN_PASSWORD") or None
+    if not args.admin_email:
+        args.admin_email = os.environ.get("INIT_ADMIN_EMAIL") or None
 
     _check_db_ready()
     _run_migrations()

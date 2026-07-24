@@ -72,25 +72,25 @@ docker compose ps
 
 四个服务 `postgres` / `minio` / `api` / `web` 都应为 `Up` 且 healthcheck 通过。
 
-### 5. 执行数据库迁移 + 建 pgvector 扩展
+### 5. 数据库自动初始化(无需手动)
+
+**API 容器启动时会自动完成数据库初始化**(通过 `entrypoint.sh` 调用 `init_db.py`,全部幂等):
+
+- ✅ 跑全部 alembic 迁移到 head(建表 + pgvector 扩展,已在 head 则跳过)
+- ✅ 创建首个管理员(读 `INIT_ADMIN_*` 环境变量,已存在则跳过)
+- ✅ seed 默认交底书模板 + 默认评分 Rubric(已存在则跳过)
+
+因此**不需要手动跑迁移或建 admin**——`.env.production` 里的 `INIT_ADMIN_*` 配好即可,`docker compose up` 一键起,起来就是可用系统。
+
+查看初始化日志确认:
 
 ```bash
-# 迁移(迁移脚本内含 CREATE EXTENSION vector,见 GOTCHAS G5)
-docker compose exec api uv run alembic upgrade head
+docker compose logs api | grep -E "迁移到 head|管理员|就绪|初始化完成"
 ```
 
-### 6. 创建首个管理员
+### 6. 验证
 
-```bash
-docker compose exec api uv run python -m scripts.create_admin \
-  --username admin --password '你的强密码' --email admin@tiangong.dev
-```
-
-> 注意:邮箱用合法域名(`@tiangong.dev` / `@yourcorp.com`),**别用 `.local`**(见 GOTCHAS G4)。
-
-### 7. 验证
-
-浏览器打开 `INTRANET_URL`(默认 3000 端口由 compose 映射),用刚建的 admin 登录。
+浏览器打开 `INTRANET_URL`(默认 3000 端口由 compose 映射),用 `.env.production` 里 `INIT_ADMIN_*` 配置的 admin 账号登录。
 
 ## 跨 host cookie 传递(GOTCHAS F4)
 

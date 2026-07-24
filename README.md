@@ -136,21 +136,16 @@ git clone <仓库地址> tiangong && cd tiangong
 openssl rand -hex 32        # → 填 JWT_SECRET
 openssl rand -base64 32     # → 填 ENCRYPTION_KEY
 
-# 3. 填生产配置(编辑 .env.production,至少改 COOKIE_DOMAIN/CORS/JWT/ENCRYPTION/MINIO/GLM)
+# 3. 填生产配置(编辑 .env.production,至少改 COOKIE_DOMAIN/CORS/JWT/ENCRYPTION/MINIO/GLM/INIT_ADMIN_*)
 cp .env.production.example .env.production
 
-# 4. 构建并启动全部服务
+# 4. 构建并启动全部服务(API 容器启动会自动跑迁移+建 admin+seed 模板)
 docker compose --env-file .env.production --profile full up -d --build
-
-# 5. 数据库迁移
-docker compose exec api uv run alembic upgrade head
-
-# 6. 创建首个管理员
-docker compose exec api uv run python -m scripts.create_admin \
-  --username admin --password '强密码' --email admin@tiangong.dev
 ```
 
-浏览器打开团队访问地址(如 `http://192.168.1.100:3000`),用管理员登录即可。
+浏览器打开团队访问地址(如 `http://192.168.1.100:3000`),用 `.env.production` 里 `INIT_ADMIN_*` 配置的管理员登录即可。
+
+> **数据库自动初始化**:API 容器启动时通过 `entrypoint.sh` 调 `init_db.py`,幂等完成迁移/建 admin/seed 模板。无需手动跑 alembic 或 create_admin——`docker compose up` 一键即用。
 
 ### 关键配置说明
 
@@ -162,6 +157,7 @@ docker compose exec api uv run python -m scripts.create_admin \
 | `JWT_SECRET` / `ENCRYPTION_KEY` | 安全密钥,按步骤 2 生成 |
 | `MINIO_SECRET_KEY` | 改掉默认密码 |
 | `GLM_API_KEY` | 智谱 API Key(用户也可在设置页配自己的 BYOK) |
+| `INIT_ADMIN_USERNAME` / `INIT_ADMIN_PASSWORD` / `INIT_ADMIN_EMAIL` | 首个管理员(容器启动自动创建,已存在则跳过) |
 
 > **网络受限**:若构建拉 npm 包超时,在 `.env.production` 加 `NPM_REGISTRY=https://registry.npmmirror.com`。
 
