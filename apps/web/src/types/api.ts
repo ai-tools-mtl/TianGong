@@ -576,7 +576,7 @@ export interface TestConnectionResult {
     latency_ms: number | null
     sample: string | null
     error: string | null
-  }
+  } | null
   embedding: {
     ok: boolean
     latency_ms: number | null

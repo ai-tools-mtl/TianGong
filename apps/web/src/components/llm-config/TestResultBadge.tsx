@@ -13,13 +13,13 @@ export function TestResultBadge({ result }: { result: TestConnectionResult | nul
   return (
     <div className="space-y-1.5 rounded-lg border border-black/[0.07] bg-muted/30 p-3 text-[12px] dark:border-white/10">
       {/* chat */}
-      <ResultLine label="对话模型" r={result.chat} />
+      {result.chat ? <ResultLine label="对话模型" r={result.chat} /> : null}
       {/* embedding */}
       {result.embedding ? (
         <ResultLine label="嵌入模型" r={result.embedding} suffix={result.embedding.dim ? `${result.embedding.dim}维` : undefined} />
       ) : null}
       {/* 顶层错误兜底 */}
-      {!result.ok && result.error && !result.chat.error && !result.embedding?.error && (
+      {!result.ok && result.error && !result.chat?.error && !result.embedding?.error && (
         <p className="text-destructive">{result.error}</p>
       )}
     </div>
