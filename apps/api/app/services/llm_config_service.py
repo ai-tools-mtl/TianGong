@@ -14,6 +14,7 @@ source 取值：
 import uuid
 from dataclasses import dataclass
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -356,3 +357,76 @@ def _mask_key(key: str) -> str:
     if len(key) <= 8:
         return "****"
     return key[:3] + "****" + key[-4:]
+
+
+# ── 拉取 provider 模型列表（决策 D4：httpx 直连，不绕 LangChain）──
+
+_LIST_MODELS_MAX = 100
+_LIST_MODELS_TIMEOUT = 15.0
+
+
+def list_provider_models(
+    db: Session | None = None, *,  # db 保留位置以兼容 service 风格，本函数不用
+    base_url: str,
+    api_key: str,
+    provider_template_id: str | None = None,
+) -> dict:
+    """调 provider 的模型列表端点，返回 {models, truncated, error}。
+
+    endpoint 路径来自 provider 模板的 models_endpoint 字段（Task 2）：
+    - OpenAI 兼容（zhipu/openai/deepseek/openrouter/moonshot/custom/未指定）→ "/models"
+      拼接：base_url.rstrip("/") + "/models"（base_url 已含版本段如 /v1、/v4）
+    - Ollama → "/api/tags"（base_url 无版本段，如 http://localhost:11434）
+
+    解析：OpenAI 兼容 {data:[{id}]} → 取 id；Ollama {models:[{name}]} → 取 name。
+    去重 + 字母序排序；超过 100 条截断，truncated=True。
+    任何错误（连接/超时/401/格式异常）→ {models:[], error:"友好"}，不抛异常。
+    """
+    from app.services.llm_provider_templates import get_provider_template
+
+    # endpoint 路径：优先用模板声明；无模板则默认 OpenAI 兼容 "/models"
+    endpoint_path = "/models"
+    tpl = get_provider_template(provider_template_id) if provider_template_id else None
+    if tpl:
+        endpoint_path = tpl.models_endpoint
+    base = base_url.rstrip("/")
+    url = f"{base}{endpoint_path}"
+
+    try:
+        resp = httpx.get(
+            url,
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=_LIST_MODELS_TIMEOUT,
+        )
+    except httpx.TimeoutException:
+        return {"models": [], "truncated": False, "error": "拉取模型超时，请检查网络或端点"}
+    except httpx.HTTPError:
+        return {"models": [], "truncated": False, "error": f"无法连接到 {base}，请检查 base_url"}
+
+    if resp.status_code in (401, 403):
+        return {"models": [], "truncated": False, "error": "API Key 无效或无权限（401/403）"}
+    if resp.status_code != 200:
+        return {"models": [], "truncated": False,
+                "error": f"拉取失败：HTTP {resp.status_code}"}
+
+    try:
+        body = resp.json()
+    except Exception:
+        return {"models": [], "truncated": False, "error": "响应非 JSON，无法解析"}
+
+    # OpenAI 兼容：{data:[{id}]}；Ollama：{models:[{name}]}
+    raw: list[str] = []
+    if isinstance(body, dict) and isinstance(body.get("data"), list):
+        raw = [item.get("id") for item in body["data"]
+               if isinstance(item, dict) and item.get("id")]
+    elif isinstance(body, dict) and isinstance(body.get("models"), list):
+        raw = [item.get("name") for item in body["models"]
+               if isinstance(item, dict) and item.get("name")]
+    else:
+        return {"models": [], "truncated": False,
+                "error": "响应格式无法解析（期望 data[].id 或 models[].name）"}
+
+    # 去重 + 排序 + 截断
+    unique = sorted(set(raw))
+    truncated = len(unique) > _LIST_MODELS_MAX
+    return {"models": unique[:_LIST_MODELS_MAX], "truncated": truncated, "error": None}
