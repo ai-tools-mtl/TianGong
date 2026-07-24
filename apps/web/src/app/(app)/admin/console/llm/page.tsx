@@ -105,8 +105,8 @@ export default function AdminLLMPage() {
                 base_url: d.base_url,
                 api_key: d.api_key || undefined, // 留空=不改
                 model: d.model,
-                // panel 回传 string | null；saveMut 期望 string，空值传 undefined（不更新）
-                embedding_model: d.embedding_model || undefined,
+                // panel 回传 string | null；空值转 "" 让后端按 is-not-None 路径清空（|| 会把空串当 falsy 漏掉，用 ??）
+                embedding_model: d.embedding_model ?? "",
                 allowed_models: d.allowed_models
                   ? (d.allowed_models as string)
                       .split(',')

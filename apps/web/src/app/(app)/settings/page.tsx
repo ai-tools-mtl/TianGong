@@ -193,7 +193,7 @@ export default function SettingsPage() {
         >
           <div className="flex items-center gap-3">
             <div className="flex size-9 items-center justify-center rounded-xl bg-black/[0.04] dark:bg-white/[0.06]">
-              <Wrench className="size-4.5" />
+              <Wrench className="size-[18px]" />
             </div>
             <div>
               <p className="text-[15px] font-medium">我的技能</p>
@@ -202,7 +202,7 @@ export default function SettingsPage() {
               </p>
             </div>
           </div>
-          <ChevronRight className="size-4.5 text-muted-foreground" />
+          <ChevronRight className="size-[18px] text-muted-foreground" />
         </Link>
       </div>
 
