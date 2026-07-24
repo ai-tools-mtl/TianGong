@@ -12,9 +12,11 @@ import { useAuthStore } from '@/stores/auth'
 
 interface AuthFormProps {
   mode: 'login' | 'register'
+  /** 注册模式:从 URL ?code= 预填的邀请码(邀请码直达)。 */
+  defaultInviteCode?: string
 }
 
-export function AuthForm({ mode }: AuthFormProps) {
+export function AuthForm({ mode, defaultInviteCode }: AuthFormProps) {
   const router = useRouter()
   const setUser = useAuthStore((s) => s.setUser)
   const [loading, setLoading] = useState(false)
@@ -68,6 +70,7 @@ export function AuthForm({ mode }: AuthFormProps) {
             placeholder="向管理员获取邀请码"
             autoCapitalize="characters"
             autoCorrect="off"
+            defaultValue={defaultInviteCode}
           />
         </div>
       )}

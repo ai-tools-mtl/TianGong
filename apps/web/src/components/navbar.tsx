@@ -10,7 +10,6 @@ import {
   Settings,
   Shield,
   Tags,
-  Ticket,
   Users,
   Wrench,
 } from 'lucide-react'
@@ -56,7 +55,6 @@ const NAV_ITEMS: NavItem[] = [
 const ADMIN_NAV_ITEMS: NavItem[] = [
   { href: '/admin', label: '概览', icon: LayoutDashboard },
   { href: '/admin/users', label: '用户', icon: Users },
-  { href: '/admin/invites', label: '邀请码', icon: Ticket },
   { href: '/admin/content', label: '内容', icon: FileText },
   { href: '/admin/review', label: '审核', icon: CheckCircle, showPendingBadge: true },
   { href: '/admin/skills', label: '技能', icon: Wrench },

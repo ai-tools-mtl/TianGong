@@ -4,6 +4,7 @@ import Link from 'next/link'
 import { toast } from 'sonner'
 
 import { CreateUserDialog } from '@/components/admin/create-user-dialog'
+import { InviteSection } from '@/components/admin/invite-section'
 import { PageHeader, PageShell } from '@/components/page-shell'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -227,6 +228,11 @@ export default function UsersPage() {
             </Table>
           </div>
         )}
+      </div>
+
+      {/* 邀请码管理:并入用户页,admin 在此生成码发给同事自助注册 */}
+      <div className="mt-8 border-t pt-8">
+        <InviteSection />
       </div>
     </PageShell>
   )
