@@ -40,13 +40,19 @@ class UserLLMUpdateRequest(BaseModel):
 
 
 class UserLLMTestRequest(BaseModel):
-    """测试 LLM 连通性（不落库）。"""
-    provider: str = "custom"
+    """测试 LLM 连通性（不落库）。chat 必测；embedding_model 提供则一并测。"""
     base_url: str
     api_key: str
     # 1214 修复闸 3：测试连通性也必须有 model（无 model 必报 1214）。
     model: str = Field(..., min_length=1)
     embedding_model: str | None = None
+
+
+class ListModelsRequest(BaseModel):
+    """拉取 provider 可用模型列表（不落库）。"""
+    base_url: str
+    api_key: str
+    provider_template_id: str | None = None
 
 
 @router.get("/settings/llm")
@@ -70,6 +76,34 @@ def get_my_grant(
     选源器前端对 admin 始终展示「全局 Key」选项（admin 走 source=global 免授权路径）。
     """
     return admin_service.get_user_grant(db, user_id=current_user.id) or {"is_active": False}
+
+
+@router.get("/settings/llm/templates")
+def list_llm_templates(current_user: User = Depends(get_current_user)):
+    """返回 provider 模板预设列表（添加配置时选模板自动填）。"""
+    from app.services.llm_provider_templates import PROVIDER_TEMPLATES
+    return [
+        {
+            "id": t.id, "name": t.name, "base_url": t.base_url,
+            "default_model": t.default_model,
+            "default_embedding_model": t.default_embedding_model,
+            "models_endpoint": t.models_endpoint,
+            "docs_url": t.docs_url, "note": t.note,
+        }
+        for t in PROVIDER_TEMPLATES
+    ]
+
+
+@router.post("/settings/llm/models")
+def list_my_provider_models(
+    payload: ListModelsRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """拉取 provider 可用模型列表（不落库）。"""
+    return llm_config_service.list_provider_models(
+        base_url=payload.base_url, api_key=payload.api_key,
+        provider_template_id=payload.provider_template_id,
+    )
 
 
 @router.post("/settings/llm")
@@ -123,17 +157,8 @@ def test_my_llm(
     payload: UserLLMTestRequest,
     current_user: User = Depends(get_current_user),
 ):
-    """测试 LLM 连通性（不存库，直接用传入配置测试）。"""
-    try:
-        from langchain_core.messages import HumanMessage
-        from langchain_openai import ChatOpenAI
-
-        llm = ChatOpenAI(
-            model=payload.model,
-            base_url=payload.base_url,
-            api_key=payload.api_key,
-        )
-        resp = llm.invoke([HumanMessage(content="hi")])
-        return {"ok": True, "response": resp.content[:50]}
-    except Exception as e:
-        return {"ok": False, "error": str(e)[:200]}
+    """测试 LLM 连通性（不存库，直接用传入配置测试 chat + 可选 embedding）。"""
+    return llm_config_service.test_llm_connection(
+        base_url=payload.base_url, api_key=payload.api_key,
+        model=payload.model, embedding_model=payload.embedding_model,
+    )
