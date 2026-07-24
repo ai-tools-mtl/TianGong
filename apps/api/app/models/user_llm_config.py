@@ -17,4 +17,3 @@ class UserLLMConfig(Base, IdMixin, TimestampMixin):
     base_url: Mapped[str] = mapped_column(String(255))
     api_key_encrypted: Mapped[str] = mapped_column(String(512))
     model: Mapped[str] = mapped_column(String(100))
-    embedding_model: Mapped[str | None] = mapped_column(String(100), nullable=True)

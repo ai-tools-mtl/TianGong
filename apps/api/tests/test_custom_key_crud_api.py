@@ -78,7 +78,7 @@ def _make_config(db_session, user, *, name="公司Key", key="sk-other-secret-123
     cfg = UserLLMConfig(
         user_id=user.id, name=name, provider="custom",
         base_url=base, api_key_encrypted=encrypt_value(key),
-        model=model, embedding_model="other-embed",
+        model=model,
     )
     db_session.add(cfg)
     db_session.commit()
