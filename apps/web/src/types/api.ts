@@ -446,6 +446,7 @@ export interface KnowledgeFile {
   mime_type: string
   size: number
   source_type: string // external_pdf / external_docx / disclosure_export
+  url?: string | null // 网页来源的原 URL(external_web 才有值)
   created_at: string
 }
 
@@ -591,4 +592,49 @@ export interface ListModelsResult {
   models: string[]
   truncated: boolean
   error: string | null
+}
+
+// ── 网页摄入(Firecrawl)──
+
+// 网页摄入任务(对应后端 WebIngestionJob)
+export interface WebIngestJob {
+  id: string
+  url: string
+  mode: 'scrape' | 'crawl'
+  scope: 'personal' | 'global'
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  max_pages: number
+  pages_fetched: number
+  pages_filtered: number
+  file_ids: string[]
+  error_message: string | null
+  created_at: string
+  completed_at: string | null
+}
+
+// POST /knowledge/ingest/web 的响应(联合类型)
+export type WebIngestResult =
+  | { kind: 'file'; file: KnowledgeFile }
+  | { kind: 'job'; job: WebIngestJob }
+
+// 网页摄入请求体
+export interface WebIngestRequest {
+  url: string
+  mode: 'scrape' | 'crawl'
+  scope: 'personal' | 'global'
+  max_pages?: number
+}
+
+// Firecrawl 全局配置(GET /admin/console/firecrawl)
+export interface FirecrawlSettings {
+  enabled: boolean
+  api_key_masked: string
+  base_url: string
+}
+
+// Firecrawl 配置 PUT 请求体
+export interface FirecrawlConfigPayload {
+  enabled: boolean
+  api_key: string
+  base_url: string | null
 }
