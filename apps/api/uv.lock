@@ -691,6 +691,24 @@ wheels = [
 ]
 
 [[package]]
+name = "firecrawl-py"
+version = "4.32.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiohttp" },
+    { name = "httpx" },
+    { name = "nest-asyncio" },
+    { name = "pydantic" },
+    { name = "python-dotenv" },
+    { name = "requests" },
+    { name = "websockets" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/28/53/d90f58eb6f6e950d9780b6c38eae2bccf3bdc73b0cfeb5f30a41f1a6db1b/firecrawl_py-4.32.1.tar.gz", hash = "sha256:a0a15f4a82b903d9054f0cf82693c9286d40b53477545debc7bd6157b9399eff", size = 202276, upload-time = "2026-07-16T14:10:12.056Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/3e/4e/3c6016fa8ef0cf79af55947849f30a470fe2070cc3df4cc3cae6218e4ae9/firecrawl_py-4.32.1-py3-none-any.whl", hash = "sha256:0af21278537422c5ecce6159f45aed88aa75046a029cbd0ba8e4a38d8067b2b2", size = 252262, upload-time = "2026-07-16T14:10:10.344Z" },
+]
+
+[[package]]
 name = "frozenlist"
 version = "1.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1669,6 +1687,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/0c/f7/addf1087b860ac60e6f382240f64fb99f8bfb532bb06f7c542b83c29ca61/multidict-6.7.1-cp314-cp314t-win_amd64.whl", hash = "sha256:497bde6223c212ba11d462853cfa4f0ae6ef97465033e7dc9940cdb3ab5b48e5", size = 53542, upload-time = "2026-01-26T02:46:08.809Z" },
     { url = "https://files.pythonhosted.org/packages/4c/81/4629d0aa32302ef7b2ec65c75a728cc5ff4fa410c50096174c1632e70b3e/multidict-6.7.1-cp314-cp314t-win_arm64.whl", hash = "sha256:2bbd113e0d4af5db41d5ebfe9ccaff89de2120578164f86a5d17d5a576d1e5b2", size = 44719, upload-time = "2026-01-26T02:46:11.146Z" },
     { url = "https://files.pythonhosted.org/packages/81/08/7036c080d7117f28a4af526d794aab6a84463126db031b007717c1a6676e/multidict-6.7.1-py3-none-any.whl", hash = "sha256:55d97cc6dae627efa6a6e548885712d4864b81110ac76fa4e534c03819fa4a56", size = 12319, upload-time = "2026-01-26T02:46:44.004Z" },
+]
+
+[[package]]
+name = "nest-asyncio"
+version = "1.6.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/83/f8/51569ac65d696c8ecbee95938f89d4abf00f47d58d48f6fbabfe8f0baefe/nest_asyncio-1.6.0.tar.gz", hash = "sha256:6f172d5449aca15afd6c646851f4e31e02c598d553a667e38cafa997cfec55fe", size = 7418, upload-time = "2024-01-21T14:25:19.227Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a0/c4/c2971a3ba4c6103a3d10c4b0f24f461ddc027f0f09763220cf35ca1401b3/nest_asyncio-1.6.0-py3-none-any.whl", hash = "sha256:87af6efd6b5e897c81050477ef65c62e2b2f35d51703cae01aff2905b1852e1c", size = 5195, upload-time = "2024-01-21T14:25:17.223Z" },
 ]
 
 [[package]]
@@ -2729,6 +2756,7 @@ dependencies = [
     { name = "docker" },
     { name = "email-validator" },
     { name = "fastapi" },
+    { name = "firecrawl-py" },
     { name = "httpx" },
     { name = "langchain" },
     { name = "langchain-community" },
@@ -2767,6 +2795,7 @@ requires-dist = [
     { name = "docker", specifier = ">=7.2.0" },
     { name = "email-validator", specifier = ">=2.3.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "firecrawl-py", specifier = ">=1.0.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
     { name = "langchain", specifier = ">=1.3.13" },

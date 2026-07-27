@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     glm_model: str = "glm-4.7"
     glm_embedding_model: str = "embedding-3"
 
+    # Firecrawl (web ingestion;全局 key 存 SystemSetting,env 仅兜底)
+    firecrawl_api_key: str = ""
+    firecrawl_base_url: str = "https://api.firecrawl.dev"
+    firecrawl_enabled: bool = False
+
     # 文件上传（设计 13.2，附录 B：MVP 本地存储）
     upload_dir: str = "uploads"
     max_image_size_mb: int = 10
