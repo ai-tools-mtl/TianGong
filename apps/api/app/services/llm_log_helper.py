@@ -43,3 +43,33 @@ def log_embed_call(
     except Exception:
         # 日志失败不影响主流程；回滚避免污染 session
         db.rollback()
+
+
+def log_firecrawl_call(
+    db: Session, *,
+    user_id,
+    mode: str,
+    pages: int,
+    source: str = "global",
+    status: str = "success",
+) -> None:
+    """写一条 Firecrawl 调用元数据日志。失败不抛(日志不应影响主流程)。
+
+    pages 存在 token_completion 字段(语义复用:Firecrawl 无 token 概念,
+    借该字段记页数;配额查询按 action='firecrawl' 聚合 SUM)。
+    pages 可为负(退款/校正)。
+
+    spec: docs/superpowers/specs/2026-07-27-firecrawl-web-ingestion-design.md 第 3 节。
+    """
+    try:
+        db.add(LLMCallLog(
+            user_id=user_id,
+            action="firecrawl",
+            model=f"firecrawl-{mode}",   # scrape/crawl
+            provider=source,             # global/env
+            token_completion=pages,
+            status=status,
+        ))
+        db.commit()
+    except Exception:
+        db.rollback()
