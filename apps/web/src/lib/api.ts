@@ -358,6 +358,16 @@ export const api = {
   }) =>
     request<import('@/types/api').GlobalLLMSettings>(`/admin/llm-config`, { method: 'PUT', body: JSON.stringify(data) }),
 
+  // ── Firecrawl 全局配置(admin)──
+  getFirecrawlConfig: () =>
+    request<import('@/types/api').FirecrawlSettings>('/admin/console/firecrawl'),
+
+  setFirecrawlConfig: (payload: import('@/types/api').FirecrawlConfigPayload) =>
+    request<{ ok: true }>('/admin/console/firecrawl', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+
   // admin LLM 连接测试 / 模型拉取（feat/llm-chat-embedding-split：chat/embedding 各拆两端点）
   /** admin 测试全局 chat 连接。字段全可选：留空走当前已存的 chat 配置复检。 */
   testGlobalChat: (data: {
@@ -549,6 +559,19 @@ export const api = {
 
   knowledgeFileUrl: (fileId: string) =>
     `${BASE}/api/v1/knowledge/files/${fileId}/download`,
+
+  // ── 网页摄入(Firecrawl)──
+  ingestWeb: (payload: import('@/types/api').WebIngestRequest) =>
+    request<import('@/types/api').WebIngestResult>('/knowledge/ingest/web', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  getIngestJob: (jobId: string) =>
+    request<import('@/types/api').WebIngestJob>(`/knowledge/ingest/jobs/${jobId}`),
+
+  listIngestJobs: () =>
+    request<import('@/types/api').WebIngestJob[]>('/knowledge/ingest/jobs'),
 
   // ── 知识库审核(admin)──
   listPendingReviews: () =>
