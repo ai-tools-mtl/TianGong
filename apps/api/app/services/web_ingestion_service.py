@@ -6,21 +6,23 @@ scrape 同步返回 KnowledgeFile,crawl 异步建 WebIngestionJob + 后台轮询
 spec: docs/superpowers/specs/2026-07-27-firecrawl-web-ingestion-design.md 第 5、7 节。
 
 本文件分多个 Task 逐步填充:
-- Task 9(本任务):常量 + URL 校验(SSRF)+ 配额函数
+- Task 9:常量 + URL 校验(SSRF)+ 配额函数
 - Task 10:create_job + _scrape_sync + _crawl_async
-- Task 11:run_job + _poll_and_ingest + _ingest_crawl_pages
+- Task 11(本任务):run_job + _poll_and_ingest + _ingest_crawl_pages + _mark_failed
 - Task 12:recover_pending_jobs + get_job + list_jobs
 """
 
 import ipaddress
-from datetime import datetime, timezone
+import time
+import uuid
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ValidationError
-from app.models import LLMCallLog, WebIngestionJob
+from app.models import LLMCallLog, User, WebIngestionJob
 from app.services.llm_log_helper import log_firecrawl_call
 
 
@@ -318,13 +320,121 @@ def _crawl_async(
 
 
 # ── run_job / _poll_and_ingest / recover_pending_jobs ────────
-# (Task 11/12 实现)
+# run_job 在此(Task 11);recover_pending_jobs 在 Task 12。
 
 
 def run_job(job_id: str) -> None:
-    """BackgroundTask 入口:轮询 Firecrawl + 入库。Task 11 实现。
+    """BackgroundTask 入口:轮询 Firecrawl + 整站入库。
 
-    占位为 NotImplementedError——Task 10 的测试里 spawn_background_task 被 mock,
-    run_job 不会被真调,占位安全。Task 11 替换为真实实现。
+    自开独立 Session(对称 run_parse_job_standalone):BackgroundTasks 在响应
+    返回后才执行,此时请求作用域的 session 已关闭,必须自己开一个。
+    SessionLocal 走 lazy import,便于测试 patch app.core.database.SessionLocal。
     """
-    raise NotImplementedError("run_job 在 Task 11 实现")
+    from app.core.database import SessionLocal
+
+    db = SessionLocal()
+    job = None
+    try:
+        job = db.get(WebIngestionJob, uuid.UUID(job_id))
+        if job is None or job.status in ("completed", "failed"):
+            return  # 幂等:已完成/失败的 job 重跑无副作用
+        config = resolve_firecrawl_config(db)
+        if config is None:
+            _mark_failed(db, job, "Firecrawl 配置丢失")
+            return
+        client = FirecrawlClient(config.api_key, config.base_url)
+        _poll_and_ingest(db, job=job, client=client, config=config)
+    except Exception as e:
+        if job is not None:
+            _mark_failed(db, job, str(e)[:500])
+    finally:
+        db.close()
+
+
+def _poll_and_ingest(db, *, job, client, config) -> None:
+    """轮询 Firecrawl 状态 + 完成时入库。
+
+    状态机(对齐 firecrawl v2 实际值):
+    - scraping:进行中,更新进度 + sleep 后再查
+    - completed:整站入库 + 标 completed
+    - failed:标 failed(带远端完成进度)
+    - 超时(deadline 超过 CRAWL_TIMEOUT_HOURS):标 failed
+    """
+    deadline = datetime.now(timezone.utc) + timedelta(hours=CRAWL_TIMEOUT_HOURS)
+    while datetime.now(timezone.utc) < deadline:
+        status = client.check_crawl(job.firecrawl_job_id)
+        if status.status == "completed":
+            _ingest_crawl_pages(db, job=job, pages=status.pages, config=config)
+            job.status = "completed"
+            job.completed_at = datetime.now(timezone.utc)
+            job.pages_fetched = len(status.pages)
+            db.commit()
+            return
+        if status.status == "failed":
+            _mark_failed(
+                db, job,
+                f"Firecrawl 任务失败(已完成 {status.completed}/{status.total})",
+            )
+            return
+        # 进行中:更新进度后继续轮询
+        job.pages_fetched = status.completed
+        db.commit()
+        time.sleep(CRAWL_POLL_INTERVAL_SECONDS)
+    _mark_failed(db, job, f"轮询超时({CRAWL_TIMEOUT_HOURS}h)")
+
+
+def _ingest_crawl_pages(db, *, job, pages, config) -> None:
+    """整站结果分页入库。每页一个 KnowledgeFile。
+
+    - 每页独立 try/except:单页入库失败不影响其他页(对齐 spec,不引入 partial 状态)
+    - 质量过滤未通过的页计入 pages_filtered,不入库
+    - 入库后按实际页数校正配额(多退少补)
+    """
+    storage = get_storage()
+    file_ids: list[str] = []
+    filtered_count = 0
+    user = db.get(User, job.user_id)
+    if user is None:
+        _mark_failed(db, job, "发起用户不存在")
+        return
+
+    for page in pages:
+        filtered = filter_content(page.markdown, page.title)
+        if filtered is None:
+            filtered_count += 1
+            continue
+        content_bytes = filtered.markdown.encode("utf-8")
+        filename = _derive_filename(filtered.title, page.url)
+        try:
+            if job.scope == "global":
+                kf = knowledge_service.upload_to_global(
+                    db, storage=storage, uploader=user,
+                    filename=filename, content=content_bytes,
+                    mime="text/markdown", text=filtered.markdown, url=page.url,
+                )
+            else:
+                kf = knowledge_service.upload_external(
+                    db, storage=storage, user=user,
+                    filename=filename, content=content_bytes,
+                    mime="text/markdown", text=filtered.markdown, url=page.url,
+                )
+            file_ids.append(str(kf.id))
+        except Exception:
+            # 单页入库失败不影响其他页(对齐 spec:不引入 partial 状态)
+            continue
+
+    job.file_ids = file_ids
+    job.pages_filtered = filtered_count
+    log_firecrawl_call(
+        db, user_id=job.user_id, mode="crawl",
+        pages=len(pages), source=config.source,
+    )
+    _correct_quota(db, job=job)
+
+
+def _mark_failed(db, job, message: str) -> None:
+    """标记 job 失败,截断 error_message 500 字(对齐 run_parse_job)。"""
+    job.status = "failed"
+    job.error_message = message[:500]
+    job.completed_at = datetime.now(timezone.utc)
+    db.commit()
