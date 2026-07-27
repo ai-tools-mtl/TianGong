@@ -30,6 +30,7 @@ def upload_to_global(
     db: Session, *, storage: Storage, uploader, filename: str,
     content: bytes, mime: str, text: str,
     url: str | None = None,
+    source_type_override: str | None = None,
 ) -> KnowledgeFile:
     """admin 直传全局库。生成 file + chunk(scope=global),全员可检索。
 
@@ -38,7 +39,7 @@ def upload_to_global(
     """
     import hashlib
 
-    source_type = _source_type_for(filename)
+    source_type = source_type_override or _source_type_for(filename)
     content_hash = hashlib.sha256(content).hexdigest()
 
     # 去重:全局库已有同内容文件 → 直接返回
@@ -76,9 +77,10 @@ def upload_external(
     db: Session, *, storage: Storage, user, filename: str,
     content: bytes, mime: str, text: str,
     url: str | None = None,
+    source_type_override: str | None = None,
 ) -> KnowledgeFile:
     """user 上传外部素材进个人库。scope=personal,仅本人可检索。"""
-    source_type = _source_type_for(filename)
+    source_type = source_type_override or _source_type_for(filename)
     object_key = f"personal/{user.id}/{uuid.uuid4()}.{_ext(filename)}"
     storage.put("personal", object_key, content, mime)
 

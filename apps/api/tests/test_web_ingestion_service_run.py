@@ -196,3 +196,98 @@ def test_run_job_marks_failed_on_unconfigured(db_session):
     db_session.refresh(job)
     assert job.status == "failed"
     assert "配置丢失" in (job.error_message or "")
+
+
+# ── 配额账本断言(防三重计数 / 防漏退款)──────────────────────────
+
+
+@patch("app.services.web_ingestion_service.time.sleep")
+@patch("app.services.web_ingestion_service.get_storage")
+@patch("app.services.web_ingestion_service.knowledge_service.upload_to_global")
+@patch("app.services.web_ingestion_service.resolve_firecrawl_config")
+@patch("app.services.web_ingestion_service.FirecrawlClient")
+def test_run_job_completed_quota_correct(
+    mock_client_cls, mock_resolve, mock_upload, mock_storage, mock_sleep,
+    db_session, fake_config,
+):
+    """crawl 完成后配额 = 实际入库页数(非三重计数)。
+
+    推演:
+    - 预扣 _reserve_quota(max_pages=50) → reserved = +50
+    - completed 2 页全合格入库 → pages_fetched=2, pages_filtered=0
+    - _correct_quota: actual=2, reserved=50, delta=-48 → correction = -48
+    - 净 = 50 + (-48) = 2
+    若存在 Bug A(success 日志重复记账),会出现 reserved+success+correction
+    的三重计数,净额 != 2。
+    """
+    from app.models import User
+    user = User(username="test_quota", name="tq", password_hash="x",
+                email="test_quota@tiangong.dev")
+    db_session.add(user)
+    db_session.flush()
+    job = _create_running_job(db_session, user_id=user.id)
+
+    mock_resolve.return_value = fake_config
+    client = MagicMock()
+    mock_client_cls.return_value = client
+    client.check_crawl.return_value = CrawlStatus(
+        status="completed", completed=2, total=2,
+        pages=[_make_page(1), _make_page(2)], credits_used=2,
+    )
+    mock_storage.return_value = MagicMock()
+    mock_kf = MagicMock()
+    mock_kf.id = uuid.uuid4()
+    mock_upload.return_value = mock_kf
+
+    # 模拟 create_job 时已预扣 max_pages=50
+    web_ingestion_service._reserve_quota(
+        db_session, user=user, mode="crawl", max_pages=50,
+    )
+
+    run_job(str(job.id))
+
+    used = web_ingestion_service._used_pages_today(db_session, user.id)
+    assert used == 2, f"配额应为 2(实际入库页数),实际 {used}"
+
+
+@patch("app.services.web_ingestion_service.time.sleep")
+@patch("app.services.web_ingestion_service.resolve_firecrawl_config")
+@patch("app.services.web_ingestion_service.FirecrawlClient")
+def test_run_job_failed_refunds_unfetched(
+    mock_client_cls, mock_resolve, mock_sleep, db_session, fake_config,
+):
+    """crawl 失败时退还未抓的页数(按已抓页数计费)。
+
+    推演(failed 前已抓 10 页):
+    - 预扣 _reserve_quota(max_pages=50) → reserved = +50
+    - job.pages_fetched=10(模拟 failed 前抓到 10 页), pages_filtered=0
+    - failed 分支先 _correct_quota: actual=10, reserved=50, delta=-40 → -40
+    - 净 = 50 + (-40) = 10
+    若存在 Bug C(failed 不退款),净额会停在 50,预扣的 40 页永远扣着。
+    """
+    from app.models import User
+    user = User(username="test_fail", name="tf", password_hash="x",
+                email="test_fail@tiangong.dev")
+    db_session.add(user)
+    db_session.flush()
+    job = _create_running_job(db_session, user_id=user.id)
+    # 模拟 failed 前的抓取进度(部分页已抓但未入库)
+    job.pages_fetched = 10
+    db_session.commit()
+
+    mock_resolve.return_value = fake_config
+    client = MagicMock()
+    mock_client_cls.return_value = client
+    client.check_crawl.return_value = CrawlStatus(
+        status="failed", completed=10, total=50, pages=[], credits_used=10,
+    )
+
+    # 模拟 create_job 时已预扣 max_pages=50
+    web_ingestion_service._reserve_quota(
+        db_session, user=user, mode="crawl", max_pages=50,
+    )
+
+    run_job(str(job.id))
+
+    used = web_ingestion_service._used_pages_today(db_session, user.id)
+    assert used == 10, f"失败时应按已抓页数(10)计费,实际 {used}"

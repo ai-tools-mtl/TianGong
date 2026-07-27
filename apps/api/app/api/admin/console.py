@@ -253,11 +253,13 @@ class FirecrawlConfigRequest(BaseModel):
     """admin 设置全局 Firecrawl 配置。
 
     api_key 空串表示不修改(保留现有 key)。
+    base_url 为 None 表示不修改(保留现有 base_url),对齐 api_key 空串=不改的语义。
+    显式传值(含空串)才覆盖。
     """
 
     enabled: bool
     api_key: str = ""
-    base_url: str = "https://api.firecrawl.dev"
+    base_url: str | None = None
 
 
 @router.get("/admin/console/firecrawl")

@@ -285,12 +285,14 @@ def _scrape_sync(
             db, storage=storage, uploader=user,
             filename=filename, content=content_bytes,
             mime="text/markdown", text=filtered.markdown, url=url,
+            source_type_override="external_web",
         )
     else:
         kf = knowledge_service.upload_external(
             db, storage=storage, user=user,
             filename=filename, content=content_bytes,
             mime="text/markdown", text=filtered.markdown, url=url,
+            source_type_override="external_web",
         )
     return kf
 
@@ -364,13 +366,18 @@ def _poll_and_ingest(db, *, job, client, config) -> None:
     while datetime.now(timezone.utc) < deadline:
         status = client.check_crawl(job.firecrawl_job_id)
         if status.status == "completed":
+            # Bug B 修复:先更新 pages_fetched,供 _ingest_crawl_pages 内的
+            # _correct_quota 读到最终值(而非轮询中最后一次 scraping 的旧值)。
+            job.pages_fetched = len(status.pages)
             _ingest_crawl_pages(db, job=job, pages=status.pages, config=config)
             job.status = "completed"
             job.completed_at = datetime.now(timezone.utc)
-            job.pages_fetched = len(status.pages)
             db.commit()
             return
         if status.status == "failed":
+            # Bug C 修复:failed 时先校正配额(按已抓页数,退款 = max_pages - pages_fetched)
+            # 再标 failed,否则预扣的 max_pages 永远扣着但一个文件没拿到。
+            _correct_quota(db, job=job)
             _mark_failed(
                 db, job,
                 f"Firecrawl 任务失败(已完成 {status.completed}/{status.total})",
@@ -380,6 +387,8 @@ def _poll_and_ingest(db, *, job, client, config) -> None:
         job.pages_fetched = status.completed
         db.commit()
         time.sleep(CRAWL_POLL_INTERVAL_SECONDS)
+    # while 循环结束 = 超时:按已抓页数校正(退款余下)再标 failed
+    _correct_quota(db, job=job)
     _mark_failed(db, job, f"轮询超时({CRAWL_TIMEOUT_HOURS}h)")
 
 
@@ -411,12 +420,14 @@ def _ingest_crawl_pages(db, *, job, pages, config) -> None:
                     db, storage=storage, uploader=user,
                     filename=filename, content=content_bytes,
                     mime="text/markdown", text=filtered.markdown, url=page.url,
+                    source_type_override="external_web",
                 )
             else:
                 kf = knowledge_service.upload_external(
                     db, storage=storage, user=user,
                     filename=filename, content=content_bytes,
                     mime="text/markdown", text=filtered.markdown, url=page.url,
+                    source_type_override="external_web",
                 )
             file_ids.append(str(kf.id))
         except Exception:
@@ -425,10 +436,8 @@ def _ingest_crawl_pages(db, *, job, pages, config) -> None:
 
     job.file_ids = file_ids
     job.pages_filtered = filtered_count
-    log_firecrawl_call(
-        db, user_id=job.user_id, mode="crawl",
-        pages=len(pages), source=config.source,
-    )
+    # Bug A 修复:删除重复的 success 日志。配额只走 _reserve_quota(预扣)+
+    # _correct_quota(校正)两条日志;success 日志会导致 _used_pages_today 三重计数。
     _correct_quota(db, job=job)
 
 
