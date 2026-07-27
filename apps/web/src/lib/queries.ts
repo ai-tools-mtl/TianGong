@@ -311,7 +311,7 @@ export function useIngestWeb() {
 }
 
 export function useIngestJobs() {
-  return useQuery({
+  return useQuery<import('@/types/api').WebIngestJob[]>({
     queryKey: queryKeys.knowledgeJobs,
     queryFn: () => api.listIngestJobs(),
     refetchInterval: (query) => {
