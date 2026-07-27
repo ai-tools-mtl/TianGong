@@ -33,6 +33,8 @@ export const queryKeys = {
   tags: ['tags'] as const,
   knowledgePersonal: ['knowledge', 'personal'] as const,
   knowledgeGlobal: ['knowledge', 'global'] as const,
+  knowledgeJobs: ['knowledge', 'ingest-jobs'] as const,
+  knowledgeJob: (id: string) => ['knowledge', 'ingest-jobs', id] as const,
   reviews: ['reviews'] as const,
   members: (projectId: string) => ['members', projectId] as const,
   shareLinks: (projectId: string) => ['share-links', projectId] as const,
@@ -54,6 +56,7 @@ export const queryKeys = {
     userDetail: (id: string) => ['admin', 'users', id] as const,
     // Console 域（refactor/admin-ia-phase2 切片 2）
     llmConfig: ['admin', 'llm-config'] as const,
+    firecrawlConfig: ['admin', 'firecrawl-config'] as const,
     llmStats: (days: number) => ['admin', 'llm-stats', days] as const,
     auditLogs: (page: number, size: number) =>
       ['admin', 'audit-logs', page, size] as const,
@@ -286,6 +289,38 @@ export function useSubmitKnowledgeReview() {
   return useMutation({
     mutationFn: (fileId: string) => api.submitKnowledgeReview(fileId),
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.knowledgePersonal }),
+  })
+}
+
+// ── 网页摄入(Firecrawl)──
+export function useIngestWeb() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: import('@/types/api').WebIngestRequest) => api.ingestWeb(payload),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: queryKeys.knowledgeJobs })
+      if (data.kind === 'file') {
+        qc.invalidateQueries({
+          queryKey: data.file.scope === 'global'
+            ? queryKeys.knowledgeGlobal
+            : queryKeys.knowledgePersonal,
+        })
+      }
+    },
+  })
+}
+
+export function useIngestJobs() {
+  return useQuery({
+    queryKey: queryKeys.knowledgeJobs,
+    queryFn: () => api.listIngestJobs(),
+    refetchInterval: (query) => {
+      const jobs = query.state.data
+      const hasActive = jobs?.some(
+        (j) => j.status === 'pending' || j.status === 'running',
+      )
+      return hasActive ? 5000 : false
+    },
   })
 }
 
@@ -564,6 +599,26 @@ export function useSaveGlobalLLM() {
       qc.invalidateQueries({ queryKey: queryKeys.admin.llmConfig })
       // 保存会写审计日志（admin_service._audit action=set_global_llm）
       qc.invalidateQueries({ queryKey: ['admin', 'audit-logs'] })
+    },
+  })
+}
+
+// ── Firecrawl 全局配置(admin)──
+export function useFirecrawlConfig() {
+  return useQuery({
+    queryKey: queryKeys.admin.firecrawlConfig,
+    queryFn: () => api.getFirecrawlConfig(),
+  })
+}
+
+export function useSaveFirecrawlConfig() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: import('@/types/api').FirecrawlConfigPayload) =>
+      api.setFirecrawlConfig(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.admin.firecrawlConfig })
+      qc.invalidateQueries({ queryKey: queryKeys.admin.all })
     },
   })
 }
