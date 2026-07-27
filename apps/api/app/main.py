@@ -42,3 +42,13 @@ def on_startup():
             loguru.logger.info(f"恢复扫描：重新入队 {n} 个解析任务")
     except Exception as e:
         loguru.logger.exception(f"恢复扫描失败（不阻塞启动）：{e}")
+
+    # 网页摄入任务恢复（异步 spawn，不阻塞 startup；crawl 轮询可能跑数小时）
+    try:
+        from app.services.web_ingestion_service import recover_pending_jobs as recover_web
+
+        n_web = recover_web()
+        if n_web:
+            loguru.logger.info(f"恢复扫描：重新入队 {n_web} 个网页摄入任务")
+    except Exception as e:
+        loguru.logger.exception(f"网页摄入恢复扫描失败（不阻塞启动）：{e}")
