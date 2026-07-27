@@ -18,10 +18,10 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import ValidationError
+from app.core.exceptions import NotFoundError, ValidationError
 from app.models import LLMCallLog, User, WebIngestionJob
 from app.services.llm_log_helper import log_firecrawl_call
 
@@ -438,3 +438,60 @@ def _mark_failed(db, job, message: str) -> None:
     job.error_message = message[:500]
     job.completed_at = datetime.now(timezone.utc)
     db.commit()
+
+
+# ── recover_pending_jobs / get_job / list_jobs ───────────────
+
+
+def recover_pending_jobs(stale_minutes: int = 10) -> int:
+    """启动时扫描孤儿 web ingestion 任务。返回重新入队数。
+
+    异步 spawn,不阻塞 startup(与 parse_service.recover_pending_jobs 的同步模式不同,
+    因 crawl 轮询可能跑数小时)。
+    """
+    from app.core.database import SessionLocal  # lazy import,便于测试 patch
+
+    db = SessionLocal()
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=stale_minutes)
+        orphans = db.scalars(
+            select(WebIngestionJob).where(
+                or_(
+                    (WebIngestionJob.status == "running")
+                    & (WebIngestionJob.updated_at < cutoff),
+                    (WebIngestionJob.status == "pending")
+                    & (WebIngestionJob.created_at < cutoff),
+                )
+            )
+        ).all()
+        count = 0
+        for job in orphans:
+            spawn_background_task(run_job, str(job.id))
+            count += 1
+        return count
+    except Exception:
+        return 0  # 不阻塞 startup
+    finally:
+        db.close()
+
+
+def get_job(db: Session, *, job_id: str, user) -> WebIngestionJob:
+    """查 crawl 任务。越权(非 owner 且非 admin)→ 404。"""
+    try:
+        jid = uuid.UUID(job_id)
+    except ValueError:
+        raise NotFoundError("任务不存在")
+    job = db.get(WebIngestionJob, jid)
+    if job is None:
+        raise NotFoundError("任务不存在")
+    if job.user_id != user.id and getattr(user, "role", None) != "admin":
+        raise NotFoundError("任务不存在")  # 不暴露存在性
+    return job
+
+
+def list_jobs(db: Session, *, user) -> list[WebIngestionJob]:
+    """列本人的网页摄入任务。"""
+    return list(db.scalars(
+        select(WebIngestionJob).where(WebIngestionJob.user_id == user.id)
+        .order_by(WebIngestionJob.created_at.desc())
+    ))
