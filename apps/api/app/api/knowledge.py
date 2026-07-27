@@ -176,3 +176,76 @@ def list_global(
     """列出全局库文件(所有登录 user 可见)。"""
     files = knowledge_service.list_global_files(db)
     return [_file_out(kf) for kf in files]
+
+
+# ── 网页摄入 ───────────────────────────────────────────────────
+
+
+class WebIngestRequest(BaseModel):
+    url: str
+    mode: str = "scrape"        # scrape / crawl
+    scope: str = "personal"     # personal / global(global 需 admin)
+    max_pages: int = 1          # 仅 crawl 有效
+
+
+def _job_out(job) -> dict:
+    """WebIngestionJob 序列化。"""
+    return {
+        "id": str(job.id),
+        "url": job.url,
+        "mode": job.mode,
+        "scope": job.scope,
+        "status": job.status,
+        "max_pages": job.max_pages,
+        "pages_fetched": job.pages_fetched,
+        "pages_filtered": job.pages_filtered,
+        "file_ids": job.file_ids or [],
+        "firecrawl_job_id": job.firecrawl_job_id,
+        "error_message": job.error_message,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+    }
+
+
+@router.post("/knowledge/ingest/web")
+def ingest_web(
+    payload: WebIngestRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """发起网页摄入。scrape 同步返回 file;crawl 异步返回 job。"""
+    from app.models import KnowledgeFile as _KF
+    from app.services import web_ingestion_service
+
+    result = web_ingestion_service.create_job(
+        db, user=current_user, url=payload.url,
+        mode=payload.mode, scope=payload.scope, max_pages=payload.max_pages,
+    )
+    if isinstance(result, _KF):
+        return {"kind": "file", "file": _file_out(result)}
+    return {"kind": "job", "job": _job_out(result)}
+
+
+@router.get("/knowledge/ingest/jobs/{job_id}")
+def get_ingest_job(
+    job_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """查 crawl 任务状态。越权(非 owner 且非 admin)返回 404。"""
+    from app.services import web_ingestion_service
+
+    job = web_ingestion_service.get_job(db, job_id=job_id, user=current_user)
+    return _job_out(job)
+
+
+@router.get("/knowledge/ingest/jobs")
+def list_ingest_jobs(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """列出本人的网页摄入任务。"""
+    from app.services import web_ingestion_service
+
+    jobs = web_ingestion_service.list_jobs(db, user=current_user)
+    return [_job_out(j) for j in jobs]
