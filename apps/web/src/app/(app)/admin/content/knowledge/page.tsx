@@ -1,10 +1,12 @@
 'use client'
 
-import { useRef } from 'react'
-import { Download, Upload } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { Download, Globe, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 
+import { IngestJobTracker } from '@/components/ingest-job-tracker'
 import { PageHeader, PageShell } from '@/components/page-shell'
+import { WebIngestDialog } from '@/components/web-ingest-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -12,6 +14,7 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { api } from '@/lib/api'
 import { useAdminUploadGlobal, useGlobalKnowledge } from '@/lib/queries'
+import { sourceTypeLabel } from '@/lib/source-type-labels'
 import type { KnowledgeFile } from '@/types/api'
 
 /**
@@ -26,6 +29,7 @@ import type { KnowledgeFile } from '@/types/api'
  */
 export default function AdminKnowledgePage() {
   const fileRef = useRef<HTMLInputElement>(null)
+  const [ingestOpen, setIngestOpen] = useState(false)
   const upload = useAdminUploadGlobal()
   const { data: files, isLoading } = useGlobalKnowledge()
 
@@ -46,24 +50,36 @@ export default function AdminKnowledgePage() {
   return (
     <PageShell>
       <PageHeader title="知识库直传" description={`全局库 · ${list.length} 个文件`}>
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".pdf,.docx"
-          onChange={handleUpload}
-          className="hidden"
-        />
-        <Button
-          onClick={() => fileRef.current?.click()}
-          disabled={upload.isPending}
-          className="gap-1.5"
-        >
-          <Upload className="size-3.5" />
-          {upload.isPending ? '上传中...' : '上传到全局库'}
-        </Button>
+        <div className="flex gap-2">
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".pdf,.docx"
+            onChange={handleUpload}
+            className="hidden"
+          />
+          <Button
+            onClick={() => fileRef.current?.click()}
+            disabled={upload.isPending}
+            className="gap-1.5"
+          >
+            <Upload className="size-3.5" />
+            {upload.isPending ? '上传中...' : '上传到全局库'}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => setIngestOpen(true)}
+            className="gap-1.5"
+          >
+            <Globe className="size-3.5" />
+            抓取网页
+          </Button>
+        </div>
       </PageHeader>
 
       <div className="py-6">
+        <IngestJobTracker scope="global" />
+
         {isLoading ? (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {Array.from({ length: 3 }).map((_, i) => (
@@ -80,6 +96,12 @@ export default function AdminKnowledgePage() {
           </div>
         )}
       </div>
+
+      <WebIngestDialog
+        scope="global"
+        open={ingestOpen}
+        onOpenChange={setIngestOpen}
+      />
     </PageShell>
   )
 }
@@ -93,7 +115,7 @@ function GlobalKnowledgeCard({ kf }: { kf: KnowledgeFile }) {
             {kf.filename}
           </span>
           <Badge variant="outline" className="shrink-0 text-[10px] font-normal">
-            {kf.source_type}
+            {sourceTypeLabel(kf.source_type)}
           </Badge>
         </CardTitle>
       </CardHeader>
