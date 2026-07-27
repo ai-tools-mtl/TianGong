@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useState } from 'react'
-import { Download, Upload, Send } from 'lucide-react'
+import { Download, Globe, Send, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
@@ -17,6 +17,9 @@ import {
   useUploadKnowledgeFile,
 } from '@/lib/queries'
 import type { KnowledgeFile } from '@/types/api'
+import { IngestJobTracker } from '@/components/ingest-job-tracker'
+import { WebIngestDialog } from '@/components/web-ingest-dialog'
+import { sourceTypeLabel } from '@/lib/source-type-labels'
 
 function _formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
@@ -46,7 +49,7 @@ function KnowledgeFileCard({
         <CardTitle className="flex items-center justify-between gap-2 text-[15px]">
           <span className="truncate" title={kf.filename}>{kf.filename}</span>
           <Badge variant="outline" className="shrink-0 text-[10px] font-normal">
-            {kf.source_type}
+            {sourceTypeLabel(kf.source_type)}
           </Badge>
         </CardTitle>
       </CardHeader>
@@ -79,6 +82,7 @@ function KnowledgeFileCard({
 
 export function KnowledgeManager() {
   const [tab, setTab] = useState<'personal' | 'global'>('personal')
+  const [ingestOpen, setIngestOpen] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
   const upload = useUploadKnowledgeFile()
   const { data: personalFiles, isLoading: personalLoading } = usePersonalKnowledge()
@@ -101,7 +105,7 @@ export function KnowledgeManager() {
     <PageShell>
       <PageHeader title="知识库" description="管理可检索的参考素材与归档案例">
         {tab === 'personal' && (
-          <>
+          <div className="flex gap-2">
             <input
               ref={fileRef}
               type="file"
@@ -117,11 +121,21 @@ export function KnowledgeManager() {
               <Upload className="size-3.5" />
               {upload.isPending ? '上传中...' : '上传素材'}
             </Button>
-          </>
+            <Button
+              variant="outline"
+              onClick={() => setIngestOpen(true)}
+              className="gap-1.5"
+            >
+              <Globe className="size-3.5" />
+              抓取网页
+            </Button>
+          </div>
         )}
       </PageHeader>
 
       <div className="py-6">
+        <IngestJobTracker scope="personal" />
+
         <Tabs value={tab} onValueChange={(v) => setTab(v as 'personal' | 'global')}>
           <TabsList>
             <TabsTrigger value="personal">个人库</TabsTrigger>
@@ -152,6 +166,12 @@ export function KnowledgeManager() {
           )}
         </div>
       </div>
+
+      <WebIngestDialog
+        scope="personal"
+        open={ingestOpen}
+        onOpenChange={setIngestOpen}
+      />
     </PageShell>
   )
 }
