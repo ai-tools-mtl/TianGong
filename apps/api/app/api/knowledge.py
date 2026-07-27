@@ -74,6 +74,7 @@ def _file_out(kf: KnowledgeFile) -> dict:
         "mime_type": kf.mime_type,
         "size": kf.size,
         "source_type": kf.source_type,
+        "url": kf.url,  # 网页来源的原 URL(external_web 才有值,其他为 None)
         "created_at": kf.created_at.isoformat(),
     }
 
