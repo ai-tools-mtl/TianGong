@@ -30,6 +30,15 @@ class ForbiddenError(AppError):
     code = "forbidden"
 
 
+class AuthorizationError(ForbiddenError):
+    """鉴权/权限不足错误(ForbiddenError 的语义化别名)。
+
+    用于"已登录但缺少权限"的场景,如非 admin 触发 global-only 操作。
+    保留独立类名便于上层按异常类型分支处理,响应码仍是 403。
+    """
+    code = "forbidden"
+
+
 class ValidationError(AppError):
     status_code = 422
     code = "validation_error"

@@ -192,4 +192,139 @@ def _correct_quota(db: Session, *, job: WebIngestionJob) -> None:
         )
 
 
-# ── 后续任务扩展:create_job / run_job / recover_pending_jobs ──
+# ── 主入口 ───────────────────────────────────────────────────
+
+from app.core.background import spawn_background_task  # noqa: E402
+from app.core.exceptions import AuthorizationError  # noqa: E402
+from app.core.storage import get_storage  # noqa: E402
+from app.models import KnowledgeFile  # noqa: E402
+from app.parsing.content_filter import filter_content  # noqa: E402
+from app.services import knowledge_service  # noqa: E402
+from app.services.firecrawl_client import (  # noqa: E402
+    FirecrawlClient, ResolvedFirecrawlConfig, resolve_firecrawl_config,
+)
+
+
+def create_job(
+    db: Session, *, user, url: str, mode: str, scope: str, max_pages: int = 1,
+):
+    """发起网页摄入。scrape 同步返回 KnowledgeFile,crawl 异步返回 WebIngestionJob。
+
+    校验顺序(关键:URL → mode → max_pages → scope/admin → 凭据 → 配额预扣 → 分叉)
+    所有校验都在配额预扣之前——避免预扣后才发现参数错,被迫退款。
+    """
+    # ① 校验
+    _validate_url(url)
+    if mode not in ("scrape", "crawl"):
+        raise ValidationError(f"不支持的模式:{mode}")
+    if mode == "crawl" and max_pages > MAX_CRAWL_PAGES_HARD_CAP:
+        raise ValidationError(f"max_pages 上限 {MAX_CRAWL_PAGES_HARD_CAP}")
+    if scope == "global" and getattr(user, "role", None) != "admin":
+        raise AuthorizationError("仅 admin 可入 global 库")
+
+    # ② 凭据(无配置直接报错,不静默)
+    config = resolve_firecrawl_config(db)
+    if config is None:
+        raise ValidationError("Firecrawl 未配置,请联系管理员")
+
+    # ③ 配额预扣(scrape 预扣 1 页,crawl 预扣 max_pages)
+    _reserve_quota(db, user=user, mode=mode, max_pages=max_pages)
+
+    # ④ 分叉
+    if mode == "scrape":
+        return _scrape_sync(
+            db, user=user, url=url, scope=scope, config=config,
+        )
+    return _crawl_async(
+        db, user=user, url=url, scope=scope,
+        max_pages=max_pages, config=config,
+    )
+
+
+def _derive_filename(title: str, url: str) -> str:
+    """从标题或 URL 推导展示用文件名(.md)。"""
+    if title:
+        # 文件名安全:去掉 Windows/Linux 非法字符
+        safe = "".join(c for c in title if c not in '\\/:*?"<>|')[:80]
+        return f"{safe}.md" if safe else "webpage.md"
+    parsed = urlparse(url)
+    base = parsed.path.strip("/").replace("/", "_") or parsed.netloc
+    return f"{base[:80]}.md"
+
+
+def _scrape_sync(
+    db: Session, *, user, url: str, scope: str,
+    config: ResolvedFirecrawlConfig,
+) -> KnowledgeFile:
+    """单页同步流:scrape → filter → upload。
+
+    抓取失败 / 质量过滤未通过时退款(负 pages 日志),保持净用量准确。
+    """
+    client = FirecrawlClient(config.api_key, config.base_url)
+    result = client.scrape(url)
+
+    # 抓取失败(SDK 异常 / 4xx / 5xx 全部由 client 归一成 fetch_failed=True)
+    if result.fetch_failed:
+        _refund_quota(db, user=user, pages=1)
+        raise ValidationError("页面抓取失败")
+
+    # 质量过滤(空白页 / 导航页 / 非中英文)
+    filtered = filter_content(result.markdown, result.title)
+    if filtered is None:
+        _refund_quota(db, user=user, pages=1)
+        raise ValidationError("页面内容未通过质量过滤(可能为空白页/导航页/非中英文)")
+
+    content_bytes = filtered.markdown.encode("utf-8")
+    filename = _derive_filename(filtered.title, url)
+    storage = get_storage()
+
+    if scope == "global":
+        kf = knowledge_service.upload_to_global(
+            db, storage=storage, uploader=user,
+            filename=filename, content=content_bytes,
+            mime="text/markdown", text=filtered.markdown, url=url,
+        )
+    else:
+        kf = knowledge_service.upload_external(
+            db, storage=storage, user=user,
+            filename=filename, content=content_bytes,
+            mime="text/markdown", text=filtered.markdown, url=url,
+        )
+    return kf
+
+
+def _crawl_async(
+    db: Session, *, user, url: str, scope: str, max_pages: int,
+    config: ResolvedFirecrawlConfig,
+) -> WebIngestionJob:
+    """整站异步流:start_crawl(非阻塞)→ 建 WebIngestionJob → spawn 轮询任务。
+
+    start_crawl 立即返回 firecrawl job_id;真正抓页 + 入库由 run_job 异步做。
+    """
+    client = FirecrawlClient(config.api_key, config.base_url)
+    handle = client.start_crawl(url, limit=max_pages)
+
+    job = WebIngestionJob(
+        user_id=user.id, scope=scope, url=url, mode="crawl",
+        max_pages=max_pages, firecrawl_job_id=handle.firecrawl_job_id,
+        status="running",
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    spawn_background_task(run_job, str(job.id))
+    return job
+
+
+# ── run_job / _poll_and_ingest / recover_pending_jobs ────────
+# (Task 11/12 实现)
+
+
+def run_job(job_id: str) -> None:
+    """BackgroundTask 入口:轮询 Firecrawl + 入库。Task 11 实现。
+
+    占位为 NotImplementedError——Task 10 的测试里 spawn_background_task 被 mock,
+    run_job 不会被真调,占位安全。Task 11 替换为真实实现。
+    """
+    raise NotImplementedError("run_job 在 Task 11 实现")
