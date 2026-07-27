@@ -30,3 +30,5 @@ class KnowledgeFile(Base, IdMixin, TimestampMixin):
     # disclosure_export(归档导出件) / external_docx / external_pdf
     # 内容哈希(SHA256 hex,全局库去重用;personal 库不去重)
     content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    # 网页来源的原 URL(external_web 才有;其他来源为 None)
+    url: Mapped[str | None] = mapped_column(String(2048), nullable=True)

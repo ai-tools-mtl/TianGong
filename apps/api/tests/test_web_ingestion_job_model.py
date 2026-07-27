@@ -2,7 +2,7 @@
 
 import uuid
 
-from app.models import User, WebIngestionJob
+from app.models import KnowledgeFile, User, WebIngestionJob
 from app.core.security import hash_password
 
 
@@ -61,3 +61,30 @@ def test_web_ingestion_job_in_db(db_session):
     assert fetched is not None
     assert fetched.url == "https://x.com"
     assert fetched.file_ids == job.file_ids
+
+
+def test_knowledge_file_has_url_field(db_session):
+    """KnowledgeFile 有 url 字段,默认 None;赋值后可持久化读回。"""
+    # 一个真实 user 满足外键约束(User.name/username/password_hash 必填,email 可空)
+    u = User(
+        username="kf_url", email="kf_url@tiangong.dev",
+        password_hash=hash_password("Pass1234!"), name="KF URL",
+    )
+    db_session.add(u)
+    db_session.flush()
+
+    kf = KnowledgeFile(
+        uploader_id=u.id, scope="personal", bucket="personal",
+        object_key="x", filename="x.md", mime_type="text/markdown",
+        size=10, source_type="external_web",
+    )
+    db_session.add(kf)
+    db_session.flush()
+
+    assert kf.url is None  # 默认 None(非 external_web 来源也是 None)
+
+    # 设置 url 后能持久化读回
+    kf.url = "https://example.com/page"
+    db_session.flush()
+    db_session.refresh(kf)
+    assert kf.url == "https://example.com/page"
