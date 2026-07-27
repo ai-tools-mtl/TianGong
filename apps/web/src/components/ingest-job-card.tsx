@@ -54,9 +54,7 @@ export function IngestJobCard({ job, onDismiss }: IngestJobCardProps) {
             <div className="mt-2 flex items-center gap-2">
               <Progress value={progress} className="h-1.5 flex-1" />
               <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-                {job.pages_fetched}
-                {isCompleted && job.pages_filtered > 0 && `/${job.pages_fetched + job.pages_filtered}`}
-                {' 页'}
+                {job.pages_fetched} 页
               </span>
             </div>
           )}
