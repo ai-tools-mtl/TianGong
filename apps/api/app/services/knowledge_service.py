@@ -29,6 +29,7 @@ from app.services.llm_log_helper import log_embed_call
 def upload_to_global(
     db: Session, *, storage: Storage, uploader, filename: str,
     content: bytes, mime: str, text: str,
+    url: str | None = None,
 ) -> KnowledgeFile:
     """admin 直传全局库。生成 file + chunk(scope=global),全员可检索。
 
@@ -58,6 +59,7 @@ def upload_to_global(
         object_key=object_key, filename=filename, mime_type=mime,
         size=len(content), source_type=source_type,
         content_hash=content_hash,
+        url=url,
     )
     db.add(kf)
     db.flush()  # 让 kf.id 就位
@@ -73,6 +75,7 @@ def upload_to_global(
 def upload_external(
     db: Session, *, storage: Storage, user, filename: str,
     content: bytes, mime: str, text: str,
+    url: str | None = None,
 ) -> KnowledgeFile:
     """user 上传外部素材进个人库。scope=personal,仅本人可检索。"""
     source_type = _source_type_for(filename)
@@ -86,6 +89,7 @@ def upload_external(
         object_key=object_key, filename=filename, mime_type=mime,
         size=len(content), source_type=source_type,
         content_hash=hashlib.sha256(content).hexdigest(),
+        url=url,
     )
     db.add(kf)
     db.flush()
