@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useState } from 'react'
-import { Download, Globe, Upload } from 'lucide-react'
+import { Download, Globe, Trash2, Upload } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { IngestJobTracker } from '@/components/ingest-job-tracker'
@@ -10,10 +10,22 @@ import { WebIngestDialog } from '@/components/web-ingest-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { EmptyState } from '@/components/ui/empty-state'
 import { Skeleton } from '@/components/ui/skeleton'
 import { api } from '@/lib/api'
-import { useAdminUploadGlobal, useGlobalKnowledge } from '@/lib/queries'
+import {
+  useAdminUploadGlobal,
+  useDeleteGlobalKnowledge,
+  useGlobalKnowledge,
+} from '@/lib/queries'
 import { sourceTypeLabel } from '@/lib/source-type-labels'
 import type { KnowledgeFile } from '@/types/api'
 
@@ -30,6 +42,7 @@ import type { KnowledgeFile } from '@/types/api'
 export default function AdminKnowledgePage() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [ingestOpen, setIngestOpen] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<KnowledgeFile | null>(null)
   const upload = useAdminUploadGlobal()
   const { data: files, isLoading } = useGlobalKnowledge()
 
@@ -49,7 +62,7 @@ export default function AdminKnowledgePage() {
 
   return (
     <PageShell>
-      <PageHeader title="知识库直传" description={`全局库 · ${list.length} 个文件`}>
+      <PageHeader title="全局知识库" description={`全员可检索 · ${list.length} 个文件`}>
         <div className="flex gap-2">
           <input
             ref={fileRef}
@@ -91,7 +104,11 @@ export default function AdminKnowledgePage() {
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {list.map((kf) => (
-              <GlobalKnowledgeCard key={kf.id} kf={kf} />
+              <GlobalKnowledgeCard
+                key={kf.id}
+                kf={kf}
+                onDelete={setDeleteTarget}
+              />
             ))}
           </div>
         )}
@@ -102,11 +119,22 @@ export default function AdminKnowledgePage() {
         open={ingestOpen}
         onOpenChange={setIngestOpen}
       />
+
+      <DeleteConfirmDialog
+        target={deleteTarget}
+        onOpenChange={(open) => !open && setDeleteTarget(null)}
+      />
     </PageShell>
   )
 }
 
-function GlobalKnowledgeCard({ kf }: { kf: KnowledgeFile }) {
+function GlobalKnowledgeCard({
+  kf,
+  onDelete,
+}: {
+  kf: KnowledgeFile
+  onDelete: (kf: KnowledgeFile) => void
+}) {
   return (
     <Card className="apple-lift">
       <CardHeader className="pb-3">
@@ -130,9 +158,64 @@ function GlobalKnowledgeCard({ kf }: { kf: KnowledgeFile }) {
               <Download className="mr-1 size-3.5" /> 下载
             </a>
           </Button>
+          <Button
+            variant="ghost"
+            size="xs"
+            className="text-destructive hover:text-destructive"
+            onClick={() => onDelete(kf)}
+          >
+            <Trash2 className="mr-1 size-3.5" /> 删除
+          </Button>
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+function DeleteConfirmDialog({
+  target,
+  onOpenChange,
+}: {
+  target: KnowledgeFile | null
+  onOpenChange: (open: boolean) => void
+}) {
+  const del = useDeleteGlobalKnowledge()
+
+  function handleConfirm() {
+    if (!target) return
+    del.mutate(target.id, {
+      onSuccess: () => {
+        toast.success('已删除')
+        onOpenChange(false)
+      },
+      onError: (err: { message?: string }) =>
+        toast.error(err?.message ?? '删除失败'),
+    })
+  }
+
+  return (
+    <Dialog open={target !== null} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>删除全局库文件?</DialogTitle>
+          <DialogDescription>
+            将永久删除「{target?.filename}」及其向量索引。此操作不可恢复。
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            取消
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={handleConfirm}
+            disabled={del.isPending}
+          >
+            {del.isPending ? '删除中...' : '确认删除'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }
 
