@@ -38,9 +38,15 @@ class MinIOSkillStore(BaseStore):
     bucket 别名传 'global' / 'personal'（由 Settings 映射）。
 
     BaseStore 的抽象方法是 batch/abatch（接受 GetOp/PutOp/SearchOp/ListNamespacesOp），
-    单项的 put/get/search/delete/list_namespaces 由 BaseStore 默认实现转发到 batch。
-    为可读性与直测性，两者都在本类显式实现：单项方法直接落 MinIO，
-    batch 按 op 类型分发到对应单项方法。
+    单项的同步 put/get/search/delete/list_namespaces 由 BaseStore 默认实现转发到 batch；
+    单项的 async aget/aput/asearch/adelete 同样由 BaseStore 默认实现转发到 abatch。
+    本类只显式实现同步单项方法 + batch/abatch（+ alist_namespaces 直测），
+    async 路径全部委托 BaseStore 默认实现。
+
+    历史坑：曾把 aget/aput/asearch/adelete 重写成同步 def（假冒 async），
+    导致 deepagents StoreBackend.awrite 执行 `await store.aget(...)` 时
+    await 了普通返回值 → 'NoneType' object can't be awaited。删除重写后，
+    async 路径走 BaseStore 默认实现 → abatch（真 async def）→ batch，正常。
     """
 
     def __init__(self, *, bucket: str = "global"):
@@ -68,9 +74,6 @@ class MinIOSkillStore(BaseStore):
         minio_key = namespace_to_minio_key(namespace, key)
         st.put(self._bucket_alias, minio_key, self._serialize(value), "application/json")
 
-    def aput(self, namespace, key, value, index=None, *, ttl=None) -> None:
-        self.put(namespace, key, value, index=index, ttl=ttl)
-
     def get(self, namespace, key, *, refresh_ttl=None) -> Item | None:
         st = self._storage()
         minio_key = namespace_to_minio_key(namespace, key)
@@ -83,9 +86,6 @@ class MinIOSkillStore(BaseStore):
             value=value, key=key, namespace=tuple(namespace),
             created_at=now, updated_at=now,
         )
-
-    def aget(self, namespace, key, *, refresh_ttl=None) -> Item | None:
-        return self.get(namespace, key, refresh_ttl=refresh_ttl)
 
     def search(
         self, namespace_prefix, /, *,
@@ -119,22 +119,10 @@ class MinIOSkillStore(BaseStore):
                 break
         return items[offset:offset + limit]
 
-    def asearch(
-        self, namespace_prefix, /, *,
-        query=None, filter=None, limit=10, offset=0, refresh_ttl=None,
-    ) -> list[SearchItem]:
-        return self.search(
-            namespace_prefix, query=query, filter=filter,
-            limit=limit, offset=offset, refresh_ttl=refresh_ttl,
-        )
-
     def delete(self, namespace, key) -> None:
         st = self._storage()
         minio_key = namespace_to_minio_key(namespace, key)
         st.delete(self._bucket_alias, minio_key)  # 幂等
-
-    def adelete(self, namespace, key) -> None:
-        self.delete(namespace, key)
 
     def list_namespaces(
         self, *, prefix=None, suffix=None, max_depth=None,
