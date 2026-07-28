@@ -208,3 +208,122 @@ def test_build_agent_storebackend_namespace_is_valid(db_session, monkeypatch):
     # _get_namespace 不抛 ValueError（空 tuple 会被 _validate_namespace 拒绝）
     ns = backend._get_namespace()  # noqa: SLF001
     assert ns == ("skills",)
+
+
+# ===== build_agent 传 section 测试（Task 2.1） =====
+
+def _build_section_with_project(db_session):
+    """构造一个真实入库的 Project + Section，供 build_agent 的 section 参数用。
+
+    Project.user_id 是 NOT NULL 外键，必须先建 User。
+    """
+    from app.models import Project, Section, User
+    from app.core.security import hash_password
+    u = User(
+        username=f"test-{uuid.uuid4().hex[:8]}",
+        email=f"test-{uuid.uuid4().hex[:8]}@tiangong.dev",
+        password_hash=hash_password("Pass1234!"),
+        name="测试用户",
+    )
+    db_session.add(u)
+    db_session.commit()
+    db_session.refresh(u)
+    p = Project(user_id=u.id, title="凸轮门锁交底书")
+    db_session.add(p)
+    db_session.commit()
+    db_session.refresh(p)
+    s = Section(
+        project_id=p.id,
+        template_section_id="ts-field",
+        order=2, key="field", title="技术领域",
+        content=None, status="empty",
+    )
+    db_session.add(s)
+    db_session.commit()
+    db_session.refresh(s)
+    return s
+
+
+def test_build_agent_with_section_uses_dynamic_prompt(db_session, monkeypatch):
+    """传 section 时，create_deep_agent 收到的 system_prompt 含项目标题 + 章节策略。"""
+    from app.ai import agent as agent_mod
+    from app.services.llm_config_service import ResolvedChatConfig
+
+    section = _build_section_with_project(db_session)
+    captured: dict = {}
+
+    def _fake_create(model=None, tools=None, *, system_prompt=None, **kw):
+        captured["system_prompt"] = system_prompt
+        return type("_S", (), {"ainvoke": lambda *a: None, "astream_events": lambda *a: None})()
+
+    monkeypatch.setattr(agent_mod, "get_llm", lambda config, **kw: _mock_llm())
+    monkeypatch.setattr(agent_mod, "create_deep_agent", _fake_create)
+    from app.core import storage as storage_mod
+
+    class _FakeStorage:
+        def __init__(self): self._client = None
+        def _resolve(self, a): return a
+    monkeypatch.setattr(storage_mod, "get_storage", lambda: _FakeStorage())
+
+    config = ResolvedChatConfig(base_url="http://x", api_key="k", model="glm-4.7", source="env")
+    agent_mod.build_agent(db_session, llm_config=config, user_id=uuid.uuid4(), section=section)
+
+    # 动态 prompt 含项目标题（来自 build_system_prompt）
+    assert "凸轮门锁交底书" in captured["system_prompt"]
+    # 含当前章节策略
+    assert "技术领域" in captured["system_prompt"]
+
+
+def test_build_agent_without_section_falls_back_to_static(db_session, monkeypatch):
+    """不传 section 时，system_prompt == SYSTEM_PROMPT（向后兼容）。"""
+    from app.ai import agent as agent_mod
+    from app.ai.context_assembler import SYSTEM_PROMPT
+    from app.services.llm_config_service import ResolvedChatConfig
+
+    captured: dict = {}
+
+    def _fake_create(model=None, tools=None, *, system_prompt=None, **kw):
+        captured["system_prompt"] = system_prompt
+        return type("_S", (), {"ainvoke": lambda *a: None, "astream_events": lambda *a: None})()
+
+    monkeypatch.setattr(agent_mod, "get_llm", lambda config, **kw: _mock_llm())
+    monkeypatch.setattr(agent_mod, "create_deep_agent", _fake_create)
+    from app.core import storage as storage_mod
+
+    class _FakeStorage:
+        def __init__(self): self._client = None
+        def _resolve(self, a): return a
+    monkeypatch.setattr(storage_mod, "get_storage", lambda: _FakeStorage())
+
+    config = ResolvedChatConfig(base_url="http://x", api_key="k", model="glm-4.7", source="env")
+    agent_mod.build_agent(db_session, llm_config=config, user_id=uuid.uuid4())  # 不传 section
+
+    assert captured["system_prompt"] == SYSTEM_PROMPT
+
+
+def test_build_agent_with_section_prompt_not_equal_static(db_session, monkeypatch):
+    """动态 prompt 与静态 SYSTEM_PROMPT 不同（防回归：确保真的走了 build_system_prompt）。"""
+    from app.ai import agent as agent_mod
+    from app.ai.context_assembler import SYSTEM_PROMPT
+    from app.services.llm_config_service import ResolvedChatConfig
+
+    section = _build_section_with_project(db_session)
+    captured: dict = {}
+
+    def _fake_create(model=None, tools=None, *, system_prompt=None, **kw):
+        captured["system_prompt"] = system_prompt
+        return type("_S", (), {"ainvoke": lambda *a: None, "astream_events": lambda *a: None})()
+
+    monkeypatch.setattr(agent_mod, "get_llm", lambda config, **kw: _mock_llm())
+    monkeypatch.setattr(agent_mod, "create_deep_agent", _fake_create)
+    from app.core import storage as storage_mod
+
+    class _FakeStorage:
+        def __init__(self): self._client = None
+        def _resolve(self, a): return a
+    monkeypatch.setattr(storage_mod, "get_storage", lambda: _FakeStorage())
+
+    config = ResolvedChatConfig(base_url="http://x", api_key="k", model="glm-4.7", source="env")
+    agent_mod.build_agent(db_session, llm_config=config, user_id=uuid.uuid4(), section=section)
+
+    assert captured["system_prompt"] != SYSTEM_PROMPT

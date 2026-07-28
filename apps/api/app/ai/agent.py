@@ -36,6 +36,7 @@ __all__ = ["build_agent"]
 
 def build_agent(
     db, *, llm_config: ResolvedChatConfig, user_id,
+    section=None,
 ) -> CompiledStateGraph:
     """构造 deepagents agent（路线 B 的装配入口）。
 
@@ -63,6 +64,9 @@ def build_agent(
         db: SQLAlchemy Session（供 build_agent_skill_sources 查可见 skill）。
         llm_config: 已解析的生效配置（base_url/api_key/model）。
         user_id: 当前用户 ID（限定 personal skill 可见范围 + RAG 检索范围）。
+        section: 当前要撰写/对话的 Section。非 None 时调 build_system_prompt 装配
+            动态 system prompt（含项目标题、已写章节、章节策略）。None 时用
+            静态 SYSTEM_PROMPT 兜底（向后兼容，本 spec 范围内 chat/generate 都会传 section）。
 
     Returns:
         CompiledStateGraph：具备 ainvoke / astream_events。
@@ -96,10 +100,17 @@ def build_agent(
     # 4. LLM + 工具
     llm = get_llm(llm_config, streaming=True)
 
+    # [L1][L4][前文直注入] section 非 None 时装配动态 system prompt（spec §3.2）
+    if section is not None:
+        from app.ai.context_assembler import build_system_prompt
+        system_prompt = build_system_prompt(db, section)
+    else:
+        system_prompt = SYSTEM_PROMPT  # 向后兼容兜底
+
     # 5. 组装 deepagents agent
     agent = create_deep_agent(
         model=llm,  # I1：不预绑定。deepagents 内部调 bind_tools，预绑定会让 RunnableBinding 无 bind_tools 方法。
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=system_prompt,
         tools=[rag_search_tool],
         skills=skill_sources if skill_sources else None,
         backend=backend,
