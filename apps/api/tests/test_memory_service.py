@@ -32,15 +32,13 @@ def test_create_memory_without_embedding_config_falls_back_to_null(db_session, r
 
 def test_create_memory_empty_content_raises(db_session, registered_user):
     """空内容抛 ValidationError。"""
+    import pytest
     from app.services import memory_service as ms
     from app.core.exceptions import ValidationError
 
     uid = uuid.UUID(registered_user["id"])
-    try:
+    with pytest.raises(ValidationError):
         ms.create_memory(db_session, user_id=uid, content="   ")
-        assert False, "应抛 ValidationError"
-    except ValidationError:
-        pass
 
 
 def test_list_memories_orders_by_updated_desc(db_session, registered_user, monkeypatch):
@@ -99,6 +97,7 @@ def test_update_memory_regenerates_embedding(db_session, registered_user, monkey
 
 def test_update_memory_not_owner_raises(db_session, registered_user):
     """非本人更新抛 NotFoundError（不泄露存在性）。"""
+    import pytest
     from app.services import memory_service as ms
     from app.core.exceptions import NotFoundError
 
@@ -106,15 +105,13 @@ def test_update_memory_not_owner_raises(db_session, registered_user):
     other = uuid.uuid4()
 
     mem = ms.create_memory(db_session, user_id=uid, content="我的")
-    try:
+    with pytest.raises(NotFoundError):
         ms.update_memory(db_session, memory_id=mem.id, user_id=other, content="篡改")
-        assert False, "应抛 NotFoundError"
-    except NotFoundError:
-        pass
 
 
 def test_delete_memory_only_owner(db_session, registered_user):
     """非本人删除抛 NotFoundError。"""
+    import pytest
     from app.services import memory_service as ms
     from app.core.exceptions import NotFoundError
 
@@ -122,19 +119,16 @@ def test_delete_memory_only_owner(db_session, registered_user):
     other = uuid.uuid4()
 
     mem = ms.create_memory(db_session, user_id=uid, content="我的")
-    try:
+    with pytest.raises(NotFoundError):
         ms.delete_memory(db_session, memory_id=mem.id, user_id=other)
-        assert False, "应抛 NotFoundError"
-    except NotFoundError:
-        pass
 
     #本人删除成功
     ms.delete_memory(db_session, memory_id=mem.id, user_id=uid)
     assert ms.list_memories(db_session, user_id=uid) == []
 
 
-def test_search_memories_returns_results(db_session, registered_user, monkeypatch):
-    """检索返回相关记忆（mock cosine_distance 返回固定距离）。"""
+def test_search_memories_returns_empty_when_embed_unavailable(db_session, registered_user, monkeypatch):
+    """embedding 不可用时，search_memories 返回空列表（降级路径）。"""
     from app.services import memory_service as ms
 
     uid = uuid.UUID(registered_user["id"])
@@ -174,3 +168,26 @@ def test_find_similar_memory_returns_none_without_embedding(db_session, register
 
     result = ms.find_similar_memory(db_session, user_id=uid, content="新内容")
     assert result is None
+
+
+def test_search_memories_uses_pgvector_cosine():
+    """源码结构检查：search_memories 用 pgvector cosine + HNSW ef_search（SQLite 跑不了真实查询，仿 test_retriever 源码检查）。"""
+    import inspect
+    from app.services import memory_service as ms
+
+    src = inspect.getsource(ms.search_memories)
+    assert "cosine_distance" in src
+    assert "HalfVec" in src
+    assert "hnsw.ef_search" in src
+    assert "SIMILARITY_THRESHOLD" in src
+
+
+def test_find_similar_memory_uses_pgvector_cosine():
+    """源码结构检查：find_similar_memory 用 pgvector cosine + threshold（SQLite 跑不了，源码检查）。"""
+    import inspect
+    from app.services import memory_service as ms
+
+    src = inspect.getsource(ms.find_similar_memory)
+    assert "cosine_distance" in src
+    assert "HalfVec" in src
+    assert "DEDUP_SIMILARITY" in src

@@ -8,10 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundError, ValidationError
 from app.models import UserMemory
-
-# 记忆来源常量（与 model 对齐）
-SOURCE_AGENT = "agent"
-SOURCE_MANUAL = "manual"
+from app.models.user_memory import SOURCE_AGENT, SOURCE_MANUAL
 
 # 检索默认参数
 DEFAULT_TOP_K = 5
