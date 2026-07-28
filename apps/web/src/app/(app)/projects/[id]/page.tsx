@@ -42,6 +42,12 @@ export default function ProjectDetailPage() {
   const [shareOpen, setShareOpen] = useState(false)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const editorRef = useRef<TiptapEditorRef>(null)
+  // 缓存当前章节最新编辑内容（handleSave 同步写入）。
+  // 根因修复（crossover bug）：cleanup/handleConfirm 时不能读 editorRef.current.getJSON()，
+  // 因为 React passive-effect cleanup 晚于子组件 remount，此时 editorRef 已指向新章节 editor，
+  // 会把新章节内容当成旧章节内容 PATCH，导致章节内容串台。
+  // lastContentRef 与 current 来自同一次渲染闭包，章节 id 与内容始终配对。
+  const lastContentRef = useRef<object | null>(null)
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle')
 
   const leftCollapsed = useUIStore((s) => s.leftCollapsed)
@@ -60,6 +66,9 @@ export default function ProjectDetailPage() {
   useEffect(() => {
     if (sections && currentId) {
       setCurrent(sections.find((s) => s.id === currentId) || null)
+      // 切章节时重置内容缓存——新章节的用户编辑尚未开始，旧残留不能被
+      // flushPendingSave 当成本章节内容发出（crossover 修复配套）。
+      lastContentRef.current = null
     }
   }, [sections, currentId])
 
@@ -130,6 +139,9 @@ export default function ProjectDetailPage() {
 
   function handleSave(json: object) {
     if (!current) return
+    // 同步缓存最新内容到 ref（crossover 修复：cleanup 时 editorRef 已指向新章节，
+    // 只能信任 handleSave 捕获的 json，它与 current 同属一次渲染闭包）。
+    lastContentRef.current = json
     // 防抖 2s（设计 13.4）
     if (saveTimer.current) clearTimeout(saveTimer.current)
     setSaveState('saving')
@@ -142,15 +154,18 @@ export default function ProjectDetailPage() {
     }, 2000)
   }
 
-  // flush pending 防抖保存：立即取出编辑器最新 content 同步发 PATCH，并清掉定时器。
+  // flush pending 防抖保存：立即取出缓存内容同步发 PATCH，并清掉定时器。
   // 供确认按钮、切章节 cleanup 复用——避免用户输入停留在浏览器未落库。
+  // 注意：必须读 lastContentRef.current，不能读 editorRef.current.getJSON()——
+  // React passive-effect cleanup 晚于子组件 remount，此时 editorRef 已指向新章节 editor，
+  // 读它会把新章节内容回写到旧章节（crossover bug）。
   function flushPendingSave() {
     if (saveTimer.current) {
       clearTimeout(saveTimer.current)
       saveTimer.current = null
     }
     if (!current) return
-    const json = editorRef.current?.getJSON()
+    const json = lastContentRef.current
     if (!json) return
     sendPatch({
       content: json,
@@ -168,9 +183,11 @@ export default function ProjectDetailPage() {
       clearTimeout(saveTimer.current)
       saveTimer.current = null
     }
-    const json = editorRef.current?.getJSON()
+    // 读 lastContentRef 而非 editorRef（同 flushPendingSave，避免 crossover）。
+    // 用户没编辑过（lastContentRef 为 null）时回退到 current.content，避免把内容清空。
+    const json = lastContentRef.current ?? current.content
     sendPatch({
-      content: json,
+      content: json ?? undefined,
       status: 'confirmed',
       expected_version: current.version,
       onSuccess: () => toast.success('章节已确认'),
