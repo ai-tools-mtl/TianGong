@@ -96,6 +96,7 @@ def engine():
         sa.Column("source_section_key", sa.String(50)),
         sa.Column("chunk_index", sa.Integer, default=0),
         sa.Column("content", sa.Text),
+        sa.Column("tsv", sa.Text),  # PG 是 tsvector，SQLite 是 Text
         sa.Column("embedding", sa.JSON),
         sa.Column("metadata", sa.JSON),
         sa.Column("file_id", sa.String(36), index=True),

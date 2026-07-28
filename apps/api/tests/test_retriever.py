@@ -42,3 +42,20 @@ def test_database_has_is_postgres_helper():
     """core.database 应有 is_postgres() helper（G1/G3 SQLite 兼容判断）。"""
     from app.core import database
     assert hasattr(database, 'is_postgres'), "core.database 缺少 is_postgres()"
+
+
+def test_retriever_has_hybrid_retrieval():
+    """G3：retrieve 应同时做向量召回 + 关键词召回 + RRF 融合 + rerank。"""
+    import inspect
+    from app.rag import retriever
+    src = inspect.getsource(retriever.retrieve)
+    assert 'rrf_fuse' in src, "retrieve 缺少 RRF 融合"
+    assert 'plainto_tsquery' in src or 'tsv' in src, "retrieve 缺少关键词路召回"
+    assert 'rerank' in src, "retrieve 缺少 rerank 调用"
+
+
+def test_retriever_has_candidate_pool_constant():
+    """G3：应有 RETRIEVAL_CANDIDATE_POOL 常量（召回阶段放大候选池）。"""
+    from app.rag import retriever
+    assert hasattr(retriever, 'RETRIEVAL_CANDIDATE_POOL'), "缺少 RETRIEVAL_CANDIDATE_POOL"
+    assert retriever.RETRIEVAL_CANDIDATE_POOL >= 10
