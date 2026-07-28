@@ -1,7 +1,7 @@
 """drop user_embedding_configs（embedding 改走固定 bge-m3 微服务）
 
 Revision ID: fbb0392f6703
-Revises: d1h2n3s4w5i6
+Revises: f4g5i6n7t8e9
 Create Date: 2026-07-28
 
 embedding 不再支持用户自配/全局配置，统一走固定的 bge-m3 微服务
@@ -23,7 +23,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'fbb0392f6703'
-down_revision: Union[str, Sequence[str], None] = 'd1h2n3s4w5i6'
+down_revision: Union[str, Sequence[str], None] = 'f4g5i6n7t8e9'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

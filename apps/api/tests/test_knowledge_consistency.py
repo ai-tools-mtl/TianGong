@@ -26,6 +26,11 @@ def fake_embed(monkeypatch):
 
     注意:knowledge_service 顶部已 `from app.rag.embedding import embed_texts`,
     必须 patch knowledge_service 模块的引用,而非源模块(否则已绑定引用不更新)。
+
+    另需 patch `is_postgres` 返回 False:测试库是 SQLite,但模块级 engine 按
+    .env 的 database_url 解析(本机指向 PG),不 patch 会触发 tsv 回填里的
+    `to_tsvector` 在 SQLite 上报错。这是 is_postgres 检查模块级 engine 的已知
+    限制(详见 test_admin_retrieval.py 同名注释),非 G3 引入。
     """
     fake_vec = [0.0] * 2048
     monkeypatch.setattr(
@@ -33,6 +38,8 @@ def fake_embed(monkeypatch):
         lambda texts, **kwargs: [fake_vec for _ in texts],
     )
     monkeypatch.setattr("app.rag.embedding.embed_text", lambda t, **kwargs: fake_vec)
+    monkeypatch.setattr("app.services.knowledge_service.is_postgres", lambda: False)
+    monkeypatch.setattr("app.rag.archiver.is_postgres", lambda: False)
 
 
 @pytest.fixture

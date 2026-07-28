@@ -2,7 +2,7 @@
 
 import { GitCompare, Loader2, PanelRight, Sparkles, Square, Trash2 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
-import { useEffect, useRef, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
 
@@ -19,6 +19,7 @@ import {
   useCreateConversation,
   useDeleteConversation,
   useMessages,
+  useRewriteDiff,
 } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import { useUIStore } from '@/stores/ui'
@@ -51,15 +52,38 @@ function handleStaleSourceError() {
 
 type AIPhase = 'idle' | 'chatting' | 'generating' | 'done' | 'diff-review'
 
+/**
+ * 当前 DiffReviewPanel 展示的 hunks 来自哪条路径——决定 apply 时该把什么当作
+ * ai_text 回传给后端（apply-diff 后端按 (original, ai_text) 重算 hunks）。
+ * - 'full'：整章生成草稿走 compute_diff；apply 时传 aiDraft（整章 markdown）。
+ * - 'rewrite'：选区重写走 rewrite-diff；apply 时传 rewriteAiFull（注入后的整章），
+ *   必须与计算时一致，否则 accepted_hunk_ids 对不上 → 数据损坏。
+ */
+type DiffOrigin = 'full' | 'rewrite'
+
 interface AIChatPanelProps {
   sectionId: string
   /** 当前 section（用于读取 expected_version 做乐观锁） */
   section: Section
   /** 用于 apply-diff 成功后刷新章节缓存 */
   projectId: string
+  /** apply-diff 成功并 refetch 后，用最新 content 重置编辑器（TiptapEditor 不响应 content prop 变化，
+   *  需显式 resetContent 同步；否则 apply 后编辑器仍显示旧内容） */
+  onAppliedContent?: (content: object) => void
 }
 
-export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps) {
+/**
+ * 对外暴露的 imperative 方法。
+ * 选区重写气泡（SelectionBubbleMenu）挂在 page.tsx 的 <TiptapEditor> 里，
+ * 但 diff 审核状态（phase/hunks/DiffReviewPanel）在 AIChatPanel 内部——
+ * 通过 ref 让 page.tsx 把气泡回调桥接到本组件的 handleRewriteComplete。
+ */
+export interface AIChatPanelRef {
+  handleRewriteComplete: (aiOutput: string, selectedText: string) => void
+}
+
+export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
+  function AIChatPanel({ sectionId, section, projectId, onAppliedContent }, ref) {
   const qc = useQueryClient()
   const toggleRight = useUIStore((s) => s.toggleRight)
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -67,6 +91,9 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
   const [phase, setPhase] = useState<AIPhase>('idle')
   const [aiDraft, setAiDraft] = useState('')
   const [hunks, setHunks] = useState<Hunk[]>([])
+  // diff 审核的来源 + 选区重写路径专用的整章 ai 文本（apply 时必须原样回传）。
+  const [diffOrigin, setDiffOrigin] = useState<DiffOrigin>('full')
+  const [rewriteAiFull, setRewriteAiFull] = useState('')
   const [currentConvId, setCurrentConvId] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -75,6 +102,10 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
 
   const computeDiff = useComputeDiff(sectionId)
   const applyDiff = useApplyDiff(sectionId, projectId)
+  // 选区重写气泡触发的整章 diff（方案 B：后端代算拼接）。
+  // 与 computeDiff 同走 setHunks/setPhase('diff-review') 落到 DiffReviewPanel，
+  // 只是数据源换成 {selected_text, ai_text}（气泡的选区原文 + AI 重写文本）。
+  const rewriteDiff = useRewriteDiff(sectionId)
   const { data: conversations, isLoading: convsLoading } = useConversations(sectionId)
   const createConv = useCreateConversation(sectionId)
   const deleteConv = useDeleteConversation(sectionId)
@@ -113,6 +144,9 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
     msgLoadedForConv.current = null
     setMessages([])
     setPhase('idle')
+    setHunks([])
+    setRewriteAiFull('')
+    setDiffOrigin('full')
   }, [sectionId])
 
   // 自动滚到底部
@@ -300,6 +334,7 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
       return
     }
     setPhase('diff-review')
+    setDiffOrigin('full')
     try {
       const res = await computeDiff.mutateAsync(aiDraft)
       setHunks(res.hunks)
@@ -318,9 +353,13 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
       toast.info('未选择任何变更')
       return
     }
+    // apply 的 ai_text 必须与计算 diff 时一致（后端按 (original, ai_text) 重算 hunks）：
+    // - 整章路径：aiDraft（整章 markdown 草稿）
+    // - 选区重写路径：rewriteAiFull（首次出现被 ai_text 替换后的整章，由 rewrite-diff 回传）
+    const applyAiText = diffOrigin === 'rewrite' ? rewriteAiFull : aiDraft
     try {
-      await applyDiff.mutateAsync({
-        ai_text: aiDraft,
+      const updated = await applyDiff.mutateAsync({
+        ai_text: applyAiText,
         accepted_hunk_ids: acceptedHunkIds,
         expected_version: section.version,
       })
@@ -328,6 +367,12 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
       setPhase('idle')
       setAiDraft('')
       setHunks([])
+      setRewriteAiFull('')
+      // 立即用响应里的新 content 重置编辑器（不等 refetch，避免编辑器显示滞后）。
+      // emitUpdate:false 的 resetContent 不会触发 onChange→save 回环。
+      if (updated?.content) {
+        onAppliedContent?.(updated.content)
+      }
       await qc.invalidateQueries({ queryKey: queryKeys.sections(projectId) })
     } catch (err: unknown) {
       const e = err as { code?: string; message?: string }
@@ -340,9 +385,47 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
   }
 
   function handleCloseDiff() {
-    setPhase('done')
+    // 关闭回到哪个阶段按来源区分：整章路径回 done（保留草稿供重新审查），
+    // 选区重写路径回 idle（气泡是临时入口，无草稿态可回）。
+    setPhase(diffOrigin === 'rewrite' ? 'idle' : 'done')
     setHunks([])
+    setRewriteAiFull('')
   }
+
+  // 选区重写气泡（SelectionBubbleMenu）流式完成后回调：复用已有的 diff 审核
+  // 流程——气泡只是给 setHunks + setPhase('diff-review') 提供"选区重写"这条
+  // 新数据源，DiffReviewPanel 零改动复用（spec §3.3）。apply 步骤按 diffOrigin
+  // 分支（见 handleApplyDiff）传 rewriteAiFull 作为 ai_text。
+  async function handleRewriteComplete(aiOutput: string, selectedText: string) {
+    setPhase('diff-review')
+    setDiffOrigin('rewrite')
+    try {
+      const res = await rewriteDiff.mutateAsync({
+        selected_text: selectedText,
+        ai_text: aiOutput,
+      })
+      setHunks(res.hunks)
+      // 缓存 ai_full：apply-diff 时必须把它作为 ai_text 原样回传，
+      // 后端按 (original, ai_text) 重算的 hunks 才与计算时生成的 id 对齐。
+      setRewriteAiFull(res.ai_full ?? '')
+      if (res.hunks.length === 0) {
+        toast.info('AI 输出与原文无差异')
+        setPhase('idle')
+      }
+    } catch (err: unknown) {
+      const e = err as { code?: string; message?: string }
+      toast.error(e?.message || '差异计算失败')
+      setPhase('idle')
+    }
+  }
+
+  // 把 handleRewriteComplete 暴露给 page.tsx——气泡在 page.tsx 的 <TiptapEditor>
+  // 内触发 onRewriteComplete，page.tsx 通过 aiChatRef.current.handleRewriteComplete
+  // 桥接到本组件，从而驱动本组件的 phase/hunks/DiffReviewPanel。
+  useImperativeHandle(ref, () => ({
+    handleRewriteComplete,
+  }))
+
 
   // diff-review 阶段：全屏覆盖审查面板
   if (phase === 'diff-review') {
@@ -534,4 +617,5 @@ export function AIChatPanel({ sectionId, section, projectId }: AIChatPanelProps)
       )}
     </div>
   )
-}
+  },
+)

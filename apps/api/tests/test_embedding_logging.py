@@ -25,11 +25,17 @@ def _fake_embed_config() -> MagicMock:
 # ─────────────────────────── archiver ───────────────────────────
 
 
-def test_archiver_logs_embed_call(db_session):
-    """archive_project 调 embed_texts 后写一条 action='embed' 的日志。"""
+def test_archiver_logs_embed_call(db_session, monkeypatch):
+    """archive_project 调 embed_texts 后写一条 action='embed' 的日志。
+
+    patch is_postgres=False：测试库是 SQLite,但模块级 engine 按 .env 解析为 PG,
+    不 patch 会触发 tsv 回填里的 to_tsvector 在 SQLite 上报错(is_postgres 检查
+    模块级 engine 的已知限制,详见 test_admin_retrieval.py)。
+    """
     from app.rag import archiver
     from app.models import LLMCallLog, Project, Section
 
+    monkeypatch.setattr("app.rag.archiver.is_postgres", lambda: False)
     fake_cfg = _fake_embed_config()
     with patch("app.rag.archiver.resolve_embedding_config", return_value=fake_cfg), \
          patch("app.rag.archiver.embed_texts", return_value=[[0.1]]) as m_emb:
@@ -102,11 +108,16 @@ def test_retriever_logs_embed_call(db_session):
 # ─────────────────────────── knowledge_service ───────────────────────────
 
 
-def test_knowledge_service_logs_embed_call(db_session):
-    """_ingest_chunks 调 embed_texts 后写一条 action='embed' 的日志。"""
+def test_knowledge_service_logs_embed_call(db_session, monkeypatch):
+    """_ingest_chunks 调 embed_texts 后写一条 action='embed' 的日志。
+
+    patch is_postgres=False:同 test_archiver_logs_embed_call,G3 tsv 回填在
+    SQLite 测试库会因 to_tsvector 报错,故守卫。
+    """
     from app.services import knowledge_service as ks
     from app.models import LLMCallLog
 
+    monkeypatch.setattr("app.services.knowledge_service.is_postgres", lambda: False)
     uid = uuid.uuid4()
     fid = uuid.uuid4()
     fake_cfg = _fake_embed_config()

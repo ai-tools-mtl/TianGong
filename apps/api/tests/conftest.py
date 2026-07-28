@@ -96,10 +96,17 @@ def engine():
         sa.Column("source_section_key", sa.String(50)),
         sa.Column("chunk_index", sa.Integer, default=0),
         sa.Column("content", sa.Text),
+        sa.Column("tsv", sa.Text),  # PG 是 tsvector，SQLite 是 Text
         sa.Column("embedding", sa.JSON),
         sa.Column("metadata", sa.JSON),
         sa.Column("file_id", sa.String(36), index=True),
         sa.Column("review_status", sa.String(20)),
+        # G4 分块干预字段（spec §5.4, D3 独立列）
+        sa.Column("keywords", sa.JSON),
+        sa.Column("questions", sa.JSON),
+        sa.Column("weight", sa.Float),
+        sa.Column("edited_text", sa.Text),
+        sa.Column("locked", sa.Boolean),
         sa.Column("created_at", sa.DateTime(timezone=True)),
         sa.Column("updated_at", sa.DateTime(timezone=True)),
     )

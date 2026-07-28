@@ -239,3 +239,27 @@ def apply_diff_to_section(
     db.commit()
     db.refresh(section)
     return section
+
+
+def compute_rewrite_diff(section, selected_text: str, ai_text: str) -> tuple[list[Hunk], str]:
+    """选区重写的整章 diff（方案 B：后端代算拼接，spec §3.4）。
+
+    流程：
+    1. _tiptap_to_markdown(section.content) → 整章原文 markdown
+    2. 原文.find(selected_text) → 首次出现位置；找不到报 ValidationError
+    3. 首次出现替换成 ai_text → ai_full_text（多次出现只替换首次，避免误伤）
+    4. compute_section_diff(原文, ai_full_text) → hunks（复用已有函数）
+
+    返回 (hunks, ai_full)：ai_full 是注入后的整章 markdown，apply-diff 时必须
+    原样回传作为 ai_text，否则后端按 (original, ai_text) 重算的 hunks 与此处
+    生成的 hunk id 不一致，accepted_hunk_ids 对不上 → 数据损坏。
+    """
+    from app.core.exceptions import ValidationError
+    from app.services.export_service import _tiptap_to_markdown
+
+    original = _tiptap_to_markdown(section.content) if section.content else ""
+    idx = original.find(selected_text)
+    if idx == -1:
+        raise ValidationError("无法在章节中定位选区，请重新选择")
+    ai_full = original[:idx] + ai_text + original[idx + len(selected_text):]
+    return compute_section_diff(original, ai_full), ai_full
