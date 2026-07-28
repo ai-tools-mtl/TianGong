@@ -542,6 +542,9 @@ export const api = {
     return res.json() as Promise<{ file_id: string; scope: string; source_type: string }>
   },
 
+  deleteGlobalKnowledge: (fileId: string) =>
+    request<void>(`/admin/knowledge/files/${fileId}`, { method: 'DELETE' }),
+
   submitKnowledgeReview: (fileId: string) =>
     request<{ review_id: string; status: string }>(
       `/knowledge/files/${fileId}/submit-review`, { method: 'POST' },

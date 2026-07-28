@@ -284,6 +284,16 @@ export function useAdminUploadGlobal() {
   })
 }
 
+export function useDeleteGlobalKnowledge() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (fileId: string) => api.deleteGlobalKnowledge(fileId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.knowledgeGlobal })
+    },
+  })
+}
+
 export function useSubmitKnowledgeReview() {
   const qc = useQueryClient()
   return useMutation({
