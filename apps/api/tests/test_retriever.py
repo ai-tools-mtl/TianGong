@@ -59,3 +59,20 @@ def test_retriever_has_candidate_pool_constant():
     from app.rag import retriever
     assert hasattr(retriever, 'RETRIEVAL_CANDIDATE_POOL'), "缺少 RETRIEVAL_CANDIDATE_POOL"
     assert retriever.RETRIEVAL_CANDIDATE_POOL >= 10
+
+
+def test_retriever_uses_edited_text():
+    """G4：检索返回和喂 LLM 都用 edited_text（如非空）。"""
+    import inspect
+    from app.rag import retriever
+    src = inspect.getsource(retriever.retrieve)
+    assert 'edited_text' in src, "retrieve 未使用 edited_text（G4 Task 4.3）"
+
+
+def test_retriever_applies_weight():
+    """G4：weight 作为召回分数乘子（fused_score *= weight）。"""
+    import inspect
+    from app.rag import retriever
+    src = inspect.getsource(retriever.retrieve)
+    assert 'weight' in src, "retrieve 未应用 weight（G4 Task 4.3）"
+    assert 'c.fused_score *= c.weight' in src, "weight 加权逻辑缺失"

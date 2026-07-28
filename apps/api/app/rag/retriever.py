@@ -101,7 +101,7 @@ def retrieve(
         )
         kw_rows = db.execute(kw_stmt).all()
 
-    # 构建 candidate（content 用 chunk.content，weight 默认 1.0——Phase 4 Task 4.3 才加 edited_text/weight）
+    # 构建 candidate（G4：content 用 edited_text or chunk.content，weight 读 chunk.weight）
     vec_candidates = []
     for chunk, distance in vec_rows:
         score = 1.0 - distance
@@ -109,16 +109,18 @@ def retrieve(
             continue
         vec_candidates.append(RetrievalCandidate(
             chunk_id=str(chunk.id),
-            content=chunk.content,
+            content=chunk.edited_text or chunk.content,
             vector_score=score,
+            weight=chunk.weight if chunk.weight is not None else 1.0,
             metadata={"_chunk": chunk},
         ))
     kw_candidates = []
     for chunk, rank in kw_rows:
         kw_candidates.append(RetrievalCandidate(
             chunk_id=str(chunk.id),
-            content=chunk.content,
+            content=chunk.edited_text or chunk.content,
             keyword_score=float(rank),
+            weight=chunk.weight if chunk.weight is not None else 1.0,
             metadata={"_chunk": chunk},
         ))
 
@@ -128,6 +130,10 @@ def retrieve(
     # 单路兜底（关键词路空或 SQLite 时，RRF 退化为向量路排序）
     if not fused and vec_candidates:
         fused = vec_candidates
+
+    # G4：weight 加权到 fused_score（admin 设的高权重 chunk 排名靠前）
+    for c in fused:
+        c.fused_score *= c.weight
 
     # G3 rerank 精排（D5，失败降级）
     rerank_cfg = resolve_rerank_config(db, user_id=user_id)
@@ -139,7 +145,7 @@ def retrieve(
     else:
         fused = fused[:top_k]
 
-    # 转换为 RetrievalResult
+    # 转换为 RetrievalResult（G4：content 用 edited_text）
     results = []
     for cand in fused:
         chunk = cand.metadata.get("_chunk")
@@ -147,7 +153,7 @@ def retrieve(
             continue
         meta = chunk.metadata_ or {}
         results.append(RetrievalResult(
-            content=chunk.content,
+            content=chunk.edited_text or chunk.content,
             score=cand.fused_score or cand.vector_score,
             source_section_key=chunk.source_section_key,
             # 归档类用 project_title,导入类用 title
