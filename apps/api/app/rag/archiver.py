@@ -2,9 +2,10 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, text
 from sqlalchemy.orm import Session
 
+from app.core.database import is_postgres
 from app.models import KnowledgeChunk, Project, Section
 from app.rag.chunker import chunk_sections
 from app.rag.embedding import embed_texts
@@ -71,6 +72,13 @@ def archive_project(db: Session, *, project: Project, user_id) -> int:
             embedding=vec,
             metadata_={"project_title": project.title},
         ))
+
+    # G3：生成 tsv（仅 PG，SQLite 跳过）
+    if is_postgres():
+        db.execute(text(
+            "UPDATE knowledge_chunks SET tsv = to_tsvector('simple', coalesce(content, '')) "
+            "WHERE tsv IS NULL AND source_id = :sid AND source_type = 'disclosure'"
+        ), {"sid": str(project.id)})
 
     project.status = "archived"
     project.archived_at = datetime.now(timezone.utc)

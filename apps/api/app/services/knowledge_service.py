@@ -14,9 +14,10 @@ knowledge_chunks 表,本模块的 chunk 写入在 PG 集成验证。
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from app.core.database import is_postgres
 from app.core.exceptions import NotFoundError, ValidationError
 from app.core.storage import Storage
 from app.models import KnowledgeChunk, KnowledgeFile, KnowledgeReview
@@ -318,6 +319,13 @@ def _ingest_chunks(
             content=c.content, embedding=vec,
             metadata_={"title": title},
         ))
+
+    # G3：生成 tsv（仅 PG）
+    if is_postgres() and file_id:
+        db.execute(text(
+            "UPDATE knowledge_chunks SET tsv = to_tsvector('simple', coalesce(content, '')) "
+            "WHERE tsv IS NULL AND file_id = :fid"
+        ), {"fid": str(file_id)})
 
 
 def _source_type_for(filename: str) -> str:
