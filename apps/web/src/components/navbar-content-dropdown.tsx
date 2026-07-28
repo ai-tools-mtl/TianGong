@@ -1,6 +1,6 @@
 'use client'
 
-import { BookOpen, FileText } from 'lucide-react'
+import { BookOpen, ChevronDown, FileText } from 'lucide-react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
@@ -51,6 +51,9 @@ export function NavbarContentDropdown() {
       >
         <FileText className="size-3.5" />
         内容
+        <ChevronDown
+          className={cn('size-3.5 transition-transform', open && 'rotate-180')}
+        />
       </button>
       {open && (
         <div
