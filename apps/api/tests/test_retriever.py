@@ -1,8 +1,7 @@
 """retriever 逻辑测试（SQLite 跳过真实 Vector 列，只测业务逻辑）。"""
 import uuid
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from app.rag.retriever import retrieve, RetrievalResult
 
