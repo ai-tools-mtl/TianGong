@@ -65,7 +65,9 @@ RAGFlow 的一些能力（深文档解析、专用向量库、沙箱代码执行
 
 ## 四、承重决策（D1-D6）
 
-- **D1（HNSW 优先于 IVFFlat）** ⚠️：`embedding` 列建 **HNSW** 索引而非 IVFFlat。理由：① pgvector 0.7+ 原生支持 HNSW，召回质量优于 IVFFlat；② IVFFlat 需要建索引时指定 `lists` 并在查询时配 `probes`，调参敏感；③ HNSW 增量写入友好（知识库持续 ingest 场景）。代价：写入略慢、内存占用略高，但天工的写入是低频异步操作，可接受。
+- **D1（HNSW 优先于 IVFFlat + halfvec 半精度）** ⚠️：`embedding` 列建 **HNSW** 索引而非 IVFFlat。理由：① pgvector 0.7+ 原生支持 HNSW，召回质量优于 IVFFlat；② IVFFlat 需要建索引时指定 `lists` 并在查询时配 `probes`，调参敏感；③ HNSW 增量写入友好（知识库持续 ingest 场景）。代价：写入略慢、内存占用略高，但天工的写入是低频异步操作，可接受。
+
+> **⚠️ D1.1（halfvec 半精度，2026-07-28 实施时发现）**：pgvector 的 HNSW/IVFFlat 对 `vector` 类型有 **2000 维硬上限**，而智谱 embedding-3 原生输出 2048 维，直接建索引报 `column cannot have more than 2000 dimensions for hnsw index`（Task 1.1 实施时实测命中，原 spec 只查版本 ≥0.5.0 没查维度上限，是写作盲点）。**解决方案：列类型从 `vector(2048)` 改为 `halfvec(2048)`**——halfvec 支持 4000 维上限，保留 2048 维精度（不降维），存储减半（float16 vs float32），对 cosine 相似度影响可忽略。已在 pgvector 0.8.5 实测 `halfvec(2048) + HNSW + halfvec_cosine_ops` 可用。改动：① 迁移改列类型 `ALTER COLUMN ... TYPE halfvec(2048) USING ...::halfvec(2048)` + 重建索引用 `halfvec_cosine_ops`；② `embedding.py` 入库时向量转 halfvec；③ `retriever.py` 查询时 query_vec 转 halfvec。**不降维、不改 EMBEDDING_DIM 常量、不改智谱 embedding 调用**。
 - **D2（混合检索在 Postgres 内闭环）** ⚠️：BM25 用 **Postgres 内置全文检索（`tsvector` + `ts_rank_cd`）**，向量用 pgvector，融合用 **RRF（Reciprocal Rank Fusion）**。**不引入 ES / Lucene**。rerank 用**智谱 rerank API**（`rerank` 端点，与 embedding 同 provider 体系）作为首选，本地 bge-reranker 作为 fallback（admin 可配）。
 - **D3（分块干预走 metadata JSONB 扩展，不改表结构主键）** ⚠️：分块的 `keywords` / `questions` / `weight` / `edited_text` / `locked` 字段**全部塞进现有 `KnowledgeChunk.metadata_` JSONB**（`models/knowledge_chunk.py:13`），**不新增列、不新增表**。理由：① 改动最小、迁移最轻；② JSONB 查询能力足以支撑按 keywords 过滤；③ 后续如需 SQL 索引化可再抽列。
 - **D4（检索测试页复用现有 search API，前端新增）** ⚠️：后端**零改动**——`POST /knowledge/search`（`api/knowledge.py:44`）已返回 content/score/section_key/project_title，前端在 admin 工作台新增「检索测试」页签即可。
@@ -82,31 +84,40 @@ RAGFlow 的一些能力（深文档解析、专用向量库、沙箱代码执行
 
 > **⚠️ 紧迫性（2026-07-28 修订）**：原 MVP 设计附录 C 把全表扫描列为 🟢低风险，前提是「数据量小」。Firecrawl 网页摄入落地后这一前提已被削弱——单次 crawl 硬上限 100 页（`web_ingestion_service.py:31`），每页 Markdown 按现有 800/100 滑窗约产 3-7 个 chunk，**单次 crawl 可产生 300-700 个 chunk**，是知识库数据增长的主要来源。一旦整站 crawl 成为常态，全表扫描的延迟会快速劣化。G1 应**优先于其他三项尽早落地**。
 
-**方案**：新建 alembic 迁移，为 `knowledge_chunks.embedding` 建 HNSW 索引。
+**方案**：新建 alembic 迁移，**先将列类型从 `vector(2048)` 改为 `halfvec(2048)`**（D1.1，解决 2000 维上限），再为 `knowledge_chunks.embedding` 建 HNSW 索引。
 
 ```python
-# alembic/versions/xxxxx_add_hnsw_index_on_embedding.py
+# alembic/versions/d1h2n3s4w5i6_add_hnsw_index.py
 def upgrade():
+    # D1.1: 列类型 vector(2048) → halfvec(2048)（解决 pgvector HNSW 2000 维上限）
+    # halfvec 支持 4000 维，float16 存储减半，对 cosine 影响可忽略
+    op.execute('CREATE EXTENSION IF NOT EXISTS vector')
+    op.execute('ALTER TABLE knowledge_chunks ALTER COLUMN embedding TYPE halfvec(2048) USING embedding::halfvec(2048)')
+    # HNSW 索引：halfvec 用 halfvec_cosine_ops（与 retriever.cosine_distance 对齐）
     op.execute(
-        "CREATE INDEX ix_knowledge_chunks_embedding_hnsw "
-        "ON knowledge_chunks USING hnsw (embedding vector_cosine_ops) "
-        "WITH (m = 16, ef_construction = 64)"
+        'CREATE INDEX ix_knowledge_chunks_embedding_hnsw '
+        'ON knowledge_chunks USING hnsw (embedding halfvec_cosine_ops) '
+        'WITH (m = 16, ef_construction = 64)'
     )
 
 def downgrade():
-    op.drop_index("ix_knowledge_chunks_embedding_hnsw", table_name="knowledge_chunks")
+    op.execute('DROP INDEX IF EXISTS ix_knowledge_chunks_embedding_hnsw')
+    op.execute('ALTER TABLE knowledge_chunks ALTER COLUMN embedding TYPE vector(2048) USING embedding::vector(2048)')
 ```
 
-**查询侧适配**：`retriever.py` 的查询前需设 `ef_search`（HNSW 的动态探测参数，仅当前事务有效）：
+**入库/查询侧适配（halfvec 转换）**：
+- `embedding.py`：入库时向量转 halfvec（`embed_texts` 返回的 list[float] 在写入 PG 时由 SQLAlchemy/pgvector 自动转，或显式 `HalfVectorType`）
+- `retriever.py`：查询时 `query_vec` 需转 halfvec（`cosine_distance` 对 halfvec 列会自动用 halfvec 的 `<=>` 操作符，实测 0.8.5 halfvec_cosine_ops 已注册）
 
 ```python
-# retriever.py 的 retrieve 函数开头
-await session.execute(text("SET LOCAL hnsw.ef_search = :ef"), {"ef": max(40, top_k * 4)})
+# retriever.py 的 retrieve 函数查询前
+if is_postgres():
+    db.execute(text("SET LOCAL hnsw.ef_search = :ef"), {"ef": max(40, top_k * 4)})
 ```
 
-**前置条件**：确认生产 pgvector 版本 ≥ 0.5.0（HNSW 引入版本）。当前 `docker-compose.yml:16` 用 `pgvector/pgvector:pg16`，内嵌 pgvector 版本通常 ≥ 0.7，满足。
+**前置条件**：确认生产 pgvector 版本 ≥ 0.5.0（HNSW 引入版本）。当前 `docker-compose.yml:16` 用 `pgvector/pgvector:pg16`，实测 pgvector 0.8.5（halfvec 自 0.7.0 引入），满足。
 
-**风险**：建 HNSW 索引时若表已有数据，会全量重建（耗 CPU/内存）。当前数据量小，可在低峰期直接建。若后续数据量大，需用 `CREATE INDEX CONCURRENTLY`（注意 HNSW 索引 pgvector 0.7+ 才支持并发构建）。
+**风险**：① 改列类型若表已有数据，会全量转 halfvec（当前 0 行，无成本）；② halfvec 是 float16，理论上有微小精度损失，但对 cosine 相似度排序影响可忽略（社区共识 + pgvector 官方推荐高维方案）；③ 若后续数据量大，HNSW 索引需用 `CREATE INDEX CONCURRENTLY`（pgvector 0.7+ 支持）。
 
 ---
 

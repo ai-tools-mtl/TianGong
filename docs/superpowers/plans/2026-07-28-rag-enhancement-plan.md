@@ -17,7 +17,7 @@
 
 ## 承重决策（D1-D8，与 spec 对齐 + 本计划补充）
 
-- **D1（HNSW 优先于 IVFFlat）**：`embedding` 列建 HNSW 索引。pgvector 0.7+ 原生支持，召回质量优于 IVFFlat，增量写入友好（知识库持续 ingest）。参数 `m=16, ef_construction=64`（官方推荐），`ef_search=max(40, top_k*4)` 查询时设。
+- **D1（HNSW 优先于 IVFFlat）+ D1.1（halfvec 半精度）**：`embedding` 列建 HNSW 索引。pgvector 0.7+ 原生支持，召回质量优于 IVFFlat，增量写入友好（知识库持续 ingest）。参数 `m=16, ef_construction=64`（官方推荐），`ef_search=max(40, top_k*4)` 查询时设。**⚠️ D1.1（2026-07-28 Task 1.1 实施时发现）**：pgvector HNSW/IVFFlat 对 `vector` 类型有 2000 维硬上限，智谱 embedding-3 原生 2048 维超限。解法：列类型 `vector(2048)` → `halfvec(2048)`（支持 4000 维，float16 存储减半，精度损失可忽略，pgvector 0.8.5 实测可用）。不降维、不改 EMBEDDING_DIM。
 - **D2（混合检索 Postgres 内闭环）**：BM25 用 Postgres 内置 `tsvector` + `ts_rank_cd`，向量用 pgvector，融合用 RRF（k=60）。**不引入 ES/Lucene**。rerank 用智谱 rerank API（httpx 直连）为首选，失败时降级返回 RRF 结果。
 - **D3（G4 字段独立列 + 迁移）** ⚠️用户确认：keywords(JSON)/questions(JSON)/weight(Float)/edited_text(Text)/locked(Boolean) 建**独立列**（可建 GIN/索引，SQL 友好），不走 metadata_ JSONB 扩展。同时加 `tsv tsvector` 列（G3 用）+ GIN 索引。
 - **D4（检索测试页 admin 域）**：新增 `POST /admin/knowledge/retrieval-test` 端点（不复用普通用户的 `/knowledge/search`，因为 admin 要能强制 scope=global 视角）。前端抄 Firecrawl 配置页模板。
@@ -149,24 +149,29 @@ cd apps/api && uv run alembic heads
 写入 `apps/api/alembic/versions/d1h2n3s4w5i6_add_hnsw_index.py`：
 
 ```python
-"""add hnsw index on knowledge_chunks.embedding
+"""add hnsw index on knowledge_chunks.embedding (halfvec)
 
 Revision ID: d1h2n3s4w5i6
 Revises: c3d4e5f6a7b8
 Create Date: 2026-07-28
 
 给 knowledge_chunks.embedding 列建 HNSW 索引（cosine 距离）。
-spec: docs/superpowers/specs/2026-07-27-ragflow-borrow-design.md §5.1 (G1, D1)
+spec: docs/superpowers/specs/2026-07-27-ragflow-borrow-design.md §5.1 (G1, D1 + D1.1)
+
+⚠️ D1.1（2026-07-28 实施时发现）：
+pgvector HNSW/IVFFlat 对 vector 类型有 2000 维硬上限，智谱 embedding-3 原生 2048 维超限。
+解法：列类型 vector(2048) → halfvec(2048)（halfvec 支持 4000 维，float16 存储减半，
+对 cosine 影响可忽略，pgvector 0.8.5 实测可用）。不降维、不改 EMBEDDING_DIM。
 
 参数（D6：写死常量，不暴露 admin）：
 - m=16, ef_construction=64（pgvector 官方推荐）
 - ef_search 在查询时 SET LOCAL（见 retriever.py）
 
 注意：
-- 手写迁移（autogenerate 不感知向量索引）
+- 手写迁移（autogenerate 不感知向量索引 + halfvec 类型转换）
 - 不动 vector extension（ee50036c9e86 已 CREATE EXTENSION，幂等不重复）
-- downgrade 只 drop index，不 drop extension
-- cosine_distance 操作符 <=> 与 vector_cosine_ops 对齐（retriever 用 cosine_distance）
+- downgrade 只 drop index + 回滚列类型，不 drop extension
+- halfvec 用 halfvec_cosine_ops（与 vector_cosine_ops 平行）
 """
 from typing import Sequence, Union
 
@@ -182,16 +187,20 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     # 防御性 CREATE EXTENSION（幂等，ee50036c9e86 已建过）
     op.execute('CREATE EXTENSION IF NOT EXISTS vector')
-    # HNSW 索引：cosine 距离（与 retriever.cosine_distance 操作符对齐）
+    # D1.1: 列类型 vector(2048) → halfvec(2048)（解决 pgvector HNSW 2000 维上限）
+    op.execute('ALTER TABLE knowledge_chunks ALTER COLUMN embedding TYPE halfvec(2048) USING embedding::halfvec(2048)')
+    # HNSW 索引：halfvec 用 halfvec_cosine_ops（与 retriever.cosine_distance 操作符对齐）
     op.execute(
         'CREATE INDEX ix_knowledge_chunks_embedding_hnsw '
-        'ON knowledge_chunks USING hnsw (embedding vector_cosine_ops) '
+        'ON knowledge_chunks USING hnsw (embedding halfvec_cosine_ops) '
         'WITH (m = 16, ef_construction = 64)'
     )
 
 
 def downgrade() -> None:
     op.execute('DROP INDEX IF EXISTS ix_knowledge_chunks_embedding_hnsw')
+    # 回滚列类型到 vector(2048)
+    op.execute('ALTER TABLE knowledge_chunks ALTER COLUMN embedding TYPE vector(2048) USING embedding::vector(2048)')
     # 不 drop vector extension（其他表/列可能依赖）
 ```
 
@@ -201,9 +210,9 @@ Run:
 ```bash
 cd apps/api && uv run alembic upgrade head 2>&1 | tail -5
 ```
-Expected: `Running upgrade c3d4e5f6a7b8 -> d1h2n3s4w5i6, add hnsw index` 成功，无报错。
+Expected: `Running upgrade c3d4e5f6a7b8 -> d1h2n3s4w5i6, add hnsw index (halfvec)` 成功，无报错。**若报 `column cannot have more than 2000 dimensions`，说明 halfvec 转换没生效，检查 ALTER 语句。**
 
-- [ ] **Step 4: 验证索引存在（PG 集成验证，需 docker compose up postgres）**
+- [ ] **Step 4: 验证索引存在 + 列类型是 halfvec（PG 集成验证，需 docker compose up postgres）**
 
 Run:
 ```bash
@@ -211,15 +220,22 @@ cd apps/api && uv run python -c "
 from sqlalchemy import text
 from app.core.database import engine
 with engine.connect() as conn:
+    # 1. HNSW 索引存在
     r = conn.execute(text(
         \"SELECT indexname FROM pg_indexes WHERE tablename='knowledge_chunks' AND indexname='ix_knowledge_chunks_embedding_hnsw'\"
     )).fetchone()
     print('hnsw index exists:', bool(r))
+    # 2. 列类型是 halfvec（D1.1 验证）
+    col = conn.execute(text(
+        \"SELECT data_type, udt_name FROM information_schema.columns WHERE table_name='knowledge_chunks' AND column_name='embedding'\"
+    )).fetchone()
+    print('embedding column type:', col)
+    # 3. pgvector 版本
     v = conn.execute(text(\"SELECT extversion FROM pg_extension WHERE extname='vector'\")).fetchone()
     print('pgvector version:', v[0] if v else 'NOT INSTALLED')
 "
 ```
-Expected: `hnsw index exists: True`，`pgvector version: 0.7.x`（或更高，≥0.5.0 即支持 HNSW）。
+Expected: `hnsw index exists: True`，`embedding column type: ('USER-DEFINED', 'halfvec')`（udt_name=halfvec 确认列类型已转），`pgvector version: 0.8.x`。
 
 - [ ] **Step 5: 验证 downgrade 可逆**
 
@@ -242,19 +258,22 @@ Expected: 全部 PASS（HNSW 索引对业务逻辑透明，SQLite 测试不受�
 
 ```bash
 git add apps/api/alembic/versions/d1h2n3s4w5i6_add_hnsw_index.py
-git commit -m "feat(rag): G1 给 knowledge_chunks.embedding 加 HNSW 索引（spec §5.1, D1）
+git commit -m "feat(rag): G1 给 knowledge_chunks.embedding 加 HNSW 索引（spec §5.1, D1+D1.1）
 
-解决全表暴力扫描（Firecrawl 落地后紧迫性升级）。参数 m=16/ef_construction=64
-写死（D6），ef_search 查询时 SET LOCAL（见 Phase 3 retriever 改造）。"
+解决全表暴力扫描（Firecrawl 落地后紧迫性升级）。
+⚠️ D1.1：pgvector HNSW 对 vector 类型有 2000 维上限，智谱 2048 维超限，
+故列类型 vector(2048) → halfvec(2048)（支持 4000 维，float16 存储，精度损失可忽略）。
+参数 m=16/ef_construction=64 写死（D6），ef_search 查询时 SET LOCAL。"
 ```
 
 ---
 
-### Task 1.2: retriever 查询侧加 SET ef_search + is_postgres helper
+### Task 1.2: retriever 查询侧加 SET ef_search + is_postgres helper + halfvec 适配
 
 **Files:**
 - Modify: `apps/api/app/rag/retriever.py`
 - Modify: `apps/api/app/core/database.py`
+- Modify: `apps/api/app/rag/embedding.py`（入库转 halfvec）
 - Test: `apps/api/tests/test_retriever.py`（新建）
 
 - [ ] **Step 1: 写失败测试**
@@ -278,6 +297,15 @@ def test_retriever_has_ef_search_set():
     assert 'top_k' in src and 'ef_search' in src, "ef_search 应随 top_k 动态调整"
 
 
+def test_retriever_adapts_halfvec():
+    """D1.1：retriever 应将 query_vec 转 halfvec（列类型已改 halfvec）。"""
+    import inspect
+    from app.rag import retriever
+    src = inspect.getsource(retriever.retrieve)
+    # halfvec 适配：要么显式转换，要么用 HalfVec 类型
+    assert 'halfvec' in src.lower() or 'HalfVec' in src, "retrieve 缺少 halfvec 适配（D1.1）"
+
+
 def test_retriever_returns_empty_when_no_embed_config(db_session, registered_user):
     """无 embedding 配置时返回空列表（向后兼容）。"""
     results = retrieve(db_session, user_id=registered_user["id"], query="测试")
@@ -296,7 +324,7 @@ Run:
 ```bash
 cd apps/api && uv run pytest tests/test_retriever.py -v 2>&1 | tail -10
 ```
-Expected: `test_retriever_has_ef_search_set` FAIL（`AssertionError: retrieve 缺少 SET LOCAL hnsw.ef_search`）。
+Expected: `test_retriever_has_ef_search_set` 和 `test_retriever_adapts_halfvec` FAIL。
 
 - [ ] **Step 3: 实现 is_postgres helper**
 
@@ -311,10 +339,16 @@ def is_postgres() -> bool:
     return engine.dialect.name == 'postgresql'
 ```
 
-- [ ] **Step 4: 实现 ef_search 设置**
+- [ ] **Step 4: 实现 ef_search + halfvec 查询适配**
 
-修改 `apps/api/app/rag/retriever.py`，在 `stmt = (...)` 查询前（约 line 52 之后、`rows = db.execute(stmt)` 之前）插入：
+修改 `apps/api/app/rag/retriever.py`：
 
+① 顶部 import 加 `HalfVec`：
+```python
+from pgvector.sqlalchemy import HalfVec  # D1.1: halfvec 查询适配
+```
+
+② 在 `stmt = (...)` 查询前（约 line 52 之后、`rows = db.execute(stmt)` 之前）插入 ef_search：
 ```python
     # D1/G1：HNSW 索引的动态探测参数，随 top_k 放大保证召回率（仅 PG 生效，SQLite 静默忽略）
     from app.core.database import is_postgres
@@ -323,30 +357,61 @@ def is_postgres() -> bool:
         db.execute(sa_text("SET LOCAL hnsw.ef_search = :ef"), {"ef": max(40, top_k * 4)})
 ```
 
-- [ ] **Step 5: 跑测试确认通过**
+③ 查询语句的 cosine_distance 改用 HalfVec 适配（query_vec 转 halfvec）：
+```python
+    # 原：KnowledgeChunk.embedding.cosine_distance(query_vec)
+    # 改：D1.1 halfvec —— query_vec 转成 HalfVec 类型与列类型对齐
+    stmt = (
+        select(
+            KnowledgeChunk,
+            KnowledgeChunk.embedding.cosine_distance(HalfVec(query_vec)).label("distance"),
+        )
+        .where(scope_filter)
+        .order_by("distance")
+        .limit(top_k)
+    )
+```
+
+注意：pgvector-python 的 `cosine_distance` 接受 HalfVec 实例，会生成 halfvec 的 `<=>` 操作符，与 halfvec_cosine_ops 索引对齐。
+
+- [ ] **Step 5: embedding.py 入库适配 halfvec**
+
+检查 `apps/api/app/rag/embedding.py` 的 `embed_texts` 返回值。pgvector-python 写入 halfvec 列时，list[float] 会自动适配（SQLAlchemy 的 Vector/HalfVec 类型处理器处理）。**若 ORM 用 `Vector(EMBEDDING_DIM)` 定义列（`models/knowledge_chunk.py:30`），需同步改为 `HalfVec(EMBEDDING_DIM)`**：
+
+修改 `apps/api/app/models/knowledge_chunk.py:3,30`：
+```python
+from pgvector.sqlalchemy import HalfVec  # 原 Vector
+# ...
+embedding: Mapped[list | None] = mapped_column(HalfVec(EMBEDDING_DIM), nullable=True)
+```
+
+**注意**：model 层改 HalfVec 后，SQLite 测试库的 JSON 兼容版（conftest.py:99 `sa.Column("embedding", sa.JSON)`）不受影响（JSON 占位，类型透明）。但需确认 SQLite 测试不会因 HalfVec 类型报错——若报错，conftest 的兼容版保持 JSON 即可（HalfVec 只在 PG 生效）。
+
+- [ ] **Step 6: 跑测试确认通过**
 
 Run:
 ```bash
 cd apps/api && uv run pytest tests/test_retriever.py -v 2>&1 | tail -10
 ```
-Expected: 3 PASS。
+Expected: 4 PASS。
 
-- [ ] **Step 6: 回归现有测试**
+- [ ] **Step 7: 回归现有测试**
 
 Run:
 ```bash
 cd apps/api && uv run pytest -q 2>&1 | tail -10
 ```
-Expected: 全绿。
+Expected: 全绿。**若 SQLite 测试因 HalfVec 报错，conftest 的兼容版 embedding 列保持 JSON（不动）。**
 
-- [ ] **Step 7: 提交**
+- [ ] **Step 8: 提交**
 
 ```bash
-git add apps/api/app/rag/retriever.py apps/api/app/core/database.py apps/api/tests/test_retriever.py
-git commit -m "feat(rag): G1 retriever 查询前 SET LOCAL hnsw.ef_search（随 top_k 动态）
+git add apps/api/app/rag/retriever.py apps/api/app/core/database.py apps/api/app/models/knowledge_chunk.py apps/api/tests/test_retriever.py
+git commit -m "feat(rag): G1 retriever 查询前 SET LOCAL hnsw.ef_search + halfvec 适配（D1+D1.1）
 
 HNSW 索引的动态探测参数，max(40, top_k*4) 保证召回率。加 is_postgres() helper
-做方言判断（SQLite 静默忽略）。"
+做方言判断（SQLite 静默忽略）。D1.1：query_vec 转 HalfVec 与列类型对齐，
+model 层 embedding 列改 HalfVec 类型。"
 ```
 
 ---
