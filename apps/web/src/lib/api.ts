@@ -588,6 +588,36 @@ export const api = {
       body: JSON.stringify({ top_k: 5, ...payload }),
     }),
 
+  // G4 分块可视化干预：列出某文件的所有 chunks（GET /admin/knowledge/files/{file_id}/chunks）
+  listChunks: (fileId: string) =>
+    request<Array<{
+      id: string
+      content: string
+      edited_text: string | null
+      keywords: string[]
+      questions: string[]
+      weight: number
+      locked: boolean
+      chunk_index: number
+      source_section_key: string | null
+    }>>(`/admin/knowledge/files/${fileId}/chunks`),
+
+  // G4 分块可视化干预：编辑单 chunk（PATCH /admin/knowledge/chunks/{chunk_id}）
+  // edited_text 改变会触发后端重新 embed；keywords/questions 进 tsv 参与关键词路召回；
+  // weight 是召回分数乘子；locked 防 re-ingest 覆盖。
+  updateChunk: (chunkId: string, payload: {
+    keywords?: string[]
+    questions?: string[]
+    weight?: number
+    edited_text?: string
+    locked?: boolean
+    force_unlock?: boolean
+  }) =>
+    request(`/admin/knowledge/chunks/${chunkId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+
   // G3 rerank 配置（混合检索精排模型配置）
   getRerankConfig: () =>
     request<{ enabled: boolean; base_url: string; has_api_key: boolean; model: string }>(

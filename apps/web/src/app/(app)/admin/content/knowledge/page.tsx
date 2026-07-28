@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useRef, useState } from 'react'
 import { Download, Globe, Trash2, Upload } from 'lucide-react'
 import { toast } from 'sonner'
@@ -157,6 +158,10 @@ function GlobalKnowledgeCard({
             <a href={api.knowledgeFileUrl(kf.id)} download>
               <Download className="mr-1 size-3.5" /> 下载
             </a>
+          </Button>
+          <Button variant="ghost" size="xs" asChild>
+            {/* G4：跳该文件的 chunk 列表页，可逐块编辑 content/keywords/weight/locked */}
+            <Link href={`/admin/content/knowledge/${kf.id}`}>查看分块 →</Link>
           </Button>
           <Button
             variant="ghost"
