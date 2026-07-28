@@ -353,7 +353,9 @@ def test_rerank_config_endpoint(
         model=payload.model,
     )
     try:
-        result = rerank("测试 query", ["文档A", "文档B"], config=cfg)
+        # strict=True 绕过 D5 降级：测试连通性时 API 失败必须抛错，
+        # 否则降级会让"API 挂了"也返回成功，test 端点失去诊断意义。
+        result = rerank("测试 query", ["文档A", "文档B"], config=cfg, strict=True)
         return {"ok": True, "message": f"连通成功，返回 {len(result)} 条"}
     except Exception as e:
         return {"ok": False, "message": str(e)}

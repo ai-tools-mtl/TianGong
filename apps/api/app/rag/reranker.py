@@ -21,10 +21,12 @@ class RerankConfig:
     top_n: int = 3
 
 
-def rerank(query: str, documents: list[str], *, config: RerankConfig) -> list[str]:
+def rerank(query: str, documents: list[str], *, config: RerankConfig, strict: bool = False) -> list[str]:
     """对 documents 按 query 重排，返回 top_n 个文本。
 
     D5 降级：config.enabled=False 或 API 失败时，原样返回 documents（不抛错）。
+    strict=True 时绕过降级，API 失败直接抛错——供 admin 测试连通性端点使用，
+    否则降级会让"API 挂了"也返回成功，test 端点失去诊断意义。
     """
     if not config.enabled or not documents:
         return documents
@@ -48,6 +50,8 @@ def rerank(query: str, documents: list[str], *, config: RerankConfig) -> list[st
         results = sorted(data.get("results", []), key=lambda r: -r["relevance_score"])
         return [documents[r["index"]] for r in results[:config.top_n]]
     except Exception as e:
+        if strict:
+            raise  # 测试连通性场景：失败必须抛，让调用方知道 API 不通
         # D5：失败降级，不报错（检索不能因 rerank 挂掉而整体失败）
         logger.warning("rerank 调用失败，降级返回原序: %s", e)
         return documents

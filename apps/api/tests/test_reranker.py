@@ -111,3 +111,37 @@ def test_rerank_calls_correct_endpoint(mock_post):
     assert body["documents"] == ["doc"]
     assert body["top"] == 3
     assert body["return_documents"] is False
+
+
+@patch("app.rag.reranker.httpx.post")
+def test_rerank_strict_raises_on_failure(mock_post):
+    """strict=True 时 API 失败必须抛错（供 admin 测试连通性端点用）。
+
+    非 strict 模式（默认）会 D5 降级返回原序，导致 test 端点无法诊断真实失败。
+    """
+    import pytest
+    mock_post.side_effect = Exception("network error")
+    with pytest.raises(Exception, match="network error"):
+        rerank("query", ["a", "b"], config=_config(), strict=True)
+
+
+@patch("app.rag.reranker.httpx.post")
+def test_rerank_strict_raises_on_http_error(mock_post):
+    """strict=True 时 HTTP 错误（401/500）也抛错。"""
+    import pytest
+    mock_resp = MagicMock()
+    mock_resp.raise_for_status.side_effect = Exception("401 Unauthorized")
+    mock_post.return_value = mock_resp
+    with pytest.raises(Exception, match="401"):
+        rerank("query", ["a"], config=_config(), strict=True)
+
+
+@patch("app.rag.reranker.httpx.post")
+def test_rerank_strict_success_returns_ranked(mock_post):
+    """strict=True 时成功调用正常返回（不抛错）。"""
+    mock_resp = MagicMock()
+    mock_resp.json.return_value = {"results": [{"index": 1, "relevance_score": 0.9}, {"index": 0, "relevance_score": 0.5}]}
+    mock_resp.raise_for_status = MagicMock()
+    mock_post.return_value = mock_resp
+    ranked = rerank("query", ["a", "b"], config=_config(), strict=True)
+    assert ranked == ["b", "a"]
