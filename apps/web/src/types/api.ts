@@ -481,6 +481,12 @@ export interface DiffResponse {
   hunks: Hunk[]
 }
 
+/** 选区重写 diff 请求体（POST /sections/{id}/rewrite-diff，纯计算不改库）。 */
+export interface RewriteDiffRequest {
+  selected_text: string
+  ai_text: string
+}
+
 // ── 协作（计划 17）──
 
 export interface Member {

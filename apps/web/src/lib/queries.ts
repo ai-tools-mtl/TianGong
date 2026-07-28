@@ -400,6 +400,18 @@ export function useApplyDiff(sectionId: string, projectId: string) {
   })
 }
 
+/**
+ * 选区重写 diff：传入选区原文 + AI 重写文本，返回 hunks。
+ * 纯计算接口（不改库），与 useComputeDiff 一致不在 onSuccess 里做 UI 副作用——
+ * 调用方拿到 hunks 后自行决定如何展示。
+ */
+export function useRewriteDiff(sectionId: string) {
+  return useMutation({
+    mutationFn: (data: { selected_text: string; ai_text: string }) =>
+      api.rewriteDiff(sectionId, data),
+  })
+}
+
 // ── 协作（计划 17）──
 
 export function useMembers(projectId: string) {
