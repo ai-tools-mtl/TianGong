@@ -57,6 +57,8 @@ export const queryKeys = {
     // Console 域（refactor/admin-ia-phase2 切片 2）
     llmConfig: ['admin', 'llm-config'] as const,
     firecrawlConfig: ['admin', 'firecrawl-config'] as const,
+    // G3 rerank 配置（混合检索精排）
+    rerankConfig: ['admin', 'rerank-config'] as const,
     llmStats: (days: number) => ['admin', 'llm-stats', days] as const,
     auditLogs: (page: number, size: number) =>
       ['admin', 'audit-logs', page, size] as const,
@@ -641,6 +643,32 @@ export function useSaveFirecrawlConfig() {
       qc.invalidateQueries({ queryKey: queryKeys.admin.firecrawlConfig })
       qc.invalidateQueries({ queryKey: queryKeys.admin.all })
     },
+  })
+}
+
+// ── G3 rerank 配置（混合检索精排模型配置）──
+// 与 Firecrawl hooks 一致：mutation 内只做 invalidate，不弹 toast（组件层处理）。
+export function useRerankConfig() {
+  return useQuery({
+    queryKey: queryKeys.admin.rerankConfig,
+    queryFn: () => api.getRerankConfig(),
+  })
+}
+
+export function useSaveRerankConfig() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: { enabled: boolean; base_url: string; api_key: string; model: string }) =>
+      api.saveRerankConfig(payload),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.admin.rerankConfig }),
+  })
+}
+
+/** 测试 rerank 连通性（命令式动作，用 mutation，不失效缓存）。 */
+export function useTestRerankConfig() {
+  return useMutation({
+    mutationFn: (payload: { enabled: boolean; base_url: string; api_key: string; model: string }) =>
+      api.testRerankConfig(payload),
   })
 }
 

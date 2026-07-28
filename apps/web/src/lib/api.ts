@@ -588,6 +588,22 @@ export const api = {
       body: JSON.stringify({ top_k: 5, ...payload }),
     }),
 
+  // G3 rerank 配置（混合检索精排模型配置）
+  getRerankConfig: () =>
+    request<{ enabled: boolean; base_url: string; has_api_key: boolean; model: string }>(
+      '/admin/rag/rerank-config',
+    ),
+  saveRerankConfig: (payload: { enabled: boolean; base_url: string; api_key: string; model: string }) =>
+    request<{ ok: boolean }>('/admin/rag/rerank-config', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  testRerankConfig: (payload: { enabled: boolean; base_url: string; api_key: string; model: string }) =>
+    request<{ ok: boolean; message: string }>('/admin/rag/rerank-config/test', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
   // ── 知识库审核(admin)──
   listPendingReviews: () =>
     request<import('@/types/api').KnowledgeReview[]>('/admin/knowledge/reviews'),
