@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from app.api import (
-    admin, ai, attachments, auth, export, health, knowledge, projects, review, sections, settings, share, skills, tags, templates, versions,
+    admin, ai, attachments, auth, export, health, knowledge, memories, projects, review, sections, settings, share, skills, tags, templates, versions,
 )
 
 api_router = APIRouter(prefix="/api/v1")
@@ -15,6 +15,8 @@ api_router.include_router(ai.router)
 api_router.include_router(versions.router)
 api_router.include_router(export.router)
 api_router.include_router(knowledge.router)
+# /memories/* 用户长期记忆 CRUD（Task 13-14）
+api_router.include_router(memories.router)
 api_router.include_router(review.router)
 api_router.include_router(share.router)
 api_router.include_router(admin.router)
