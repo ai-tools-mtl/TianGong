@@ -614,6 +614,13 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  /** 选区重写 diff：传入选区原文 + AI 重写文本，返回 hunks（不改库，纯计算）。 */
+  rewriteDiff: (sectionId: string, data: { selected_text: string; ai_text: string }) =>
+    request<DiffResponse>(`/sections/${sectionId}/rewrite-diff`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
   // ── 协作（计划 17）──
   listMembers: (projectId: string) =>
     request<Member[]>(`/projects/${projectId}/members`),

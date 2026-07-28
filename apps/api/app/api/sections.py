@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.deps import get_current_user
 from app.models import User
-from app.schemas.diff import ApplyDiffRequest, DiffRequest, DiffResponse
+from app.schemas.diff import ApplyDiffRequest, DiffRequest, DiffResponse, RewriteDiffRequest
 from app.schemas.section import SectionOut, SectionUpdate
 from app.services import diff_service, section_service
 
@@ -85,3 +85,22 @@ def apply_diff(
         expected_version=payload.expected_version,
     )
     return _to_out(section)
+
+
+@router.post("/sections/{section_id}/rewrite-diff", response_model=DiffResponse)
+def compute_rewrite_diff(
+    section_id: str,
+    payload: RewriteDiffRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """计算选区重写的整章 diff（方案 B：后端拼接原文 + AI 输出，spec §3.4）。
+
+    与 /diff 区别：本端点接收 selected_text + ai_text，后端做"首次出现替换"拼接，
+    再调 compute_section_diff。前端无需自行实现 Tiptap→markdown 转换。
+    """
+    section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
+    hunks, ai_full = diff_service.compute_rewrite_diff(section, payload.selected_text, payload.ai_text)
+    # ai_full 透传给前端：apply-diff 时前端必须把它作为 ai_text 回传，
+    # 后端按 (original, ai_text) 重算的 hunks 才能与这里的 hunk id 对齐。
+    return DiffResponse(hunks=hunks, ai_full=ai_full)
