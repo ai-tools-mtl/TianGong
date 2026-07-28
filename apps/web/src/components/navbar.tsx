@@ -21,6 +21,7 @@ import { useQuery } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import { Logo } from '@/components/logo'
+import { NavbarContentDropdown } from '@/components/navbar-content-dropdown'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -55,7 +56,7 @@ const NAV_ITEMS: NavItem[] = [
 const ADMIN_NAV_ITEMS: NavItem[] = [
   { href: '/admin', label: '概览', icon: LayoutDashboard },
   { href: '/admin/users', label: '用户', icon: Users },
-  { href: '/admin/content', label: '内容', icon: FileText },
+  // 「内容」项由 NavbarContentDropdown 渲染（有子菜单），不在此数组
   { href: '/admin/review', label: '审核', icon: CheckCircle, showPendingBadge: true },
   { href: '/admin/skills', label: '技能', icon: Wrench },
   { href: '/admin/console', label: '控制台', icon: Settings },
@@ -114,20 +115,25 @@ export function Navbar() {
               const active = isAdminActive(pathname, item.href)
               const Icon = item.icon
               return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(
-                    'flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[13px] font-medium transition-colors',
-                    active
-                      ? 'bg-accent text-accent-foreground'
-                      : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                <span key={item.href} className="flex items-center">
+                  <Link
+                    href={item.href}
+                    className={cn(
+                      'flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-[13px] font-medium transition-colors',
+                      active
+                        ? 'bg-accent text-accent-foreground'
+                        : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                    )}
+                  >
+                    <Icon className="size-3.5" />
+                    {item.label}
+                    {item.showPendingBadge && <PendingBadge />}
+                  </Link>
+                  {/* 「用户」项之后插入「内容」dropdown（仅 admin 区） */}
+                  {isAdminArea && item.href === '/admin/users' && (
+                    <NavbarContentDropdown />
                   )}
-                >
-                  <Icon className="size-3.5" />
-                  {item.label}
-                  {item.showPendingBadge && <PendingBadge />}
-                </Link>
+                </span>
               )
             })}
           </nav>
