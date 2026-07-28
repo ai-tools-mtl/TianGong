@@ -163,3 +163,16 @@ async def upload_global(
     return {
         "file_id": str(kf.id), "scope": kf.scope, "source_type": kf.source_type,
     }
+
+
+@router.delete("/admin/knowledge/files/{file_id}", status_code=204)
+def delete_global_knowledge_file(
+    file_id: str,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """admin 删除全局库文件(硬删除:KF + minio 对象 + 关联 chunk)。"""
+    knowledge_service.delete_global_file(
+        db, storage=get_storage(), file_id=file_id,
+    )
+    return None
