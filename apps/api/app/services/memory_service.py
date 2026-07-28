@@ -139,3 +139,35 @@ def search_memories(
             continue
         results.append(MemorySearchResult(content=mem.content, score=score, id=mem.id))
     return results
+
+
+def find_similar_memory(
+    db: Session, *, user_id, content: str, threshold: float = DEDUP_SIMILARITY
+) -> UserMemory | None:
+    """查找与 content 高度相似的已有记忆（写路径去重用）。
+
+    返回相似度 ≥ threshold 的最近一条。无相似或 embedding 不可用时返回 None。
+    """
+    embedding = _try_embed(db, user_id, content)
+    if embedding is None:
+        return None
+
+    stmt = (
+        select(
+            UserMemory,
+            UserMemory.embedding.cosine_distance(HalfVec(embedding)).label("distance"),
+        )
+        .where(
+            (UserMemory.user_id == user_id)
+            & (UserMemory.embedding.isnot(None))
+        )
+        .order_by("distance")
+        .limit(1)
+    )
+    row = db.execute(stmt).first()
+    if row is None:
+        return None
+    mem, distance = row
+    if (1.0 - distance) >= threshold:
+        return mem
+    return None

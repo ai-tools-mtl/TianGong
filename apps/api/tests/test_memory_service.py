@@ -163,3 +163,14 @@ def test_search_memories_skips_null_embedding(db_session, registered_user, monke
 
     results = ms.search_memories(db_session, user_id=uid, query="记忆")
     assert results == []
+
+
+def test_find_similar_memory_returns_none_without_embedding(db_session, registered_user, monkeypatch):
+    """embedding 配置不可用时，去重查询返回 None（不去重，降级）。"""
+    from app.services import memory_service as ms
+
+    uid = uuid.UUID(registered_user["id"])
+    monkeypatch.setattr(ms, "_try_embed", lambda db, user_id, text: None)
+
+    result = ms.find_similar_memory(db_session, user_id=uid, content="新内容")
+    assert result is None
