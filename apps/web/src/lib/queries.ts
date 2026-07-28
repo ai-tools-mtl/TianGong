@@ -57,6 +57,8 @@ export const queryKeys = {
     // Console 域（refactor/admin-ia-phase2 切片 2）
     llmConfig: ['admin', 'llm-config'] as const,
     firecrawlConfig: ['admin', 'firecrawl-config'] as const,
+    // G3 rerank 配置（混合检索精排）
+    rerankConfig: ['admin', 'rerank-config'] as const,
     llmStats: (days: number) => ['admin', 'llm-stats', days] as const,
     auditLogs: (page: number, size: number) =>
       ['admin', 'audit-logs', page, size] as const,
@@ -64,6 +66,8 @@ export const queryKeys = {
     adminTemplates: ['admin', 'content', 'templates'] as const,
     // 邀请码管理（内部产品化）
     invites: ['admin', 'invites'] as const,
+    // G4 分块可视化干预：某文件的 chunks 列表。id=null 时无效（hook 会 enabled:false）
+    fileChunks: (id: string | null) => ['admin', 'fileChunks', id] as const,
   },
 }
 
@@ -656,6 +660,32 @@ export function useSaveFirecrawlConfig() {
   })
 }
 
+// ── G3 rerank 配置（混合检索精排模型配置）──
+// 与 Firecrawl hooks 一致：mutation 内只做 invalidate，不弹 toast（组件层处理）。
+export function useRerankConfig() {
+  return useQuery({
+    queryKey: queryKeys.admin.rerankConfig,
+    queryFn: () => api.getRerankConfig(),
+  })
+}
+
+export function useSaveRerankConfig() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: { enabled: boolean; base_url: string; api_key: string; model: string }) =>
+      api.saveRerankConfig(payload),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.admin.rerankConfig }),
+  })
+}
+
+/** 测试 rerank 连通性（命令式动作，用 mutation，不失效缓存）。 */
+export function useTestRerankConfig() {
+  return useMutation({
+    mutationFn: (payload: { enabled: boolean; base_url: string; api_key: string; model: string }) =>
+      api.testRerankConfig(payload),
+  })
+}
+
 /** LLM 调用统计（GET /admin/stats/llm?days=）。 */
 export function useLLMStats(days: number) {
   return useQuery<LLMStats>({
@@ -669,6 +699,37 @@ export function useAuditLogs(page: number, size: number) {
   return useQuery<AuditLogPage>({
     queryKey: queryKeys.admin.auditLogs(page, size),
     queryFn: () => api.listAuditLogs(page, size),
+  })
+}
+
+// ── G4 分块可视化干预（Task 4.4）──
+// admin 查看某文件的 chunks 列表，并可编辑单个 chunk 的
+// content(keywords/questions)/weight/locked。编辑文本会触发后端重新 embed。
+
+/** 某文件的 chunks 列表（GET /admin/knowledge/files/{file_id}/chunks）。 */
+export function useFileChunks(fileId: string | null) {
+  return useQuery<
+    Awaited<ReturnType<typeof api.listChunks>>
+  >({
+    queryKey: queryKeys.admin.fileChunks(fileId),
+    queryFn: () => api.listChunks(fileId!),
+    enabled: !!fileId,
+  })
+}
+
+/**
+ * 编辑单 chunk（PATCH /admin/knowledge/chunks/{chunk_id}）。
+ * 失效用 ['admin', 'fileChunks'] 前缀一刀切（编辑后精确的 fileId 维度难取，
+ * 反正列表数据量小、重拉便宜）。mutation 内只 invalidate，不弹 toast（queries.ts 约定）。
+ */
+export function useUpdateChunk() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ chunkId, payload }: {
+      chunkId: string
+      payload: Parameters<typeof api.updateChunk>[1]
+    }) => api.updateChunk(chunkId, payload),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'fileChunks'] }),
   })
 }
 
