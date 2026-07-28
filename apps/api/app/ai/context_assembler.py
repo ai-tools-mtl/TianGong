@@ -137,12 +137,6 @@ def _format_metadata(metadata: dict | None) -> str:
     return "\n".join(lines)
 
 
-def _section_owner_uid(db, section: Section):
-    """取 section 所属项目的 user_id（记忆检索范围限定）。"""
-    project = db.get(Project, section.project_id)
-    return project.user_id if project else None
-
-
 def _search_user_memories(db, user_id, query: str):
     """检索用户记忆，失败时静默返回空（不阻断 prompt 装配）。"""
     try:
@@ -182,9 +176,9 @@ def build_system_prompt(db, section: Section) -> str:
 
     # 【新增】用户长期记忆层（检索注入，纯检索式策略）
     # 用章节标题 + 目标做检索 query，覆盖本章节最可能相关的用户偏好/事实/know-how
-    owner_uid = _section_owner_uid(db, section)
-    if owner_uid is not None:
-        memories = _search_user_memories(db, owner_uid, f"{section.title} {sp.goal}")
+    # project 已在上方 fetch（L164），直接复用其 user_id，避免重复查询。
+    if project.user_id is not None:
+        memories = _search_user_memories(db, project.user_id, f"{section.title} {sp.goal}")
         if memories:
             memory_lines = "\n".join(f"- {m.content}" for m in memories)
             parts.append("# 关于这位用户的长期记忆（请遵循其偏好与约定）")
