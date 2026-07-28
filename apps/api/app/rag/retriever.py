@@ -2,9 +2,11 @@
 
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from pgvector.sqlalchemy import HALFVEC as HalfVec
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
+from app.core.database import is_postgres
 from app.models import KnowledgeChunk
 from app.rag.embedding import embed_text
 from app.services.llm_config_service import resolve_embedding_config
@@ -50,10 +52,15 @@ def retrieve(
         provider=embed_config.source, status="success",
     )
 
+    # D1/G1：HNSW 索引的动态探测参数，随 top_k 放大保证召回率（仅 PG 生效，SQLite 静默忽略）
+    if is_postgres():
+        db.execute(text("SET LOCAL hnsw.ef_search = :ef"), {"ef": max(40, top_k * 4)})
+
+    # D1.1 halfvec —— query_vec 转成 HalfVec 类型与列类型对齐
     stmt = (
         select(
             KnowledgeChunk,
-            KnowledgeChunk.embedding.cosine_distance(query_vec).label("distance"),
+            KnowledgeChunk.embedding.cosine_distance(HalfVec(query_vec)).label("distance"),
         )
         .where(
             (KnowledgeChunk.scope == "global")
