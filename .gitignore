@@ -42,3 +42,6 @@ apps/api/*.db
 
 # 生产配置(含密钥,勿提交)
 .env.production
+
+# 模型权重（体积大，本地下载，勿提交）
+models/
