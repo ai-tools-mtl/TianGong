@@ -1,7 +1,9 @@
 """用户长期记忆服务：CRUD + embedding 生成 + 语义检索 + 去重。"""
 import uuid as _uuid
+from dataclasses import dataclass
 
-from sqlalchemy import select
+from pgvector.sqlalchemy import HALFVEC as HalfVec
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundError, ValidationError
@@ -85,3 +87,55 @@ def delete_memory(db: Session, *, memory_id, user_id) -> None:
         raise NotFoundError("记忆不存在")
     db.delete(mem)
     db.flush()
+
+
+@dataclass
+class MemorySearchResult:
+    content: str
+    score: float
+    id: _uuid.UUID
+
+
+def search_memories(
+    db: Session, *, user_id, query: str, top_k: int = DEFAULT_TOP_K
+) -> list[MemorySearchResult]:
+    """语义检索用户的记忆（读路径核心）。
+
+    返回按相似度排序的 Top-K 记忆。embedding 配置不可用或 query 向量化失败时返回
+    空列表（降级，与 create/update/dedup 同走 _try_embed）。
+
+    实现镜像 rag/retriever.py：cosine_distance + HalfVec + HNSW ef_search +
+    similarity 阈值过滤。pgvector 仅在 PostgreSQL 生效，SQLite 无法执行该查询。
+    """
+    from app.core.database import is_postgres
+
+    # query 向量化复用 _try_embed（与写入路径同源，统一降级语义，便于测试）。
+    query_vec = _try_embed(db, user_id, query)
+    if query_vec is None:
+        return []
+
+    # G1：HNSW 索引的动态探测参数，随 top_k 放大保证召回率（仅 PG 生效，SQLite 静默忽略）。
+    if is_postgres():
+        db.execute(text("SET LOCAL hnsw.ef_search = :ef"), {"ef": max(40, top_k * 4)})
+
+    stmt = (
+        select(
+            UserMemory,
+            UserMemory.embedding.cosine_distance(HalfVec(query_vec)).label("distance"),
+        )
+        .where(
+            (UserMemory.user_id == user_id)
+            & (UserMemory.embedding.isnot(None))
+        )
+        .order_by("distance")
+        .limit(top_k)
+    )
+    rows = db.execute(stmt).all()
+
+    results = []
+    for mem, distance in rows:
+        score = 1.0 - distance
+        if score < SIMILARITY_THRESHOLD:
+            continue
+        results.append(MemorySearchResult(content=mem.content, score=score, id=mem.id))
+    return results
