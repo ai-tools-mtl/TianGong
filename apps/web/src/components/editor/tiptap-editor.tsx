@@ -10,6 +10,7 @@ import { Toolbar } from './toolbar'
 
 export interface TiptapEditorRef {
   insertImage: (src: string, alt: string) => void
+  getJSON: () => object
 }
 
 interface TiptapEditorProps {
@@ -41,6 +42,7 @@ export const TiptapEditor = forwardRef<TiptapEditorRef, TiptapEditorProps>(
       insertImage: (src: string, alt: string) => {
         editor?.chain().focus().setImage({ src, alt }).run()
       },
+      getJSON: () => editor?.getJSON() ?? {},
     }))
 
     if (!editor) return null
