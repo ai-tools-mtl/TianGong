@@ -1,6 +1,6 @@
 'use client'
 
-import { BarChart3, FileText, Globe, Settings } from 'lucide-react'
+import { BarChart3, FileText, Globe, Search, Settings } from 'lucide-react'
 import Link from 'next/link'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
@@ -24,6 +24,12 @@ const CONSOLE_SECTIONS = [
     icon: BarChart3,
     title: '调用统计',
     description: 'LLM 与 Firecrawl 用量',
+  },
+  {
+    href: '/admin/console/retrieval-test',
+    icon: Search,
+    title: '检索测试',
+    description: '验证 RAG 召回质量，调参闭环',
   },
   {
     href: '/admin/console/audit',

@@ -576,6 +576,18 @@ export const api = {
   listIngestJobs: () =>
     request<import('@/types/api').WebIngestJob[]>('/knowledge/ingest/jobs'),
 
+  // G2 检索测试
+  retrievalTest: (payload: { query: string; top_k?: number; scope?: 'global' | 'personal' | null }) =>
+    request<{
+      results: Array<{ content: string; score: number; section_key: string | null; project_title: string | null }>
+      threshold: number
+      top_k: number
+      scope: string | null
+    }>('/admin/knowledge/retrieval-test', {
+      method: 'POST',
+      body: JSON.stringify({ top_k: 5, ...payload }),
+    }),
+
   // ── 知识库审核(admin)──
   listPendingReviews: () =>
     request<import('@/types/api').KnowledgeReview[]>('/admin/knowledge/reviews'),

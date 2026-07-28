@@ -334,6 +334,17 @@ export function useIngestJobs() {
   })
 }
 
+/**
+ * G2 检索测试。命令式触发——按需检索，不进 queryKeys 缓存。
+ * mutation 内只做逻辑/invalidate，不弹 toast（queries.ts:480-482 约定）。
+ */
+export function useRetrievalTest() {
+  return useMutation({
+    mutationFn: (payload: { query: string; top_k?: number; scope?: 'global' | 'personal' | null }) =>
+      api.retrievalTest(payload),
+  })
+}
+
 // ── 知识库审核(admin)──
 export function usePendingReviews() {
   return useQuery<KnowledgeReview[]>({
