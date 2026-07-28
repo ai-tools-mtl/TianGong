@@ -75,10 +75,12 @@ export function MemoryCard({ memory }: { memory: Memory }) {
         <div className="flex items-start justify-between gap-3">
           <p className="text-sm leading-relaxed">{memory.content}</p>
           <div className="flex shrink-0 gap-1">
-            <Button size="icon" variant="ghost" className="size-7" onClick={() => setEditing(true)}>
+            <Button size="icon" variant="ghost" className="size-7" aria-label="编辑"
+                    onClick={() => { setDraft(memory.content); setEditing(true) }}>
               <Pencil className="size-3.5" />
             </Button>
-            <Button size="icon" variant="ghost" className="size-7" onClick={onDelete} disabled={deleteMut.isPending}>
+            <Button size="icon" variant="ghost" className="size-7" aria-label="删除"
+                    onClick={onDelete} disabled={deleteMut.isPending}>
               <Trash2 className="size-3.5" />
             </Button>
           </div>
