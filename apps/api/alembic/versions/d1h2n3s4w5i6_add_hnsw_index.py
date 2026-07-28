@@ -21,6 +21,13 @@ pgvector HNSW/IVFFlat 对 vector 类型有 2000 维硬上限，智谱 embedding-
 - 不动 vector extension（ee50036c9e86 已 CREATE EXTENSION，幂等不重复）
 - downgrade 只 drop index + 回滚列类型，不 drop extension
 - halfvec 用 halfvec_cosine_ops（与 vector_cosine_ops 平行）
+- 数据安全：ALTER COLUMN TYPE 会全表重写并加 ACCESS EXCLUSIVE 锁。
+  当前 knowledge_chunks 为 0 行，可安全执行；若生产已有数据，
+  需先评估停机窗口，或改用「新建 halfvec 列 → 双写 → backfill → 切换」的分阶段方案。
+  Postgres 不支持 ALTER TYPE CONCURRENTLY，故无法避免锁。
+- 模型侧 knowledge_chunk.py 仍声明 Vector(EMBEDDING_DIM)——halfvec 适配属 Task 1.2，
+  本迁移只动 DB schema。期间 alembic autogenerate 会报 vector↔halfvec 伪 diff，属已知项，
+  Task 1.2 改 model 为 HalfVec 后消失。
 """
 from typing import Sequence, Union
 
