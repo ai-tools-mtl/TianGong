@@ -10,7 +10,8 @@
 - Task 7 MinIOSkillStore：作为 BaseStore 传入，StoreBackend 包装它供
   SkillsMiddleware/FilesystemMiddleware 持久化 skill 与文件。
 - Task 9 build_agent_skill_sources：运行时计算可见 skill 前缀列表（global ∪ personal）。
-- Task 10 rag_search_tool：作为 agent 的检索工具注入。
+- Task 8 create_agent_tools：作为 agent 的工具集合（rag_search + save_memory）注入，
+  user_id 与 db 由闭包绑定，LLM 只需生成 query/content（修复旧 rag_search 参数注入缺陷）。
 - get_llm：解析后的自定义/global/env 配置 → ChatOpenAI 实例。
 
 注意：create_deep_agent / StoreBackend 必须在模块顶层 import，
@@ -21,7 +22,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from app.ai.context_assembler import SYSTEM_PROMPT
 from app.ai.llm_client import get_llm
-from app.ai.tools import rag_search_tool
+from app.ai.tools import create_agent_tools
 from app.ai.tool_support import ToolSupportError, check_tool_support
 from app.services.llm_config_service import ResolvedChatConfig
 from app.skills.storage import MinIOSkillStore
@@ -111,7 +112,7 @@ def build_agent(
     agent = create_deep_agent(
         model=llm,  # I1：不预绑定。deepagents 内部调 bind_tools，预绑定会让 RunnableBinding 无 bind_tools 方法。
         system_prompt=system_prompt,
-        tools=[rag_search_tool],
+        tools=create_agent_tools(db, user_id),
         skills=skill_sources if skill_sources else None,
         backend=backend,
         store=store,
