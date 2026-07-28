@@ -127,7 +127,7 @@ def _fake_agent_factory(token_text, captured):
             chunk.content = token_text
             yield {"event": "on_chat_model_stream", "data": {"chunk": chunk}}
 
-    def _build_agent(db, *, llm_config, user_id):
+    def _build_agent(db, *, llm_config, user_id, section=None):
         if captured is not None:
             captured.append(llm_config)
         return _FakeAgent()

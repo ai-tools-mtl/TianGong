@@ -145,14 +145,22 @@ async def astream_generate(
     """
     from app.ai.agent import build_agent
 
-    agent = build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section))
+    # [L1] 传 section，让 build_agent 装配动态 system prompt（spec §3.3.1）
+    agent = build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section), section=section)
     sp = get_section_prompt(section.key)
     instruction = (
         f"请根据对话历史，整理生成本章节【{section.title}】的草稿。"
         f"要求：{sp.output_format}。用 Markdown 格式输出。"
     )
+
+    # [L2] 透传本章节对话历史（spec §3.3.1）
+    messages = []
+    for msg in history:
+        messages.append({"role": msg.role, "content": msg.content})
+    messages.append({"role": "user", "content": instruction})
+
     async for event in agent.astream_events(
-        {"messages": [{"role": "user", "content": instruction}]},
+        {"messages": messages},
         version="v2",
     ):
         evt = event["event"]
