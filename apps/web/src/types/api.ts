@@ -650,3 +650,22 @@ export interface FirecrawlConfigPayload {
   api_key: string
   base_url: string | null
 }
+
+// ── 用户绑定长期记忆 ──
+
+export interface Memory {
+  id: string
+  content: string
+  source: 'agent' | 'manual'
+  created_at: string
+  updated_at: string
+}
+
+export interface MemoryCreate {
+  content: string
+  source?: 'agent' | 'manual'
+}
+
+export interface MemoryUpdate {
+  content: string
+}
