@@ -18,7 +18,7 @@ from app.core.database import get_db
 from app.core.security import decrypt_value
 from app.deps import require_admin
 from app.models import AuditLog, SystemSetting, User
-from app.services import admin_service, llm_config_service, stats_service
+from app.services import admin_service, llm_config_service, rag_config_service, stats_service
 
 router = APIRouter(tags=["admin"])
 
@@ -287,3 +287,73 @@ def set_firecrawl_config(
         base_url=payload.base_url, updated_by=admin.id,
     )
     return {"ok": True}
+
+
+# ── G3 rerank 配置 ──────────────────────────────────────────
+
+
+class RerankConfigRequest(BaseModel):
+    """admin 设置全局 rerank 配置。api_key 空串表示不修改（保留现有 key）。"""
+
+    enabled: bool
+    base_url: str
+    api_key: str = ""
+    model: str
+
+
+@router.get("/admin/rag/rerank-config")
+def get_rerank_config_endpoint(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """读全局 rerank 配置（仅返回 has_api_key 布尔，不返回明文/密文）。"""
+    settings = rag_config_service.get_global_rerank_settings(db)
+    return {
+        "enabled": settings.get("enabled", False),
+        "base_url": settings.get("base_url", ""),
+        "has_api_key": bool(settings.get("api_key_encrypted")),
+        "model": settings.get("model", ""),
+    }
+
+
+@router.put("/admin/rag/rerank-config")
+def save_rerank_config_endpoint(
+    payload: RerankConfigRequest,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """写全局 rerank 配置。api_key 为空时保留旧 key。"""
+    existing = rag_config_service.get_global_rerank_settings(db)
+    if not payload.api_key and existing.get("api_key_encrypted"):
+        api_key = decrypt_value(existing["api_key_encrypted"])
+    else:
+        api_key = payload.api_key
+    rag_config_service.set_global_rerank_settings(
+        db,
+        enabled=payload.enabled,
+        base_url=payload.base_url,
+        api_key=api_key,
+        model=payload.model,
+    )
+    return {"ok": True}
+
+
+@router.post("/admin/rag/rerank-config/test")
+def test_rerank_config_endpoint(
+    payload: RerankConfigRequest,
+    admin: User = Depends(require_admin),
+):
+    """测试 rerank 配置连通性（用提供的新配置实时调一次）。"""
+    from app.rag.reranker import rerank, RerankConfig
+
+    cfg = RerankConfig(
+        enabled=True,
+        base_url=payload.base_url,
+        api_key=payload.api_key,
+        model=payload.model,
+    )
+    try:
+        result = rerank("测试 query", ["文档A", "文档B"], config=cfg)
+        return {"ok": True, "message": f"连通成功，返回 {len(result)} 条"}
+    except Exception as e:
+        return {"ok": False, "message": str(e)}
