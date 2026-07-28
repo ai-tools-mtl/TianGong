@@ -63,14 +63,15 @@ export default function ProjectDetailPage() {
     }
   }, [sections, currentId])
 
-  // 切换章节前 flush 防抖中的保存
+  // 切换章节前 flush 防抖中的保存（根因修复：旧实现只 clearTimeout 不发请求，
+  // 导致用户在 2s 防抖窗口内切章节会丢失未落库的输入）。
+  // 注意：flushPendingSave 读 current 闭包，cleanup 在 currentId 变化时执行，
+  // 此时闭包里的 current 仍是旧章节（即将离开的那个），正是要保存的对象。
   useEffect(() => {
     return () => {
-      if (saveTimer.current) {
-        clearTimeout(saveTimer.current)
-        saveTimer.current = null
-      }
+      flushPendingSave()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentId])
 
   if (isLoading) {
@@ -88,44 +89,92 @@ export default function ProjectDetailPage() {
     )
   }
 
+  // 实际发送 PATCH 保存的逻辑（防抖/确认/切章节 flush 共用）。
+  // content/status/expected_version 均可选；confirm 时三参同发以原子完成"保存+确认"，
+  // 避免与 pending 防抖保存竞态撞 409（根因：旧 handleConfirm 不取消定时器、不带 version）。
+  function sendPatch(payload: {
+    content?: object
+    status?: string
+    expected_version?: number
+    onSuccess?: () => void
+    onError?: (err: { code?: string; message?: string }) => void
+  }) {
+    if (!current) return
+    updateSection.mutate(
+      {
+        id: current.id,
+        content: payload.content,
+        status: payload.status,
+        expected_version: payload.expected_version,
+      },
+      {
+        onSuccess: () => {
+          setSaveState('saved')
+          payload.onSuccess?.()
+        },
+        onError: (err: { code?: string; message?: string }) => {
+          if (err?.code === 'conflict') {
+            toast.error('内容已被其他端修改，已刷新为最新版本')
+            qc.invalidateQueries({ queryKey: queryKeys.sections(projectId) })
+          } else if (payload.status === 'confirmed') {
+            toast.error('确认失败')
+          } else {
+            toast.error('保存失败')
+          }
+          setSaveState('idle')
+          payload.onError?.(err)
+        },
+      },
+    )
+  }
+
   function handleSave(json: object) {
     if (!current) return
     // 防抖 2s（设计 13.4）
     if (saveTimer.current) clearTimeout(saveTimer.current)
     setSaveState('saving')
     saveTimer.current = setTimeout(() => {
-      updateSection.mutate(
-        {
-          id: current.id,
-          content: json,
-          status: current.status === 'empty' ? 'drafting' : current.status,
-          expected_version: current.version,
-        },
-        {
-          onSuccess: () => setSaveState('saved'),
-          onError: (err: { code?: string; message?: string }) => {
-            if (err?.code === 'conflict') {
-              toast.error('内容已被其他端修改，已刷新为最新版本')
-              qc.invalidateQueries({ queryKey: queryKeys.sections(projectId) })
-            } else {
-              toast.error('保存失败')
-            }
-            setSaveState('idle')
-          },
-        },
-      )
+      sendPatch({
+        content: json,
+        status: current.status === 'empty' ? 'drafting' : current.status,
+        expected_version: current.version,
+      })
     }, 2000)
+  }
+
+  // flush pending 防抖保存：立即取出编辑器最新 content 同步发 PATCH，并清掉定时器。
+  // 供确认按钮、切章节 cleanup 复用——避免用户输入停留在浏览器未落库。
+  function flushPendingSave() {
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current)
+      saveTimer.current = null
+    }
+    if (!current) return
+    const json = editorRef.current?.getJSON()
+    if (!json) return
+    sendPatch({
+      content: json,
+      status: current.status === 'empty' ? 'drafting' : current.status,
+      expected_version: current.version,
+    })
   }
 
   function handleConfirm() {
     if (!current) return
-    updateSection.mutate(
-      { id: current.id, status: 'confirmed' },
-      {
-        onSuccess: () => toast.success('章节已确认'),
-        onError: () => toast.error('操作失败'),
-      },
-    )
+    // 根因修复：先取消 pending 防抖保存，再把"最新内容 + 确认状态"一次性 PATCH 发出。
+    // 旧实现只发 {status:'confirmed'} 且不取消定时器，导致 2s 后的防抖保存带旧
+    // expected_version 撞已被自增的 version → 409，且那次被拒的正是用户最后输入 → 内容丢失。
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current)
+      saveTimer.current = null
+    }
+    const json = editorRef.current?.getJSON()
+    sendPatch({
+      content: json,
+      status: 'confirmed',
+      expected_version: current.version,
+      onSuccess: () => toast.success('章节已确认'),
+    })
   }
 
   function handleArchive() {
