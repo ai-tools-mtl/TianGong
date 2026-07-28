@@ -1,5 +1,6 @@
 """G2 admin 检索测试端点测试。"""
 import pytest
+import types
 import uuid
 
 
@@ -41,7 +42,7 @@ def fake_embed(monkeypatch):
     monkeypatch.setattr("app.rag.retriever.is_postgres", lambda: False)
     monkeypatch.setattr(
         "app.rag.retriever.resolve_embedding_config",
-        lambda db, user_id: type("C", (), {"model": "m", "source": "global"})(),
+        lambda db, user_id: types.SimpleNamespace(model="m", source="global"),
     )
 
 

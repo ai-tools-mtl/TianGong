@@ -8,7 +8,7 @@ from app.deps import require_admin
 from app.models import User
 from app.rag.retriever import retrieve, SIMILARITY_THRESHOLD
 
-router = APIRouter(prefix="/admin/knowledge", tags=["admin"])
+router = APIRouter(tags=["admin"])  # 空 prefix：项目约定（路径字面量写装饰器）
 
 
 class RetrievalTestRequest(BaseModel):
@@ -17,7 +17,7 @@ class RetrievalTestRequest(BaseModel):
     scope: str | None = None  # None / "global" / "personal"
 
 
-@router.post("/retrieval-test")
+@router.post("/admin/knowledge/retrieval-test")
 def retrieval_test(
     payload: RetrievalTestRequest,
     admin: User = Depends(require_admin),
