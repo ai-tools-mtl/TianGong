@@ -6,6 +6,7 @@ import Placeholder from '@tiptap/extension-placeholder'
 import Image from '@tiptap/extension-image'
 import { forwardRef, useImperativeHandle } from 'react'
 
+import { SelectionBubbleMenu } from './selection-bubble-menu'
 import { Toolbar } from './toolbar'
 
 export interface TiptapEditorRef {
@@ -21,10 +22,12 @@ interface TiptapEditorProps {
   onChange?: (json: object) => void
   editable?: boolean
   sectionId?: string
+  /** 选区重写完成时回调（传给 SelectionBubbleMenu） */
+  onRewriteComplete?: (aiOutput: string, selectedText: string) => void
 }
 
 export const TiptapEditor = forwardRef<TiptapEditorRef, TiptapEditorProps>(
-  function TiptapEditor({ content, onChange, editable = true, sectionId = '' }, ref) {
+  function TiptapEditor({ content, onChange, editable = true, sectionId = '', onRewriteComplete }, ref) {
     const editor = useEditor({
       extensions: [
         StarterKit,
@@ -77,6 +80,30 @@ export const TiptapEditor = forwardRef<TiptapEditorRef, TiptapEditorProps>(
           editor={editor}
           className="prose prose-sm tiptap max-w-none px-5 py-4 focus:outline-none"
         />
+        {editable && onRewriteComplete && sectionId && (
+          <SelectionBubbleMenu
+            sectionId={sectionId}
+            getSelectionText={() => {
+              if (!editor) return ''
+              const { from, to, empty } = editor.state.selection
+              if (empty) return ''
+              return editor.state.doc.textBetween(from, to, '\n')
+            }}
+            getSelectionCoords={() => {
+              if (!editor) return null
+              const { from, to, empty } = editor.state.selection
+              if (empty) return null
+              const startCoords = editor.view.coordsAtPos(from)
+              const endCoords = editor.view.coordsAtPos(to)
+              return {
+                top: Math.min(startCoords.top, endCoords.top),
+                left: Math.min(startCoords.left, endCoords.left),
+                bottom: Math.max(startCoords.bottom, endCoords.bottom),
+              }
+            }}
+            onRewriteComplete={onRewriteComplete}
+          />
+        )}
       </div>
     )
   },
