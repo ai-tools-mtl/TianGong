@@ -118,3 +118,18 @@ def get_written_sections_text(db, project_id, exclude_key: str) -> str:
         parts.append(chunk)
         total += len(chunk)
     return "\n\n".join(parts)
+
+
+def _format_metadata(metadata: dict | None) -> str:
+    """格式化项目 metadata（JSON dict）为可读文本。防御性：只取字符串/数字值，跳过嵌套结构。
+
+    metadata 结构未定死（Project.metadata_ 是自由 JSON），做防御性格式化避免
+    嵌套 dict/list 把 system prompt 搞乱。spec §3.1.3。
+    """
+    if not isinstance(metadata, dict) or not metadata:
+        return ""
+    lines = []
+    for k, v in metadata.items():
+        if isinstance(v, (str, int, float)):
+            lines.append(f"- {k}：{v}")
+    return "\n".join(lines)

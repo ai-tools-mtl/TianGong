@@ -142,3 +142,29 @@ def test_get_written_sections_text_truncation_keeps_earlier_full(db_session, mon
     text = get_written_sections_text(db_session, p.id, exclude_key="background")
     assert "短章完整内容" in text  # name 完整保留
     assert "（已截断）" in text  # field 被截断
+
+
+# ===== _format_metadata 测试 =====
+
+def test_format_metadata_str_values():
+    """字符串/数字值被格式化为 '- k：v' 行。"""
+    from app.ai.context_assembler import _format_metadata
+    out = _format_metadata({"技术领域": "机械", "关键词数": 3})
+    assert "- 技术领域：机械" in out
+    assert "- 关键词数：3" in out
+
+
+def test_format_metadata_skips_nested_structures():
+    """嵌套 dict / list 被跳过（防御性，metadata 结构未定死）。"""
+    from app.ai.context_assembler import _format_metadata
+    out = _format_metadata({"正常": "值", "嵌套": {"a": 1}, "列表": [1, 2]})
+    assert "- 正常：值" in out
+    assert "嵌套" not in out
+    assert "列表" not in out
+
+
+def test_format_metadata_empty_returns_empty():
+    """空 dict / None 返回空字符串。"""
+    from app.ai.context_assembler import _format_metadata
+    assert _format_metadata({}) == ""
+    assert _format_metadata(None) == ""
