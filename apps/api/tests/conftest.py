@@ -110,7 +110,7 @@ def engine():
     um_compat = sa.Table(
         "user_memories", sa.MetaData(),
         sa.Column("id", sa.String(36), primary_key=True),
-        sa.Column("user_id", sa.String(36), nullable=False, index=True),
+        sa.Column("user_id", sa.String(36), nullable=False),
         sa.Column("content", sa.Text),
         sa.Column("embedding", sa.JSON),
         sa.Column("source", sa.String(20), default="agent"),

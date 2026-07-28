@@ -25,7 +25,7 @@ class UserMemory(Base, IdMixin, TimestampMixin):
     __tablename__ = "user_memories"
     __table_args__ = (
         # 前端列表查询用：按用户 + 更新时间倒序。
-        # user_id 单列另由 mapped_column(index=True) 建索引。
+        # 复合索引的 user_id 左前缀已覆盖 WHERE user_id=? 查询，无需单列索引。
         Index(
             "ix_user_memories_user_updated",
             "user_id", "updated_at",
@@ -33,7 +33,7 @@ class UserMemory(Base, IdMixin, TimestampMixin):
     )
 
     user_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), index=True
+        ForeignKey("users.id", ondelete="CASCADE")
     )
     content: Mapped[str] = mapped_column(Text)
     embedding = mapped_column(HalfVec(EMBEDDING_DIM), nullable=True)

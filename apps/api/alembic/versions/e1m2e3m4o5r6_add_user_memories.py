@@ -36,7 +36,6 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True),
                   server_default=sa.text("now()"), nullable=False),
     )
-    op.create_index("ix_user_memories_user_id", "user_memories", ["user_id"])
     op.create_index(
         "ix_user_memories_user_updated", "user_memories", ["user_id", "updated_at"]
     )
@@ -48,7 +47,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_user_memories_embedding_hnsw", table_name="user_memories")
+    # HNSW 索引用 raw-SQL DROP IF EXISTS，对齐 d1h2n3s4w5i6 参考。
+    op.execute("DROP INDEX IF EXISTS ix_user_memories_embedding_hnsw")
     op.drop_index("ix_user_memories_user_updated", table_name="user_memories")
-    op.drop_index("ix_user_memories_user_id", table_name="user_memories")
     op.drop_table("user_memories")
