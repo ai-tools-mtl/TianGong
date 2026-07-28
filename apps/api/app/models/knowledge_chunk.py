@@ -1,7 +1,7 @@
 import uuid
 
 from pgvector.sqlalchemy import HALFVEC as HalfVec
-from sqlalchemy import ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, IdMixin, JSONType, TimestampMixin
@@ -37,3 +37,9 @@ class KnowledgeChunk(Base, IdMixin, TimestampMixin):
     )
     # 审核状态:NULL(非上报对象)/ pending / approved / rejected
     review_status: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    # G4 分块干预字段（spec §5.4, D3 独立列）
+    keywords: Mapped[list | None] = mapped_column(JSONType, nullable=True)
+    questions: Mapped[list | None] = mapped_column(JSONType, nullable=True)
+    weight: Mapped[float | None] = mapped_column(Float, default=1.0)
+    edited_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    locked: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))

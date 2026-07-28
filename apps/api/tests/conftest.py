@@ -101,6 +101,12 @@ def engine():
         sa.Column("metadata", sa.JSON),
         sa.Column("file_id", sa.String(36), index=True),
         sa.Column("review_status", sa.String(20)),
+        # G4 分块干预字段（spec §5.4, D3 独立列）
+        sa.Column("keywords", sa.JSON),
+        sa.Column("questions", sa.JSON),
+        sa.Column("weight", sa.Float),
+        sa.Column("edited_text", sa.Text),
+        sa.Column("locked", sa.Boolean),
         sa.Column("created_at", sa.DateTime(timezone=True)),
         sa.Column("updated_at", sa.DateTime(timezone=True)),
     )
