@@ -10,7 +10,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from sqlalchemy import select
 
 from app.ai.section_prompts import get_section_prompt
-from app.models import Message, Section
+from app.models import Message, Project, Section
 from app.services.summary_service import _extract_text
 
 SYSTEM_PROMPT = """你是「天工」，一个专利交底书撰写助手。你的任务是引导发明人把技术想法整理成规范的专利交底书。
@@ -133,3 +133,42 @@ def _format_metadata(metadata: dict | None) -> str:
         if isinstance(v, (str, int, float)):
             lines.append(f"- {k}：{v}")
     return "\n".join(lines)
+
+
+def build_system_prompt(db, section: Section) -> str:
+    """装配动态 system prompt（agent loop 路线用，spec §3.1.1）。
+
+    拼接顺序：项目元信息 [L4] → 已写章节 [前文直注入] → 当前章节策略 → 角色定义。
+
+    项目元信息在顶部（全局不变量先建立上下文），角色定义在底部（行为规范在看到具体任务后理解更准确）。
+    此顺序与原 assemble_messages 的拼接顺序保持心智模型统一。
+    """
+    project = db.get(Project, section.project_id)
+    sp = get_section_prompt(section.key)
+
+    parts: list[str] = []
+
+    # [L4] 项目元信息层（顶部，全局上下文）
+    parts.append("# 当前交底书项目")
+    parts.append(f"项目标题：{project.title}")
+    if project.metadata_:
+        meta_text = _format_metadata(project.metadata_)
+        if meta_text:
+            parts.append(f"项目背景信息：\n{meta_text}")
+
+    # [前文直注入] 已写章节层（中部，跨章节上下文）
+    written = get_written_sections_text(db, section.project_id, exclude_key=section.key)
+    if written:
+        parts.append("# 已完成章节内容（请保持术语、技术方案一致性）")
+        parts.append(written)
+
+    # 章节策略层（底部偏上，当前章节聚焦）
+    parts.append("# 当前正在撰写章节")
+    parts.append(f"章节标题：【{section.title}】")
+    parts.append(f"本章目标：{sp.goal}")
+    parts.append(f"输出格式要求：{sp.output_format}")
+
+    # 角色定义层（最底部，兜底规范）
+    parts.append(SYSTEM_PROMPT)
+
+    return "\n\n".join(parts)

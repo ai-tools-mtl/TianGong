@@ -168,3 +168,93 @@ def test_format_metadata_empty_returns_empty():
     from app.ai.context_assembler import _format_metadata
     assert _format_metadata({}) == ""
     assert _format_metadata(None) == ""
+
+
+# ===== build_system_prompt 测试 =====
+
+def test_build_system_prompt_includes_project_title(db_session):
+    """[L4] system prompt 含项目标题。"""
+    from app.ai.context_assembler import build_system_prompt
+    p = _make_project(db_session)
+    p.title = "一种凸轮门锁"
+    db_session.commit()
+    s = _make_db_section(db_session, p.id, key="field", title="技术领域", order=2, content=None)
+    prompt = build_system_prompt(db_session, s)
+    assert "一种凸轮门锁" in prompt
+
+
+def test_build_system_prompt_includes_metadata(db_session):
+    """[L4] metadata 非空时被格式化注入。"""
+    from app.ai.context_assembler import build_system_prompt
+    p = _make_project(db_session)
+    p.metadata_ = {"技术领域": "机械", "阶段": "draft"}
+    db_session.commit()
+    s = _make_db_section(db_session, p.id, key="field", title="技术领域", order=2, content=None)
+    prompt = build_system_prompt(db_session, s)
+    assert "- 技术领域：机械" in prompt
+    assert "- 阶段：draft" in prompt
+
+
+def test_build_system_prompt_skips_empty_metadata(db_session):
+    """[L4] metadata 为 None 时不报错、不留空段。"""
+    from app.ai.context_assembler import build_system_prompt
+    p = _make_project(db_session)
+    # metadata_ 默认 None
+    s = _make_db_section(db_session, p.id, key="field", title="技术领域", order=2, content=None)
+    prompt = build_system_prompt(db_session, s)
+    assert "项目背景信息" not in prompt  # 不留空段标题
+    assert "测试交底书" in prompt  # 标题仍在
+
+
+def test_build_system_prompt_includes_current_section_strategy(db_session):
+    """含当前章节 goal + output_format。"""
+    from app.ai.context_assembler import build_system_prompt
+    from app.ai.section_prompts import get_section_prompt
+    p = _make_project(db_session)
+    s = _make_db_section(db_session, p.id, key="solution", title="技术方案", order=5, content=None)
+    prompt = build_system_prompt(db_session, s)
+    sp = get_section_prompt("solution")
+    assert sp.goal in prompt
+    assert sp.output_format in prompt
+    assert "技术方案" in prompt
+
+
+def test_build_system_prompt_includes_written_sections(db_session):
+    """[前文注入] 含已写章节标题 + 内容。"""
+    from app.ai.context_assembler import build_system_prompt
+    p = _make_project(db_session)
+    _make_db_section(db_session, p.id, key="name", title="发明名称", order=1, content=_tiptap("凸轮门锁"))
+    s = _make_db_section(db_session, p.id, key="field", title="技术领域", order=2, content=None)
+    prompt = build_system_prompt(db_session, s)
+    assert "发明名称" in prompt
+    assert "凸轮门锁" in prompt
+
+
+def test_build_system_prompt_excludes_current_section_from_written(db_session):
+    """已写章节段不含当前章节自身。"""
+    from app.ai.context_assembler import build_system_prompt
+    p = _make_project(db_session)
+    # 当前章节 field 自己有 content，但不应出现在「已完成章节」段
+    s = _make_db_section(db_session, p.id, key="field", title="技术领域", order=2, content=_tiptap("我自己"))
+    prompt = build_system_prompt(db_session, s)
+    assert "我自己" not in prompt
+
+
+def test_build_system_prompt_includes_system_prompt_role(db_session):
+    """末尾含 SYSTEM_PROMPT 角色定义。"""
+    from app.ai.context_assembler import build_system_prompt, SYSTEM_PROMPT
+    p = _make_project(db_session)
+    s = _make_db_section(db_session, p.id, key="field", title="技术领域", order=2, content=None)
+    prompt = build_system_prompt(db_session, s)
+    assert SYSTEM_PROMPT in prompt  # 角色定义拼接在末尾
+
+
+def test_build_system_prompt_first_chapter_no_written(db_session):
+    """第一章时跳过「已完成章节」段，不报错。"""
+    from app.ai.context_assembler import build_system_prompt
+    p = _make_project(db_session)
+    # 只有当前章节 name，无其他非空章节
+    s = _make_db_section(db_session, p.id, key="name", title="发明名称", order=1, content=None)
+    prompt = build_system_prompt(db_session, s)
+    assert "已完成章节" not in prompt  # 无前文，跳过该段
+    assert "测试交底书" in prompt  # 项目标题仍在
