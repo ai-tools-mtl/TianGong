@@ -11,7 +11,7 @@ const CONSOLE_SECTIONS = [
     href: '/admin/console/llm',
     icon: Settings,
     title: 'LLM 配置',
-    description: '全局对话与嵌入模型凭据',
+    description: '全局对话模型凭据（嵌入统一走 bge-m3 微服务）',
   },
   {
     href: '/admin/console/firecrawl',

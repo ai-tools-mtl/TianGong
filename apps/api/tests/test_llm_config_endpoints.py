@@ -25,11 +25,12 @@ def test_templates_endpoint_returns_list(client, db_session):
     assert len(data) >= 6
     ids = [t["id"] for t in data]
     assert "zhipu" in ids and "custom" in ids and "ollama" in ids
-    # 字段齐全
+    # 字段齐全（embedding 已走固定服务，模板不再含 default_embedding_model）
     zhipu = next(t for t in data if t["id"] == "zhipu")
-    for k in ("id", "name", "base_url", "default_model", "default_embedding_model",
+    for k in ("id", "name", "base_url", "default_model",
               "models_endpoint", "docs_url", "note"):
         assert k in zhipu
+    assert "default_embedding_model" not in zhipu
 
 
 def test_templates_requires_auth(client):
@@ -129,31 +130,6 @@ def test_admin_chat_test_with_stored_values(client, db_session):
     assert kwargs["model"] == "stored-model"
 
 
-def test_admin_embedding_test_with_stored_values(client, db_session):
-    """admin embedding 不传值 → 用 SystemSetting 已存的 embedding config（解密后）测。"""
-    _login_admin(client, db_session)
-    from app.core.security import encrypt_value
-    from app.models import SystemSetting
-    db_session.add(SystemSetting(key="llm_global_embedding_config", value={
-        "base_url": "https://emb.com/v1",
-        "api_key_encrypted": encrypt_value("sk-emb-1234567890"),
-        "model": "embedding-3",
-    }))
-    db_session.commit()
-
-    with patch("app.api.admin.console.llm_config_service.test_llm_connection") as m:
-        m.return_value = {"ok": True, "chat": None,
-                          "embedding": {"ok": True, "latency_ms": 5, "dim": 128, "error": None},
-                          "error": None}
-        res = client.post("/api/v1/admin/llm-config/embedding/test", json={})
-    assert res.status_code == 200
-    _, kwargs = m.call_args
-    assert kwargs["base_url"] == "https://emb.com/v1"
-    assert kwargs["api_key"] == "sk-emb-1234567890"
-    assert kwargs["model"] == "embedding-3"
-    assert kwargs["scope"] == "embedding"
-
-
 def test_admin_chat_test_stored_incomplete_returns_error(client, db_session):
     """已存全局 chat 配置不完整（缺 model/api_key）→ 返回友好错误。"""
     _login_admin(client, db_session)
@@ -182,14 +158,3 @@ def test_admin_chat_models_endpoint(client, db_session):
         })
     assert res.status_code == 200
     assert res.json()["models"] == ["m1"]
-
-
-def test_admin_embedding_models_endpoint(client, db_session):
-    _login_admin(client, db_session)
-    with patch("app.api.admin.console.llm_config_service.list_provider_models") as m:
-        m.return_value = {"models": ["e1"], "truncated": False, "error": None}
-        res = client.post("/api/v1/admin/llm-config/embedding/models", json={
-            "base_url": "https://x.com/v1", "api_key": "sk",
-        })
-    assert res.status_code == 200
-    assert res.json()["models"] == ["e1"]

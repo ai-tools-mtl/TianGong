@@ -1,12 +1,18 @@
-"""resolve_chat_config / resolve_embedding_config 解析测试（chat/embedding 独立）。"""
+"""resolve_chat_config 解析测试 + embedding 固定配置测试。
+
+embedding 解析已简化为固定 bge-m3 微服务（resolve_embedding_config 直接返回 env 配置），
+不再有多源解析（global/custom/env），故原 embedding 多源用例已删，只保留一个固定配置断言。
+"""
 
 import pytest
 
 from app.core.security import encrypt_value
-from app.models import SystemSetting, User, UserEmbeddingConfig, UserGlobalLLMGrant, UserLLMConfig
+from app.models import SystemSetting, User, UserGlobalLLMGrant, UserLLMConfig
 from app.services.llm_config_service import (
-    resolve_chat_config, resolve_embedding_config,
-    set_global_chat_settings, set_global_embedding_settings,
+    resolve_chat_config,
+    resolve_embedding_config,
+    ResolvedEmbeddingConfig,
+    set_global_chat_settings,
 )
 
 
@@ -68,99 +74,12 @@ def test_chat_resolve_custom_foreign_returns_not_found(db_session, registered_us
         resolve_chat_config(db_session, user_id=uuid.UUID(registered_user["id"]), chat_source=f"custom-chat:{cfg.id}")
 
 
-# ── embedding resolve ──
+# ── embedding resolve（固定配置，无多源）──
 
-def test_embedding_resolve_custom(db_session, registered_user):
-    import uuid
-    cfg = UserEmbeddingConfig(
-        user_id=uuid.UUID(registered_user["id"]), name="emb",
-        base_url="https://emb.example.com/v1",
-        api_key_encrypted=encrypt_value("sk-emb-1234567890"),
-        model="text-embedding-3-small",
-    )
-    db_session.add(cfg); db_session.commit(); db_session.refresh(cfg)
-
-    resolved = resolve_embedding_config(db_session, user_id=uuid.UUID(registered_user["id"]), embedding_source=f"custom-emb:{cfg.id}")
-    assert resolved is not None
-    assert resolved.base_url == "https://emb.example.com/v1"
-    assert resolved.model == "text-embedding-3-small"
-    assert resolved.source == "user"
-
-
-def test_embedding_resolve_global_for_admin(db_session):
-    admin = User(username="admin2", password_hash="x", name="A", role="admin")
-    db_session.add(admin); db_session.commit(); db_session.refresh(admin)
-    set_global_embedding_settings(db_session, enabled=True, base_url="https://g-emb.com",
-                                  api_key="sk-ge-1234567890", model="g-emb-model")
-    resolved = resolve_embedding_config(db_session, user_id=admin.id, embedding_source="global")
-    assert resolved is not None
-    assert resolved.model == "g-emb-model"
-    assert resolved.source == "admin"
-
-
-# ── 独立性：chat 与 embedding 各自解析，互不影响 ──
-
-def test_chat_and_embedding_resolve_independently(db_session, registered_user):
-    """chat 配 base_url A，embedding 配 base_url B → 各自解析到不同的 base_url。"""
-    import uuid
-    uid = uuid.UUID(registered_user["id"])
-    chat_cfg = UserLLMConfig(
-        user_id=uid, name="c",
-        base_url="https://CHAT.example.com/v1",
-        api_key_encrypted=encrypt_value("sk-c-1234567890"), model="chat-model",
-    )
-    emb_cfg = UserEmbeddingConfig(
-        user_id=uid, name="e",
-        base_url="https://EMB.example.com/v1",
-        api_key_encrypted=encrypt_value("sk-e-1234567890"), model="emb-model",
-    )
-    db_session.add_all([chat_cfg, emb_cfg]); db_session.commit()
-    db_session.refresh(chat_cfg); db_session.refresh(emb_cfg)
-
-    chat = resolve_chat_config(db_session, user_id=uid, chat_source=f"custom-chat:{chat_cfg.id}")
-    emb = resolve_embedding_config(db_session, user_id=uid, embedding_source=f"custom-emb:{emb_cfg.id}")
-    assert chat.base_url == "https://CHAT.example.com/v1"
-    assert emb.base_url == "https://EMB.example.com/v1"
-    assert chat.base_url != emb.base_url  # 核心 invariant
-
-
-# ── fallback 不互通（D4）──
-
-def test_embedding_fallback_no_crosstalk_to_chat(db_session, registered_user, monkeypatch):
-    """只配了 chat 配置、没配 embedding → resolve_embedding_config 返回 None，不回退 chat。"""
-    import uuid
-    from app.core.config import get_settings
-    # 确保 env 也不提供 embedding（否则 fallback 会命中 env）
-    monkeypatch.setattr(get_settings(), "glm_api_key", "")
-    monkeypatch.setattr(get_settings(), "glm_embedding_model", "")
-
-    uid = uuid.UUID(registered_user["id"])
-    chat_cfg = UserLLMConfig(
-        user_id=uid, name="c",
-        base_url="https://chat.example.com/v1",
-        api_key_encrypted=encrypt_value("sk-c-1234567890"), model="chat-model",
-    )
-    db_session.add(chat_cfg); db_session.commit()
-    resolved = resolve_embedding_config(db_session, user_id=uid)  # fallback
-    assert resolved is None  # 不回退到 chat 凭据
-
-
-def test_chat_fallback_no_crosstalk_to_embedding(db_session, registered_user, monkeypatch):
-    """只配了 embedding 配置、没配 chat → resolve_chat_config 返回 None，不回退 embedding。
-
-    D4 不互通的反向验证（与 test_embedding_fallback_no_crosstalk_to_chat 对称）。
-    """
-    import uuid
-    from app.core.config import get_settings
-    # 清空 env 兜底（否则 fallback 会命中 env 的 chat 凭据）
-    monkeypatch.setattr(get_settings(), "glm_api_key", "")
-
-    uid = uuid.UUID(registered_user["id"])
-    emb_cfg = UserEmbeddingConfig(
-        user_id=uid, name="e",
-        base_url="https://emb.example.com/v1",
-        api_key_encrypted=encrypt_value("sk-e-1234567890"), model="emb-model",
-    )
-    db_session.add(emb_cfg); db_session.commit()
-    resolved = resolve_chat_config(db_session, user_id=uid)  # fallback
-    assert resolved is None  # 不回退到 embedding 凭据
+def test_embedding_resolve_returns_fixed_config():
+    """embedding 统一走固定 bge-m3 微服务：resolve 永远返回 env 配置，不依赖 DB，永不为 None。"""
+    resolved = resolve_embedding_config()
+    assert isinstance(resolved, ResolvedEmbeddingConfig)
+    assert resolved.source == "service"
+    assert resolved.model  # 非空
+    assert resolved.base_url  # 非空

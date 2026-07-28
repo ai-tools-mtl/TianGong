@@ -24,21 +24,20 @@ router = APIRouter(tags=["admin"])
 
 
 class GlobalScopeConfigBody(BaseModel):
-    """chat 或 embedding 全局配置的单边 body。"""
+    """chat 全局配置的 body。embedding 已走固定微服务，不再有全局配置。"""
     base_url: str | None = None
     api_key: str | None = None
     model: str | None = Field(default=None, min_length=1)
 
 
 class GlobalLLMSettings(BaseModel):
-    """admin 设置全局 LLM 配置。chat_config 与 embedding_config 各自独立可更新。"""
+    """admin 设置全局 LLM 配置。只管 chat（embedding 走固定 bge-m3 微服务）。"""
     enabled: bool
     chat_config: GlobalScopeConfigBody | None = None
-    embedding_config: GlobalScopeConfigBody | None = None
 
 
 class GlobalScopeTestRequest(BaseModel):
-    """admin 测试全局 chat 或 embedding（支持传值或用已存值复检）。"""
+    """admin 测试全局 chat（支持传值或用已存值复检）。"""
     base_url: str | None = None
     api_key: str | None = None
     model: str | None = None
@@ -132,7 +131,7 @@ def list_audit_logs(
     }
 
 
-# ── 全局 LLM 配置（chat / embedding 拆两套，各自独立可更新）──
+# ── 全局 LLM 配置（只管 chat；embedding 走固定 bge-m3 微服务）──
 
 @router.get("/admin/llm-config")
 def get_global_llm(
@@ -143,7 +142,6 @@ def get_global_llm(
     return {
         "llm_global_enabled": enabled.value.get("enabled", True) if enabled else True,
         "chat_config": llm_config_service.get_global_chat_settings(db),
-        "embedding_config": llm_config_service.get_global_embedding_settings(db),
     }
 
 
@@ -159,14 +157,8 @@ def set_global_llm(
             db, enabled=payload.enabled,
             base_url=c.base_url, api_key=c.api_key, model=c.model,
         )
-    if payload.embedding_config:
-        e = payload.embedding_config
-        llm_config_service.set_global_embedding_settings(
-            db, enabled=payload.enabled,
-            base_url=e.base_url, api_key=e.api_key, model=e.model,
-        )
-    # 若两个都没传，仍要更新 enabled 开关（set_global_chat_settings 会写 enabled）
-    if not payload.chat_config and not payload.embedding_config:
+    else:
+        # 没传 chat_config 也要更新 enabled 开关（set_global_chat_settings 会写 enabled）
         llm_config_service.set_global_chat_settings(db, enabled=payload.enabled)
     # 审计（不含 api_key 明文）
     admin_service._audit(
@@ -179,25 +171,21 @@ def set_global_llm(
             "enabled": payload.enabled,
             "chat_base_url": payload.chat_config.base_url if payload.chat_config else None,
             "chat_model": payload.chat_config.model if payload.chat_config else None,
-            "embedding_base_url": payload.embedding_config.base_url if payload.embedding_config else None,
-            "embedding_model": payload.embedding_config.model if payload.embedding_config else None,
         },
     )
     return {
         "llm_global_enabled": payload.enabled,
         "chat_config": llm_config_service.get_global_chat_settings(db),
-        "embedding_config": llm_config_service.get_global_embedding_settings(db),
     }
 
 
-def _resolve_admin_test_values(payload, db, scope):
-    """两模式：传值 → 用传入值；不传 → 用已存的 SystemSetting 值（chat 或 embedding 各自的 key）复检。"""
+def _resolve_admin_test_values(payload, db):
+    """两模式：传值 → 用传入值；不传 → 用已存的 SystemSetting chat 配置复检。"""
     base_url = payload.base_url
     api_key = payload.api_key
     model = payload.model
     if not (base_url and api_key and model):
-        key = "llm_global_chat_config" if scope == "chat" else "llm_global_embedding_config"
-        cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == key))
+        cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_chat_config"))
         stored = cfg.value if cfg else {}
         base_url = base_url or stored.get("base_url", "")
         model = model or stored.get("model", "")
@@ -212,34 +200,14 @@ def test_global_chat(
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    base_url, api_key, model = _resolve_admin_test_values(payload, db, scope="chat")
+    base_url, api_key, model = _resolve_admin_test_values(payload, db)
     if not (base_url and api_key and model):
         return {"ok": False, "chat": {"ok": False, "latency_ms": None, "sample": None, "error": "全局 chat 配置未设置完整"}, "embedding": None, "error": "全局 chat 配置未设置完整（缺 base_url / api_key / model）"}
     return llm_config_service.test_llm_connection(base_url=base_url, api_key=api_key, model=model, scope="chat")
 
 
-@router.post("/admin/llm-config/embedding/test")
-def test_global_embedding(
-    payload: GlobalScopeTestRequest,
-    admin: User = Depends(require_admin),
-    db: Session = Depends(get_db),
-):
-    base_url, api_key, model = _resolve_admin_test_values(payload, db, scope="embedding")
-    if not (base_url and api_key and model):
-        return {"ok": False, "chat": None, "embedding": {"ok": False, "latency_ms": None, "dim": None, "error": "全局 embedding 配置未设置完整"}, "error": "全局 embedding 配置未设置完整"}
-    return llm_config_service.test_llm_connection(base_url=base_url, api_key=api_key, model=model, scope="embedding")
-
-
 @router.post("/admin/llm-config/chat/models")
 def list_global_chat_models(
-    payload: ListModelsRequest,
-    admin: User = Depends(require_admin),
-):
-    return llm_config_service.list_provider_models(base_url=payload.base_url, api_key=payload.api_key, provider_template_id=payload.provider_template_id)
-
-
-@router.post("/admin/llm-config/embedding/models")
-def list_global_embedding_models(
     payload: ListModelsRequest,
     admin: User = Depends(require_admin),
 ):

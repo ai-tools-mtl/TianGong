@@ -5,7 +5,7 @@ import type { TestConnectionResult } from '@/types/api'
 
 /**
  * 测试连接结果展示（Apple Liquid Glass：灰阶为主，状态点用单色 accent）。
- * 四态：成功（live 绿点）/ 失败（红）。分别展示 chat 与 embedding 两路结果。
+ * 只测 chat（embedding 走固定 bge-m3 微服务，不再经测试连接）。
  */
 export function TestResultBadge({ result }: { result: TestConnectionResult | null }) {
   if (!result) return null
@@ -14,12 +14,8 @@ export function TestResultBadge({ result }: { result: TestConnectionResult | nul
     <div className="space-y-1.5 rounded-lg border border-black/[0.07] bg-muted/30 p-3 text-[12px] dark:border-white/10">
       {/* chat */}
       {result.chat ? <ResultLine label="对话模型" r={result.chat} /> : null}
-      {/* embedding */}
-      {result.embedding ? (
-        <ResultLine label="嵌入模型" r={result.embedding} suffix={result.embedding.dim ? `${result.embedding.dim}维` : undefined} />
-      ) : null}
       {/* 顶层错误兜底 */}
-      {!result.ok && result.error && !result.chat?.error && !result.embedding?.error && (
+      {!result.ok && result.error && !result.chat?.error && (
         <p className="text-destructive">{result.error}</p>
       )}
     </div>
@@ -27,15 +23,14 @@ export function TestResultBadge({ result }: { result: TestConnectionResult | nul
 }
 
 function ResultLine({
-  label, r, suffix,
+  label, r,
 }: {
   label: string
-  r: { ok: boolean; latency_ms: number | null; sample?: string | null; dim?: number | null; error: string | null }
-  suffix?: string
+  r: { ok: boolean; latency_ms: number | null; sample?: string | null; error: string | null }
 }) {
   const dot = r.ok ? 'bg-[#30d158]' : 'bg-[#ff3b30]'
   const text = r.ok
-    ? `已连通${r.latency_ms != null ? ` · ${r.latency_ms}ms` : ''}${suffix ? ` · ${suffix}` : ''}${r.sample ? ` · ${r.sample.slice(0, 30)}` : ''}`
+    ? `已连通${r.latency_ms != null ? ` · ${r.latency_ms}ms` : ''}${r.sample ? ` · ${r.sample.slice(0, 30)}` : ''}`
     : r.error || '失败'
   return (
     <div className="flex items-center gap-2">

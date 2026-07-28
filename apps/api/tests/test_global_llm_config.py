@@ -1,14 +1,13 @@
-"""全局 LLM 配置测试（拆分版 chat/embedding set/get + enabled 开关接入 resolution）。
+"""全局 LLM 配置测试（chat set/get + enabled 开关接入 resolution）。
 
-全局配置已拆成 chat / embedding 两套独立的 SystemSetting key：
+全局配置只剩 chat 一套（embedding 改走固定 bge-m3 微服务）：
 - set_global_chat_settings / get_global_chat_settings（llm_global_chat_config）
-- set_global_embedding_settings / get_global_embedding_settings（llm_global_embedding_config）
 
-enabled 开关（llm_global_enabled）是 chat+embedding 共用的：任一 set 函数都写它，
-任一 resolve 的全局分支都读它。本文件用 chat 链路验证 enabled 开关接入。
+enabled 开关（llm_global_enabled）现在仅控制 chat：set_global_chat_settings 写它，
+resolve_chat_config 的全局分支读它。本文件用 chat 链路验证 enabled 开关接入。
 
-API 层 GET/PUT /admin/llm-config 返回 {llm_global_enabled, chat_config, embedding_config}，
-admin 端点拆 chat/embedding 的细节由 test_admin_split_endpoints.py 覆盖。
+API 层 GET/PUT /admin/llm-config 返回 {llm_global_enabled, chat_config}，
+admin 端点细节由 test_admin_split_endpoints.py 覆盖。
 """
 
 import pytest
@@ -123,10 +122,10 @@ def test_global_enabled_true_then_global_usable(db_session):
     assert cfg.source == "admin"
 
 
-# ── API 层（拆分版 /admin/llm-config：chat_config + embedding_config，无 allowed_models）──
+# ── API 层（/admin/llm-config：只 chat_config，无 embedding_config / allowed_models）──
 
-def test_put_global_llm_chat_and_embedding(client, admin_and_login, db_session):
-    """PUT 带 chat_config + embedding_config → 200，审计 detail 含两边 model，不含 api_key。"""
+def test_put_global_llm_chat(client, admin_and_login, db_session):
+    """PUT 带 chat_config → 200，审计 detail 含 chat model，不含 api_key。"""
     res = client.put("/api/v1/admin/llm-config", json={
         "enabled": True,
         "chat_config": {
@@ -134,41 +133,33 @@ def test_put_global_llm_chat_and_embedding(client, admin_and_login, db_session):
             "api_key": "sk-super-secret-1234567890",
             "model": "glm-4-flash",
         },
-        "embedding_config": {
-            "base_url": "https://emb.example.com",
-            "api_key": "sk-emb-secret-1234567890",
-            "model": "embedding-3",
-        },
     })
     assert res.status_code == 200
     data = res.json()
     assert data["chat_config"]["model"] == "glm-4-flash"
-    assert data["embedding_config"]["model"] == "embedding-3"
+    assert "embedding_config" not in data
     assert "allowed_models" not in str(data)
 
     # 审计 detail
     log = db_session.scalar(select(AuditLog).where(AuditLog.action == "set_global_llm"))
     detail = log.detail or {}
     assert detail.get("chat_model") == "glm-4-flash"
-    assert detail.get("embedding_model") == "embedding-3"
+    assert "embedding_model" not in detail  # embedding 字段已从审计移除
     # 红线：不含 api_key 明文
     assert "api_key" not in detail
     assert "api_key_encrypted" not in detail
     assert "sk-super-secret-1234567890" not in str(detail)
-    assert "sk-emb-secret-1234567890" not in str(detail)
 
 
-def test_get_global_llm_endpoint_returns_split(client, admin_and_login):
-    """GET 端点返回 chat_config + embedding_config，无 allowed_models。"""
+def test_get_global_llm_endpoint_returns_chat_only(client, admin_and_login):
+    """GET 端点返回 chat_config，无 embedding_config / allowed_models。"""
     client.put("/api/v1/admin/llm-config", json={
         "enabled": True,
         "chat_config": {"api_key": "sk-chat-1234567890", "model": "glm-4-flash"},
-        "embedding_config": {"api_key": "sk-emb-1234567890", "model": "embedding-3"},
     })
     res = client.get("/api/v1/admin/llm-config")
     data = res.json()
     assert "chat_config" in data
-    assert "embedding_config" in data
+    assert "embedding_config" not in data
     assert data["chat_config"]["model"] == "glm-4-flash"
-    assert data["embedding_config"]["model"] == "embedding-3"
     assert "allowed_models" not in str(data)

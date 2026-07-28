@@ -27,6 +27,9 @@ Thumbs.db
 uploads/
 storage/
 
+# 预下载的 ML 模型（bge-m3 等，~2.3GB，用户本地准备，勿提交）
+models/
+
 # 上传文件（MVP 本地存储）
 apps/api/uploads/
 

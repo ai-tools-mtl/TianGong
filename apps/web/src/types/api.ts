@@ -247,8 +247,9 @@ export interface LLMHealth {
 }
 
 /**
- * 全局 chat / embedding 单边配置的掩码回显形态。
- * GET /admin/llm-config 返回的 chat_config / embedding_config 子对象就是这个形状。
+ * 全局 chat 单边配置的掩码回显形态。
+ * GET /admin/llm-config 返回的 chat_config 子对象就是这个形状。
+ * （embedding 已改走固定 bge-m3 微服务，不再有全局 embedding 配置。）
  */
 export interface GlobalScopeConfig {
   base_url: string
@@ -258,12 +259,11 @@ export interface GlobalScopeConfig {
 
 /**
  * GET /admin/llm-config 返回；admin 设置全局 LLM 配置。
- * chat_config 与 embedding_config 各自独立、各自可单独更新（feat/llm-chat-embedding-split）。
+ * 只管 chat（embedding 走固定 bge-m3 微服务，不可配）。
  */
 export interface GlobalLLMSettings {
   llm_global_enabled: boolean
   chat_config: GlobalScopeConfig
-  embedding_config: GlobalScopeConfig
 }
 
 // ── 全局 Key 授权（Task 2.2）──
@@ -338,7 +338,7 @@ export interface AuditLogPage {
   items: AuditLogItem[]
 }
 
-// ── 用户自定义配置（chat / embedding 拆两套，feat/llm-chat-embedding-split）──
+// ── 用户自定义配置（embedding 已改走固定微服务，只剩 chat）──
 
 /** GET /settings/llm 列表项 / POST、PUT 返回的单条 chat 配置（key 掩码）。 */
 export interface UserLLMConfig {
@@ -363,34 +363,6 @@ export interface UserLLMConfigCreate {
 export interface UserLLMConfigUpdate {
   name?: string
   provider?: string
-  base_url?: string
-  api_key?: string
-  model?: string
-}
-
-/**
- * GET /settings/embedding 列表项 / POST、PUT 返回的单条 embedding 配置（key 掩码）。
- * 与 UserLLMConfig 同形但无 provider 字段（embedding 不区分 provider）。
- */
-export interface UserEmbeddingConfig {
-  id: string
-  name: string
-  base_url: string
-  api_key_masked: string
-  model: string
-}
-
-/** POST /settings/embedding 新增请求体。 */
-export interface UserEmbeddingConfigCreate {
-  name: string
-  base_url: string
-  api_key: string
-  model: string
-}
-
-/** PUT /settings/embedding/{id} 修改请求体（全可选，api_key 留空则不变）。 */
-export interface UserEmbeddingConfigUpdate {
-  name?: string
   base_url?: string
   api_key?: string
   model?: string
@@ -557,19 +529,18 @@ export interface SkillUpdate {
   status?: SkillStatus
 }
 
-// ── LLM provider 模板（添加配置时选模板自动填）──
+// ── LLM provider 模板（添加配置时选模板自动填；embedding 已无预设）──
 export interface ProviderTemplate {
   id: string
   name: string
   base_url: string
   default_model: string
-  default_embedding_model: string | null
   models_endpoint: string
   docs_url: string | null
   note: string | null
 }
 
-// ── 测试连接结果（chat + embedding 双测）──
+// ── 测试连接结果（只测 chat；embedding 走固定服务，不再经此测）──
 export interface TestConnectionResult {
   ok: boolean
   chat: {
@@ -578,12 +549,7 @@ export interface TestConnectionResult {
     sample: string | null
     error: string | null
   } | null
-  embedding: {
-    ok: boolean
-    latency_ms: number | null
-    dim: number | null
-    error: string | null
-  } | null
+  embedding: null
   error: string | null
 }
 
