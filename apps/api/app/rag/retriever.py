@@ -24,11 +24,15 @@ class RetrievalResult:
 
 
 def retrieve(
-    db: Session, *, user_id, query: str, top_k: int = 3
+    db: Session, *, user_id, query: str, top_k: int = 3, scope: str | None = None
 ) -> list[RetrievalResult]:
     """检索与 query 最相似的 chunk（三域 + 解析配置向量化）。
 
-    命中范围：scope=global（全员共享）+ scope=personal 且 user_id=本人。
+    scope=None（默认）：三域规则，global + 本人 personal（向后兼容）。
+    scope="global"：仅 global（admin 检索测试用）。
+    scope="personal"：仅本人 personal。
+
+    命中范围（scope=None 时）：scope=global（全员共享）+ scope=personal 且 user_id=本人。
     不命中他人 personal（严格隔离，关键约束 1）。
 
     向量化配置由 user_id 内部解析（断链修复：embed 真用自定义/全局/env 配置）。
@@ -56,19 +60,27 @@ def retrieve(
     if is_postgres():
         db.execute(text("SET LOCAL hnsw.ef_search = :ef"), {"ef": max(40, top_k * 4)})
 
+    # scope 过滤（G2）：默认 None=三域规则（global + 本人 personal，向后兼容）；
+    # admin 检索测试可强制 scope="global" 只看全局视角。
+    if scope == "global":
+        scope_filter = KnowledgeChunk.scope == "global"
+    elif scope == "personal":
+        scope_filter = (KnowledgeChunk.scope == "personal") & (
+            KnowledgeChunk.user_id == user_id
+        )
+    else:
+        scope_filter = (KnowledgeChunk.scope == "global") | (
+            (KnowledgeChunk.scope == "personal")
+            & (KnowledgeChunk.user_id == user_id)
+        )
+
     # D1.1 halfvec —— query_vec 转成 HalfVec 类型与列类型对齐
     stmt = (
         select(
             KnowledgeChunk,
             KnowledgeChunk.embedding.cosine_distance(HalfVec(query_vec)).label("distance"),
         )
-        .where(
-            (KnowledgeChunk.scope == "global")
-            | (
-                (KnowledgeChunk.scope == "personal")
-                & (KnowledgeChunk.user_id == user_id)
-            )
-        )
+        .where(scope_filter)
         .order_by("distance")
         .limit(top_k)
     )
