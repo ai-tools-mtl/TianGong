@@ -80,3 +80,54 @@ def test_list_memories_filters_by_source(db_session, registered_user, monkeypatc
     manual = ms.list_memories(db_session, user_id=uid, source="manual")
     assert len(manual) == 1
     assert manual[0].content == "手动加的"
+
+
+def test_update_memory_regenerates_embedding(db_session, registered_user, monkeypatch):
+    """更新内容后 embedding 重建。"""
+    from app.services import memory_service as ms
+
+    uid = uuid.UUID(registered_user["id"])
+    monkeypatch.setattr(ms, "_try_embed", lambda db, user_id, text: [0.1] * 2048)
+
+    mem = ms.create_memory(db_session, user_id=uid, content="原文")
+    mem_id = mem.id
+
+    updated = ms.update_memory(db_session, memory_id=mem_id, user_id=uid, content="改后")
+    assert updated.content == "改后"
+    assert updated.embedding is not None
+
+
+def test_update_memory_not_owner_raises(db_session, registered_user):
+    """非本人更新抛 NotFoundError（不泄露存在性）。"""
+    from app.services import memory_service as ms
+    from app.core.exceptions import NotFoundError
+
+    uid = uuid.UUID(registered_user["id"])
+    other = uuid.uuid4()
+
+    mem = ms.create_memory(db_session, user_id=uid, content="我的")
+    try:
+        ms.update_memory(db_session, memory_id=mem.id, user_id=other, content="篡改")
+        assert False, "应抛 NotFoundError"
+    except NotFoundError:
+        pass
+
+
+def test_delete_memory_only_owner(db_session, registered_user):
+    """非本人删除抛 NotFoundError。"""
+    from app.services import memory_service as ms
+    from app.core.exceptions import NotFoundError
+
+    uid = uuid.UUID(registered_user["id"])
+    other = uuid.uuid4()
+
+    mem = ms.create_memory(db_session, user_id=uid, content="我的")
+    try:
+        ms.delete_memory(db_session, memory_id=mem.id, user_id=other)
+        assert False, "应抛 NotFoundError"
+    except NotFoundError:
+        pass
+
+    #本人删除成功
+    ms.delete_memory(db_session, memory_id=mem.id, user_id=uid)
+    assert ms.list_memories(db_session, user_id=uid) == []

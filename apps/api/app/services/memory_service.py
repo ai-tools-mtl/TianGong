@@ -63,3 +63,25 @@ def list_memories(
         stmt = stmt.where(UserMemory.source == source)
     stmt = stmt.order_by(UserMemory.updated_at.desc()).limit(limit)
     return list(db.scalars(stmt))
+
+
+def update_memory(db: Session, *, memory_id, user_id, content: str) -> UserMemory:
+    """更新记忆内容，重新生成 embedding。"""
+    mem = db.get(UserMemory, memory_id)
+    if mem is None or mem.user_id != user_id:
+        raise NotFoundError("记忆不存在")
+    if not content.strip():
+        raise ValidationError("记忆内容不能为空")
+    mem.content = content.strip()
+    mem.embedding = _try_embed(db, user_id, content.strip())
+    db.flush()
+    return mem
+
+
+def delete_memory(db: Session, *, memory_id, user_id) -> None:
+    """删除记忆（仅本人，否则 NotFoundError 不泄露存在性）。"""
+    mem = db.get(UserMemory, memory_id)
+    if mem is None or mem.user_id != user_id:
+        raise NotFoundError("记忆不存在")
+    db.delete(mem)
+    db.flush()
