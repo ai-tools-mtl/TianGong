@@ -7,6 +7,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 
 import { AIChatPanel } from '@/components/ai-chat-panel'
+import type { AIChatPanelRef } from '@/components/ai-chat-panel'
 import { ResizeHandle } from '@/components/resize-handle'
 import { SectionOutline } from '@/components/section-outline'
 import { FigureUpload } from '@/components/editor/figure-upload'
@@ -42,6 +43,10 @@ export default function ProjectDetailPage() {
   const [shareOpen, setShareOpen] = useState(false)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const editorRef = useRef<TiptapEditorRef>(null)
+  // AIChatPanel 的 imperative ref：选区重写气泡（在下方 <TiptapEditor> 内）触发
+  // onRewriteComplete 时，通过此 ref 桥接到 AIChatPanel.handleRewriteComplete，
+  // 复用 AIChatPanel 已有的 phase/hunks/DiffReviewPanel diff 审核流程。
+  const aiChatRef = useRef<AIChatPanelRef>(null)
   // 缓存当前章节最新编辑内容（handleSave 同步写入）。
   // 根因修复（crossover bug）：cleanup/handleConfirm 时不能读 editorRef.current.getJSON()，
   // 因为 React passive-effect cleanup 晚于子组件 remount，此时 editorRef 已指向新章节 editor，
@@ -208,6 +213,14 @@ export default function ProjectDetailPage() {
     })
   }
 
+  // 选区重写气泡（SelectionBubbleMenu，挂在下方 <TiptapEditor> 内）流式完成后回调：
+  // 桥接到 AIChatPanel.handleRewriteComplete，由它复用已有 diff 审核流程
+  // （setHunks + setPhase('diff-review') → DiffReviewPanel 接管，handleApplyDiff 落地）。
+  // spec §3.3：气泡不碰 diff 逻辑，只是给 diff 审核提供"选区重写"这条新数据源。
+  function handleRewriteComplete(aiOutput: string, selectedText: string) {
+    aiChatRef.current?.handleRewriteComplete(aiOutput, selectedText)
+  }
+
   // 三栏宽度按折叠态切换：左栏 240 / 收起 56；右栏 rightWidth / 收起 0
   const leftCol = leftCollapsed ? '56px' : '240px'
   const rightCol = rightCollapsed ? '0px' : `${rightWidth}px`
@@ -366,6 +379,7 @@ export default function ProjectDetailPage() {
                 content={current.content}
                 onChange={handleSave}
                 sectionId={current.id}
+                onRewriteComplete={handleRewriteComplete}
               />
             )}
           </div>
@@ -383,7 +397,12 @@ export default function ProjectDetailPage() {
               否则宽度会被内容自然宽度钉死、拖拽无效 */}
           <aside className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
             <div className="flex min-h-0 flex-1 overflow-hidden">
-              <AIChatPanel sectionId={current.id} section={current} projectId={projectId} />
+              <AIChatPanel
+                ref={aiChatRef}
+                sectionId={current.id}
+                section={current}
+                projectId={projectId}
+              />
             </div>
           </aside>
         </div>

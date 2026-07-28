@@ -283,12 +283,14 @@ def test_compute_rewrite_diff_basic(db_session, registered_user):
     section.content = _tiptap_para("本发明涉及一种机械装置")
     db_session.commit()
 
-    hunks = compute_rewrite_diff(section, "涉及", "归属于")
+    hunks, ai_full = compute_rewrite_diff(section, "涉及", "归属于")
     assert len(hunks) == 1
     h = hunks[0]
     assert h.type == "replace"
     assert "涉及" in (h.original_para or "")
     assert "归属于" in (h.modified_para or "")
+    # ai_full 必须是首次出现被替换后的整章文本（apply-diff 时原样回传）
+    assert ai_full == "本发明归属于一种机械装置"
 
 
 def test_compute_rewrite_diff_not_found_raises(db_session, registered_user):
@@ -313,11 +315,13 @@ def test_compute_rewrite_diff_first_occurrence_only(db_session, registered_user)
     section.content = _tiptap_para("所述装置包括所述凸轮")
     db_session.commit()
 
-    hunks = compute_rewrite_diff(section, "所述", "该")
+    hunks, ai_full = compute_rewrite_diff(section, "所述", "该")
     # 只替换首次：'该装置包括所述凸轮' vs '所述装置包括所述凸轮'
     # diff 应只产生 1 个 replace hunk（首次'所述'→'该'），第二次'所述'保留
     assert len(hunks) == 1
     assert hunks[0].type == "replace"
+    # ai_full 首次出现替换、第二次保留
+    assert ai_full == "该装置包括所述凸轮"
 
 
 def test_compute_rewrite_diff_empty_section(db_session, registered_user):
@@ -341,5 +345,7 @@ def test_compute_rewrite_diff_identical_ai_no_hunks(db_session, registered_user)
     section.content = _tiptap_para("本发明涉及一种机械装置")
     db_session.commit()
 
-    hunks = compute_rewrite_diff(section, "涉及", "涉及")  # 相同
+    hunks, ai_full = compute_rewrite_diff(section, "涉及", "涉及")  # 相同
     assert hunks == []
+    # AI 与选区相同时，ai_full 等于原文（注入无变化）
+    assert ai_full == "本发明涉及一种机械装置"

@@ -479,6 +479,12 @@ export interface Hunk {
 
 export interface DiffResponse {
   hunks: Hunk[]
+  /**
+   * 仅 rewrite-diff 端点返回：选区首次出现被 ai_text 替换后的整章 markdown。
+   * apply-diff 时前端必须把它作为 ai_text 回传——后端按 (original, ai_text) 重算
+   * hunks，只有此 ai_full 与计算时一致，accepted_hunk_ids 才能对齐（spec §3.4）。
+   */
+  ai_full?: string | null
 }
 
 /** 选区重写 diff 请求体（POST /sections/{id}/rewrite-diff，纯计算不改库）。 */

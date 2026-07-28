@@ -37,7 +37,7 @@ def _make_logged_in_section(client, registered_user, db_session):
 
 
 def test_rewrite_diff_endpoint_basic(client, registered_user, db_session):
-    """POST /sections/{id}/rewrite-diff → 返回 DiffResponse（含 hunks）。"""
+    """POST /sections/{id}/rewrite-diff → 返回 DiffResponse（含 hunks + ai_full）。"""
     section = _make_logged_in_section(client, registered_user, db_session)
     # 给章节写内容
     from app.ai.markdown_to_tiptap import markdown_to_tiptap
@@ -53,6 +53,10 @@ def test_rewrite_diff_endpoint_basic(client, registered_user, db_session):
     assert "hunks" in data
     assert len(data["hunks"]) >= 1
     assert data["hunks"][0]["type"] == "replace"
+    # ai_full：选区首次出现被 ai_text 替换后的整章文本。
+    # apply-diff 时前端必须把它原样作为 ai_text 回传，否则后端按
+    # (original, ai_text) 重算的 hunks 与计算时生成的 hunk id 不一致 → 数据损坏。
+    assert data["ai_full"] == "本发明归属于一种机械装置"
 
 
 def test_rewrite_diff_endpoint_not_found_returns_422(client, registered_user, db_session):
