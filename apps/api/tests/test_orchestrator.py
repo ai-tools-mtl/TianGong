@@ -125,3 +125,47 @@ def test_astream_generate_empty_history_only_instruction(db_session, monkeypatch
 
     messages = captured["astream_input"]["messages"]
     assert len(messages) == 1  # 只有 instruction
+
+
+# ===== astream_chat 测试（Task 3.2） =====
+
+def test_astream_chat_passes_section_to_build_agent(db_session, monkeypatch):
+    """[L1] chat 路径：build_agent 收到 section 参数。"""
+    from app.ai import orchestrator as orch_mod
+    from app.ai import agent as agent_mod
+    from app.services.llm_config_service import ResolvedChatConfig
+
+    section = _build_section_with_project(db_session)
+    captured: dict = {}
+    monkeypatch.setattr(agent_mod, "build_agent", _make_fake_build_agent(captured))
+
+    config = ResolvedChatConfig(base_url="http://x", api_key="k", model="glm-4.7", source="env")
+    _consume(orch_mod.astream_chat(db_session, section, [], "用户问题", llm_config=config))
+
+    assert captured["build_args"]["section"] is section
+
+
+def test_astream_chat_passes_history_and_user_input(db_session, monkeypatch):
+    """[L2] chat 透传 history + user_input。"""
+    from app.ai import orchestrator as orch_mod
+    from app.ai import agent as agent_mod
+    from app.models import Message
+    from app.services.llm_config_service import ResolvedChatConfig
+
+    section = _build_section_with_project(db_session)
+    history = [
+        Message(section_id=section.id, role="user", content="历史问"),
+        Message(section_id=section.id, role="assistant", content="历史答"),
+    ]
+    captured: dict = {}
+    monkeypatch.setattr(agent_mod, "build_agent", _make_fake_build_agent(captured))
+
+    config = ResolvedChatConfig(base_url="http://x", api_key="k", model="glm-4.7", source="env")
+    _consume(orch_mod.astream_chat(db_session, section, history, "当前问题", llm_config=config))
+
+    messages = captured["astream_input"]["messages"]
+    # history 2 条 + user_input 1 条 = 3 条
+    assert len(messages) == 3
+    assert messages[0] == {"role": "user", "content": "历史问"}
+    assert messages[1] == {"role": "assistant", "content": "历史答"}
+    assert messages[2] == {"role": "user", "content": "当前问题"}

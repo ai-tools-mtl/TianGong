@@ -99,9 +99,17 @@ async def astream_chat(
     """
     from app.ai.agent import build_agent
 
-    agent = build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section))
+    # [L1] 传 section，让 build_agent 装配动态 system prompt（spec §3.3.2）
+    agent = build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section), section=section)
+
+    # [L2] 透传历史 + 当前用户输入（spec §3.3.2）
+    messages = []
+    for msg in history:
+        messages.append({"role": msg.role, "content": msg.content})
+    messages.append({"role": "user", "content": user_input})
+
     async for event in agent.astream_events(
-        {"messages": [{"role": "user", "content": user_input}]},
+        {"messages": messages},
         version="v2",
     ):
         evt = event["event"]
