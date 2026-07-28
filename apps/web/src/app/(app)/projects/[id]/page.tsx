@@ -402,6 +402,7 @@ export default function ProjectDetailPage() {
                 sectionId={current.id}
                 section={current}
                 projectId={projectId}
+                onAppliedContent={(content) => editorRef.current?.resetContent(content)}
               />
             </div>
           </aside>

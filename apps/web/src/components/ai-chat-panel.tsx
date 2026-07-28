@@ -67,6 +67,9 @@ interface AIChatPanelProps {
   section: Section
   /** 用于 apply-diff 成功后刷新章节缓存 */
   projectId: string
+  /** apply-diff 成功并 refetch 后，用最新 content 重置编辑器（TiptapEditor 不响应 content prop 变化，
+   *  需显式 resetContent 同步；否则 apply 后编辑器仍显示旧内容） */
+  onAppliedContent?: (content: object) => void
 }
 
 /**
@@ -80,7 +83,7 @@ export interface AIChatPanelRef {
 }
 
 export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
-  function AIChatPanel({ sectionId, section, projectId }, ref) {
+  function AIChatPanel({ sectionId, section, projectId, onAppliedContent }, ref) {
   const qc = useQueryClient()
   const toggleRight = useUIStore((s) => s.toggleRight)
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -355,7 +358,7 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
     // - 选区重写路径：rewriteAiFull（首次出现被 ai_text 替换后的整章，由 rewrite-diff 回传）
     const applyAiText = diffOrigin === 'rewrite' ? rewriteAiFull : aiDraft
     try {
-      await applyDiff.mutateAsync({
+      const updated = await applyDiff.mutateAsync({
         ai_text: applyAiText,
         accepted_hunk_ids: acceptedHunkIds,
         expected_version: section.version,
@@ -365,6 +368,11 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
       setAiDraft('')
       setHunks([])
       setRewriteAiFull('')
+      // 立即用响应里的新 content 重置编辑器（不等 refetch，避免编辑器显示滞后）。
+      // emitUpdate:false 的 resetContent 不会触发 onChange→save 回环。
+      if (updated?.content) {
+        onAppliedContent?.(updated.content)
+      }
       await qc.invalidateQueries({ queryKey: queryKeys.sections(projectId) })
     } catch (err: unknown) {
       const e = err as { code?: string; message?: string }
