@@ -11,6 +11,9 @@ import { Toolbar } from './toolbar'
 export interface TiptapEditorRef {
   insertImage: (src: string, alt: string) => void
   getJSON: () => object
+  // 新增（选区重写气泡菜单用，spec §3.1）
+  getSelectionText: () => string
+  getSelectionCoords: () => { top: number; left: number; bottom: number } | null
 }
 
 interface TiptapEditorProps {
@@ -43,6 +46,26 @@ export const TiptapEditor = forwardRef<TiptapEditorRef, TiptapEditorProps>(
         editor?.chain().focus().setImage({ src, alt }).run()
       },
       getJSON: () => editor?.getJSON() ?? {},
+      getSelectionText: () => {
+        if (!editor) return ''
+        const { from, to, empty } = editor.state.selection
+        if (empty) return ''
+        return editor.state.doc.textBetween(from, to, '\n')
+      },
+      getSelectionCoords: () => {
+        if (!editor) return null
+        const { from, to, empty } = editor.state.selection
+        if (empty) return null
+        // 用 ProseMirror view 的 coordsAtPos 拿视口坐标
+        const view = editor.view
+        const startCoords = view.coordsAtPos(from)
+        const endCoords = view.coordsAtPos(to)
+        return {
+          top: Math.min(startCoords.top, endCoords.top),
+          left: Math.min(startCoords.left, endCoords.left),
+          bottom: Math.max(startCoords.bottom, endCoords.bottom),
+        }
+      },
     }))
 
     if (!editor) return null
