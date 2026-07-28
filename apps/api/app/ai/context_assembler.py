@@ -137,6 +137,22 @@ def _format_metadata(metadata: dict | None) -> str:
     return "\n".join(lines)
 
 
+def _section_owner_uid(db, section: Section):
+    """取 section 所属项目的 user_id（记忆检索范围限定）。"""
+    project = db.get(Project, section.project_id)
+    return project.user_id if project else None
+
+
+def _search_user_memories(db, user_id, query: str):
+    """检索用户记忆，失败时静默返回空（不阻断 prompt 装配）。"""
+    try:
+        from app.services.memory_service import search_memories
+        return search_memories(db, user_id=user_id, query=query)
+    except Exception:
+        # embedding/检索失败不阻断主流程，记忆层留空
+        return []
+
+
 def build_system_prompt(db, section: Section) -> str:
     """装配动态 system prompt（agent loop 路线用，spec §3.1.1）。
 
@@ -163,6 +179,16 @@ def build_system_prompt(db, section: Section) -> str:
     if written:
         parts.append("# 已完成章节内容（请保持术语、技术方案一致性）")
         parts.append(written)
+
+    # 【新增】用户长期记忆层（检索注入，纯检索式策略）
+    # 用章节标题 + 目标做检索 query，覆盖本章节最可能相关的用户偏好/事实/know-how
+    owner_uid = _section_owner_uid(db, section)
+    if owner_uid is not None:
+        memories = _search_user_memories(db, owner_uid, f"{section.title} {sp.goal}")
+        if memories:
+            memory_lines = "\n".join(f"- {m.content}" for m in memories)
+            parts.append("# 关于这位用户的长期记忆（请遵循其偏好与约定）")
+            parts.append(memory_lines)
 
     # 章节策略层（底部偏上，当前章节聚焦）
     parts.append("# 当前正在撰写章节")
