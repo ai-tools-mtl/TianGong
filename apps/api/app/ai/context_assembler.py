@@ -7,9 +7,11 @@
 """
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from sqlalchemy import select
 
 from app.ai.section_prompts import get_section_prompt
 from app.models import Message, Section
+from app.services.summary_service import _extract_text
 
 SYSTEM_PROMPT = """你是「天工」，一个专利交底书撰写助手。你的任务是引导发明人把技术想法整理成规范的专利交底书。
 
@@ -78,3 +80,41 @@ def get_project_summaries(db, project_id) -> list[dict]:
         ).order_by(Section.order)
     )
     return [{"title": s.title, "summary": s.summary} for s in sections]
+
+
+# 前文注入字符软上限（T1 方案，spec §2.3 决策③）
+# MVP 阶段无真实长文数据，覆盖 90% 场景；超长文场景等真实数据出现再做分块/滑动窗口
+WRITTEN_SECTIONS_CHAR_BUDGET = 8000
+
+
+def get_written_sections_text(db, project_id, exclude_key: str) -> str:
+    """查询同项目所有非空章节（不论 status，排除当前章节），提取纯文本，截断到软上限。
+
+    - 不论 status：drafting / confirmed 都注入（绕开 summary 的 confirmed 触发限制，spec §3.1.2）
+    - content.isnot(None)：空章节跳过
+    - 按 Section.order 装配，超 WRITTEN_SECTIONS_CHAR_BUDGET 时截断当前章并中止（保证前面章节完整）
+    - 复用 summary_service._extract_text 提取 Tiptap JSON 纯文本（与 rag/archiver、review_service 同一既定模式）
+    """
+    sections = db.scalars(
+        select(Section).where(
+            (Section.project_id == project_id)
+            & (Section.key != exclude_key)
+            & (Section.content.isnot(None))
+        ).order_by(Section.order)
+    )
+    parts: list[str] = []
+    total = 0
+    for s in sections:
+        text = _extract_text(s.content).strip()
+        if not text:
+            continue
+        chunk = f"## {s.title}\n{text}"
+        if total + len(chunk) > WRITTEN_SECTIONS_CHAR_BUDGET:
+            # 软上限：保留前面已装配的，当前章截断后中止
+            remaining = WRITTEN_SECTIONS_CHAR_BUDGET - total
+            if remaining > 20:  # 剩余空间太小（连标题+几个字都塞不下）就不塞半截
+                parts.append(f"## {s.title}\n{text[:remaining]}\n…（已截断）")
+            break
+        parts.append(chunk)
+        total += len(chunk)
+    return "\n\n".join(parts)
