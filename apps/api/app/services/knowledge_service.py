@@ -17,7 +17,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import NotFoundError, ValidationError
 from app.core.storage import Storage
 from app.models import KnowledgeChunk, KnowledgeFile, KnowledgeReview
 from app.rag.chunker import chunk_sections
@@ -158,6 +158,41 @@ def list_global_files(db: Session) -> list[KnowledgeFile]:
         select(KnowledgeFile).where(KnowledgeFile.scope == "global")
         .order_by(KnowledgeFile.created_at.desc())
     ))
+
+
+def delete_global_file(db: Session, *, storage: Storage, file_id: str) -> None:
+    """admin 删除全局库文件。
+
+    删除三件套:KnowledgeFile 记录 + minio 对象 + 关联 KnowledgeChunk。
+    仅限 scope=global 的文件(防误删 personal)。
+    硬删除,不可恢复——前端必须带确认 Dialog。
+    """
+    try:
+        fid = uuid.UUID(file_id)
+    except ValueError:
+        raise NotFoundError("文件不存在")
+
+    kf = db.get(KnowledgeFile, fid)
+    if kf is None:
+        raise NotFoundError("文件不存在")
+    if kf.scope != "global":
+        raise ValidationError("仅可删除全局库文件")
+
+    # 1. 删关联 chunk(file_id FK 是 SET NULL,不会级联,需手动)
+    from sqlalchemy import delete as sa_delete
+    db.execute(
+        sa_delete(KnowledgeChunk).where(KnowledgeChunk.file_id == fid)
+    )
+
+    # 2. 删 minio 对象(失败不阻塞 DB 删除)
+    try:
+        storage.delete(kf.bucket, kf.object_key)
+    except Exception:
+        pass
+
+    # 3. 删 KnowledgeFile 记录
+    db.delete(kf)
+    db.commit()
 
 
 def submit_disclosure_for_review(
