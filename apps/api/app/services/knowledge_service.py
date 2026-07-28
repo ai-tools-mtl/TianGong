@@ -277,6 +277,71 @@ def submit_disclosure_for_review(
     return review
 
 
+def list_chunks_by_file(db: Session, *, file_id) -> list[KnowledgeChunk]:
+    """列出某文件的所有 chunk（按 chunk_index 排序）。
+
+    file_id 可以是 UUID 或 str（admin 端点路径参数是 str，转成 UUID 查询）。
+    """
+    fid = uuid.UUID(str(file_id)) if not isinstance(file_id, uuid.UUID) else file_id
+    return db.execute(
+        select(KnowledgeChunk)
+        .where(KnowledgeChunk.source_id == fid)
+        .order_by(KnowledgeChunk.chunk_index)
+    ).scalars().all()
+
+
+def update_chunk(
+    db: Session, *, chunk_id, payload: dict, force_unlock: bool = False
+) -> KnowledgeChunk:
+    """admin 编辑 chunk（D8：edited_text 变更触发重 embed + tsv 重生成）。
+
+    locked=True 的 chunk 不允许编辑 edited_text（除非 force_unlock）。
+    payload 的 key 只认 keywords/questions/weight/edited_text/locked。
+    """
+    cid = uuid.UUID(str(chunk_id)) if not isinstance(chunk_id, uuid.UUID) else chunk_id
+    chunk = db.get(KnowledgeChunk, cid)
+    if not chunk:
+        raise ValueError("chunk not found")
+    if chunk.locked and not force_unlock and "edited_text" in payload:
+        raise PermissionError("chunk locked")
+
+    old_edited = chunk.edited_text
+    if "keywords" in payload:
+        chunk.keywords = payload["keywords"]
+    if "questions" in payload:
+        chunk.questions = payload["questions"]
+    if "weight" in payload:
+        chunk.weight = payload["weight"]
+    if "edited_text" in payload:
+        chunk.edited_text = payload["edited_text"] or None  # 空串归一化为 None（表示用原 content）
+    if "locked" in payload:
+        chunk.locked = payload["locked"]
+
+    # D8：edited_text 变更触发重 embed + tsv 重生成
+    needs_reembed = chunk.edited_text != old_edited
+    needs_tsv_regen = needs_reembed or "keywords" in payload or "questions" in payload
+
+    if needs_reembed and chunk.edited_text:
+        embed_config = resolve_embedding_config(db, user_id=chunk.user_id)
+        if embed_config:
+            vec = embed_texts([chunk.edited_text], embed_config=embed_config)[0]
+            chunk.embedding = vec
+
+    db.commit()
+
+    # tsv 重生成（仅 PG，edited_text + keywords + questions 都进 tsv）
+    if is_postgres() and needs_tsv_regen:
+        text_for_tsv = chunk.edited_text or chunk.content
+        extra = " ".join((chunk.keywords or []) + (chunk.questions or []))
+        db.execute(text(
+            "UPDATE knowledge_chunks SET tsv = to_tsvector('simple', :txt) WHERE id = :cid"
+        ), {"txt": text_for_tsv + " " + extra, "cid": str(chunk.id)})
+        db.commit()
+
+    db.refresh(chunk)
+    return chunk
+
+
 # ────────────────────────── 内部辅助 ──────────────────────────
 
 
