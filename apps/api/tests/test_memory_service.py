@@ -176,10 +176,29 @@ def test_search_memories_uses_pgvector_cosine():
     from app.services import memory_service as ms
 
     src = inspect.getsource(ms.search_memories)
-    assert "cosine_distance" in src
-    assert "HalfVec" in src
+    assert "cosine_distance(query_vec)" in src
     assert "hnsw.ef_search" in src
     assert "SIMILARITY_THRESHOLD" in src
+    assert "HalfVec(query_vec)" not in src, \
+        "不要包 HalfVec()（构造器期望 dim 整数，传 list 会 TypeError）；cosine_distance 直接传 list"
+
+
+def test_search_memories_ef_search_no_param_binding():
+    """SET LOCAL 不支持参数绑定（psycopg3 编译成 $1 会被 PG 拒绝 syntax error）。
+
+    防回归：SET 语句必须用字面值（int() 后 f-string），不能用 :param / %(param)s。
+    否则真实 PG 下 search_memories 会失败，进而毒化事务（InFailedSqlTransaction）。
+    """
+    import inspect
+    from app.services import memory_service as ms
+
+    src = inspect.getsource(ms.search_memories)
+    set_line = [l for l in src.splitlines() if 'SET LOCAL hnsw.ef_search' in l]
+    assert set_line, "缺少 SET LOCAL hnsw.ef_search 语句"
+    joined = " ".join(set_line)
+    assert ":ef" not in joined and "%(ef)" not in joined, \
+        "SET LOCAL 不能用参数绑定（psycopg3 会编译成 $1，PG 拒绝）；改用 int() 后 f-string"
+    assert "int(" in src, "ef 应经 int() 强转后再拼接（防注入 + 保证是数字）"
 
 
 def test_find_similar_memory_uses_pgvector_cosine():
@@ -188,6 +207,7 @@ def test_find_similar_memory_uses_pgvector_cosine():
     from app.services import memory_service as ms
 
     src = inspect.getsource(ms.find_similar_memory)
-    assert "cosine_distance" in src
-    assert "HalfVec" in src
+    assert "cosine_distance(embedding)" in src
     assert "DEDUP_SIMILARITY" in src
+    assert "HalfVec(embedding)" not in src, \
+        "不要包 HalfVec()（构造器期望 dim 整数，传 list 会 TypeError）；cosine_distance 直接传 list"

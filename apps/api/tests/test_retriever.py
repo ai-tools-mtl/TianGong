@@ -15,12 +15,38 @@ def test_retriever_has_ef_search_set():
     assert 'top_k' in src and 'ef_search' in src, "ef_search 应随 top_k 动态调整"
 
 
-def test_retriever_adapts_halfvec():
-    """D1.1：retriever 应将 query_vec 转 halfvec（列类型已改 halfvec）。"""
+def test_retriever_ef_search_no_param_binding():
+    """SET LOCAL 不支持参数绑定（psycopg3 编译成 $1 会被 PG 拒绝 syntax error）。
+
+    防回归：SET 语句必须用字面值（int() 后 f-string），不能用 :param / %(param)s。
+    """
     import inspect
     from app.rag import retriever
     src = inspect.getsource(retriever.retrieve)
-    assert 'halfvec' in src.lower() or 'HalfVec' in src, "retrieve 缺少 halfvec 适配（D1.1）"
+    # 找到 SET LOCAL 那一行附近，确认是 f-string 字面拼接而非参数绑定
+    set_line = [l for l in src.splitlines() if 'SET LOCAL hnsw.ef_search' in l]
+    assert set_line, "缺少 SET LOCAL hnsw.ef_search 语句"
+    # SET LOCAL 行不应包含参数绑定语法
+    joined = " ".join(set_line)
+    assert ":ef" not in joined and "%(ef)" not in joined, \
+        "SET LOCAL 不能用参数绑定（psycopg3 会编译成 $1，PG 拒绝）；改用 int() 后 f-string"
+    assert "int(" in src, "ef 应经 int() 强转后再拼接（防注入 + 保证是数字）"
+
+
+def test_retriever_adapts_halfvec():
+    """D1.1：retriever 向量检索应正确适配 halfvec 列。
+
+    正确写法：cosine_distance(query_vec) 直接传 list，由 HALFVEC 类型的
+    bind_processor（HalfVector._to_db）自动转。不能包 HalfVec(query_vec)——
+    HALFVEC(dim) 期望维度整数，传 list 会让 get_col_spec 的 'HALFVEC(%d)' 炸掉。
+    """
+    import inspect
+    from app.rag import retriever
+    src = inspect.getsource(retriever.retrieve)
+    assert "cosine_distance(query_vec)" in src, \
+        "retrieve 应 cosine_distance(query_vec) 直接传 list（HALFVEC bind_processor 自动转 halfvec）"
+    assert "HalfVec(query_vec)" not in src, \
+        "不要包 HalfVec(query_vec)（HALFVEC 构造器期望 dim 整数，传 list 会 TypeError）"
 
 
 def test_retriever_returns_empty_when_no_embed_config(db_session, registered_user):

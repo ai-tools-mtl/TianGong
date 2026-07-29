@@ -138,12 +138,17 @@ def _format_metadata(metadata: dict | None) -> str:
 
 
 def _search_user_memories(db, user_id, query: str):
-    """检索用户记忆，失败时静默返回空（不阻断 prompt 装配）。"""
+    """检索用户记忆，失败时静默返回空（不阻断 prompt 装配）。
+
+    失败时必须 db.rollback()：PostgreSQL 下任何 SQL 失败会让事务进入
+    aborted 状态，后续同一 session 的查询全被拒绝（InFailedSqlTransaction），
+    进而毒化主对话流程（如取 messages 历史）。rollback 让事务恢复可用。
+    """
     try:
         from app.services.memory_service import search_memories
         return search_memories(db, user_id=user_id, query=query)
     except Exception:
-        # embedding/检索失败不阻断主流程，记忆层留空
+        db.rollback()
         return []
 
 

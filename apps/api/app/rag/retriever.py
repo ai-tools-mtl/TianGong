@@ -2,7 +2,6 @@
 import logging
 from dataclasses import dataclass
 
-from pgvector.sqlalchemy import HALFVEC as HalfVec
 from sqlalchemy import select, text, func
 from sqlalchemy.orm import Session
 
@@ -70,14 +69,20 @@ def retrieve(
         )
 
     # D1/G1：HNSW 索引的动态探测参数，随 top_k 放大保证召回率（仅 PG 生效，SQLite 静默忽略）
+    # 注意：SET 不支持参数绑定（psycopg3 会编译成 $1 占位符，PG 拒绝 syntax error），
+    # 必须 int() 后字面拼接。ef 是内部算的整数，非用户输入，无注入风险。
     if is_postgres():
-        db.execute(text("SET LOCAL hnsw.ef_search = :ef"), {"ef": max(40, top_k * 4)})
+        ef = max(40, top_k * 4)
+        db.execute(text(f"SET LOCAL hnsw.ef_search = {int(ef)}"))
 
     # 向量路召回（cosine + HNSW，halfvec 适配 D1.1）
+    # 注意：cosine_distance 直接传 list，由 HALFVEC 类型的 bind_processor 自动转。
+    # 不要把 query_vec 包进 HALFVEC 类型构造器——HALFVEC(dim) 期望维度整数，
+    # 传 list 会让 get_col_spec 的 'HALFVEC(%d)' % self.dim 炸掉（TypeError）。
     vec_stmt = (
         select(
             KnowledgeChunk,
-            KnowledgeChunk.embedding.cosine_distance(HalfVec(query_vec)).label("distance"),
+            KnowledgeChunk.embedding.cosine_distance(query_vec).label("distance"),
         )
         .where(scope_filter)
         .order_by("distance")
