@@ -6,8 +6,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, IdMixin, JSONType, TimestampMixin
 
-# 智谱 embedding-3 输出 2048 维
-EMBEDDING_DIM = 2048
+# bge-m3（统一 embedding 微服务）输出 1024 维
+EMBEDDING_DIM = 1024
 
 
 class KnowledgeChunk(Base, IdMixin, TimestampMixin):

@@ -6,8 +6,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, IdMixin, TimestampMixin
 
-# 与 knowledge_chunk 对齐：智谱 embedding-3 输出 2048 维
-EMBEDDING_DIM = 2048
+# 与 knowledge_chunk 对齐：bge-m3（统一 embedding 微服务）输出 1024 维
+EMBEDDING_DIM = 1024
 
 # 记忆来源（写路径区分）
 SOURCE_AGENT = "agent"      # agent 在 loop 中自动写入
