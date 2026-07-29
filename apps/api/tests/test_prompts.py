@@ -38,3 +38,32 @@ def test_problem_prompt_distinguishes_technical_problem():
     sp = get_section_prompt("problem")
     blob = sp.goal + " " + " ".join(sp.guide_questions) + " " + sp.completion_criteria
     assert "技术问题" in blob
+
+
+# ===== S4-1：few-shot 范例（spec 2026-07-29-prompt-content-design §4 S4-1）=====
+# 范例来源：4 份已授权真实交底书（脱敏抽象，保留结构与句式）。
+# 给模型看「好样子」，让它照着写，而非端到端凭空生成。
+
+def test_section_prompt_has_few_shot_example_field():
+    """[S4-1] SectionPrompt dataclass 有 few_shot_example 字段。"""
+    sp = get_section_prompt("background")
+    assert hasattr(sp, "few_shot_example")
+
+
+def test_core_sections_have_few_shot_examples():
+    """[S4-1] 核心章节（background/problem/solution/effect）范例非空。"""
+    for key in ("background", "problem", "solution", "effect"):
+        sp = get_section_prompt(key)
+        assert sp.few_shot_example, f"{key} 章节缺少 few_shot_example"
+
+
+def test_few_shot_examples_are_anonymized():
+    """[S4-1] 范例应通用化（不含真实专利的具体专有名词，体现写法而非具体技术）。
+
+    范例用「某发明/某系统」等通用指代，避免把具体授权专利的技术细节当范例。
+    """
+    for key in ("background", "solution", "effect"):
+        sp = get_section_prompt(key)
+        # 范例应含通用化指代词（脱敏标志），而非堆砌具体技术名词
+        assert "某" in sp.few_shot_example or "例如" in sp.few_shot_example \
+            or "其特征" in sp.few_shot_example or "本发明" in sp.few_shot_example

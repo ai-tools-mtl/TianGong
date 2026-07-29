@@ -442,3 +442,29 @@ def test_build_system_prompt_intent_differentiates(db_session):
     prompt_draft = build_system_prompt(db_session, s, intent="draft")
     prompt_info = build_system_prompt(db_session, s, intent="info")
     assert prompt_draft != prompt_info
+
+
+# ===== S4-1：few-shot 范例注入（spec 2026-07-29-prompt-content-design §4 S4-1）=====
+
+def test_build_system_prompt_includes_few_shot_example(db_session):
+    """[S4-1] build_system_prompt 注入当前章节的 few_shot_example 范例。"""
+    from app.ai.context_assembler import build_system_prompt
+    from app.ai.section_prompts import get_section_prompt
+    p = _make_project(db_session)
+    s = _make_db_section(db_session, p.id, key="background", title="背景技术", order=3, content=None)
+    db_session.commit()
+    prompt = build_system_prompt(db_session, s)
+    sp = get_section_prompt("background")
+    assert sp.few_shot_example in prompt
+
+
+def test_build_system_prompt_omits_few_shot_when_none(db_session):
+    """[S4-1] 章节无范例时（如 custom）不注入范例段。"""
+    from app.ai.context_assembler import build_system_prompt
+    p = _make_project(db_session)
+    # custom 章节无专属范例
+    s = _make_db_section(db_session, p.id, key="custom", title="自定义章节", order=99, content=None)
+    db_session.commit()
+    prompt = build_system_prompt(db_session, s)
+    # 无范例时不出现「参考范例」段
+    assert "参考范例" not in prompt

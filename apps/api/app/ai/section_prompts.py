@@ -2,9 +2,14 @@
 
 每种章节 key 对应一套引导策略：目标、引导问题、输出格式、完成判定。
 这是天工的「知识资产」，沉淀专利交底书的专业 know-how。
+
+[S4-1] few_shot_example：脱敏的优秀章节范例，来源是 4 份已授权真实交底书
+（区块链访问控制 / 蚁群缓存管理 / 区块链审计 / 数据元件访问控制）。
+范例做了通用化处理——保留结构与句式（专利法要求的表述范式），技术内容抽象为
+「某发明/某系统」，避免把具体授权专利的技术细节当范例（既是脱敏，也避免误导模型）。
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -14,6 +19,8 @@ class SectionPrompt:
     guide_questions: list[str]
     output_format: str
     completion_criteria: str
+    # [S4-1] few-shot 范例：给模型看「好样子」。None 表示该章节无专属范例（如 custom）。
+    few_shot_example: str | None = None
 
 
 SECTION_PROMPTS: dict[str, SectionPrompt] = {
@@ -48,6 +55,13 @@ SECTION_PROMPTS: dict[str, SectionPrompt] = {
         ],
         output_format="背景技术应包含：现有技术描述 + 存在的问题",
         completion_criteria="至少描述一种现有技术及其不足",
+        few_shot_example=(
+            "范例：随着某技术的发展，某类系统在应用中发挥重要作用，但其管理仍存在挑战。"
+            "现有技术（如方案 A、方案 B）虽在一定程度上解决了问题，但在动态变化的场景下显得过于静态。"
+            "例如，在某实际场景中，采用方案 A 的命中率可能从正常时期的 85% 降至 60% 以下。"
+            "此外，现有方案还存在实现复杂、性能开销大、难以可靠实施等问题。"
+            "——写法要点：先述现有技术现状，再点出不足，最好用具体数据佐证不足的严重性。"
+        ),
     ),
     "problem": SectionPrompt(
         key="problem",
@@ -59,6 +73,13 @@ SECTION_PROMPTS: dict[str, SectionPrompt] = {
         ],
         output_format="发明目的与技术问题的清晰陈述",
         completion_criteria="明确指出要解决的技术问题",
+        few_shot_example=(
+            "范例：针对上述现有技术的缺点，本发明旨在解决以下技术问题："
+            "① 提高 X 性能和资源利用率，通过引入某机制实现 Y 的精确分类，从而提高命中率；"
+            "② 改善 Z 一致性，优化数据更新策略，减少不一致风险。"
+            "——写法要点：必须呼应「背景技术」点出的不足，把每个技术问题对准一个不足；"
+            "且陈述的是技术问题（如何实现/如何优化），不是商业问题（如何赚钱）。"
+        ),
     ),
     "solution": SectionPrompt(
         key="solution",
@@ -71,6 +92,14 @@ SECTION_PROMPTS: dict[str, SectionPrompt] = {
         ],
         output_format="技术方案应包含：整体架构 + 关键要素 + 工作原理",
         completion_criteria="至少覆盖结构、流程、关键要素三个维度，且必须显式呼应『技术问题』章节的表述",
+        few_shot_example=(
+            "范例：为解决上述技术问题，本发明提出一种基于某机制的系统，其特征在于包括："
+            "核心计算模块（负责动态评估，对应解决技术问题①）、分类存储模块（基于计算结果分层存储）、"
+            "策略管理模块（执行动态调整）。各模块协作流程为：计算模块产出热度信息 → 分类模块据此分层 → "
+            "策略模块动态调整。系统结构如附图所示。"
+            "——写法要点：① 开头「为解决上述技术问题」显式呼应 problem 章节；"
+            "② 列出关键组件时标注其对应的子问题；③ 说清组件间协作流程。"
+        ),
     ),
     "effect": SectionPrompt(
         key="effect",
@@ -82,6 +111,13 @@ SECTION_PROMPTS: dict[str, SectionPrompt] = {
         ],
         output_format="有益效果应具体、可量化",
         completion_criteria="至少描述一个有益效果并与技术方案对应，尽量给出可量化数据",
+        few_shot_example=(
+            "范例：本发明通过上述技术方案，实现了以下有益效果："
+            "① 通过核心计算模块的动态评估，相比传统方案命中率提升约 20%（可量化对比）；"
+            "② 通过分层存储策略，存储空间利用率提升，访问延迟降低（对应分类存储模块）；"
+            "③ 系统具备良好的横向扩展能力，能够应对负载增长。"
+            "——写法要点：每个效果都要与技术方案的某个组件对应，尽量给出量化数据或对比基线。"
+        ),
     ),
     "drawings": SectionPrompt(
         key="drawings",

@@ -45,6 +45,9 @@ def assemble_messages(
         system_content += "\n".join(f"- {q}" for q in sp.guide_questions) + "\n"
     system_content += f"输出格式要求：{sp.output_format}\n"
     system_content += f"达标判定：{sp.completion_criteria}"
+    # [S4-1] few-shot 范例（双装配一致：build_system_prompt 与 assemble_messages 同步注入）
+    if sp.few_shot_example:
+        system_content += f"\n参考范例（学习结构与句式，不要照抄内容）：\n{sp.few_shot_example}"
 
     if project_summaries:
         summary_text = "\n".join(
@@ -317,6 +320,13 @@ def build_system_prompt(
         parts.append("\n".join(f"- {q}" for q in sp.guide_questions))
     parts.append(f"输出格式要求：{sp.output_format}")
     parts.append(f"达标判定：{sp.completion_criteria}")
+
+    # [S4-1] few-shot 范例：给模型看「好样子」，照着结构和句式写。
+    # 范例脱敏抽象（保留写法，技术内容通用化），控制 token（每段精炼）。
+    # 无范例的章节（如 custom）跳过，不注入空段。
+    if sp.few_shot_example:
+        parts.append("# 参考范例（学习其结构与句式，不要照抄具体内容）")
+        parts.append(sp.few_shot_example)
 
     # [S2-1] 章节状态行为提示：让模型据 empty/drafting/confirmed 切换策略
     status_hint = SECTION_STATUS_HINTS.get(section.status)
