@@ -24,6 +24,7 @@ from app.models.template import Template
 from app.models.user import User
 from app.models.user_global_llm_grant import UserGlobalLLMGrant
 from app.models.user_llm_config import UserLLMConfig
+from app.models.user_memory import UserMemory
 from app.models.web_ingestion_job import WebIngestionJob
 
 __all__ = [
@@ -39,4 +40,5 @@ __all__ = [
     "AuditLog",
     "InviteCode",
     "WebIngestionJob",
+    "UserMemory",
 ]

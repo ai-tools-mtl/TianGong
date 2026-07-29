@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { ChevronRight, Wrench } from 'lucide-react'
+import { Brain, ChevronRight, Wrench } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
@@ -208,6 +208,26 @@ export default function SettingsPage() {
               <p className="text-[15px] font-medium">我的技能</p>
               <p className="text-[12px] text-muted-foreground">
                 管理 Agent Skills（SKILL.md），支持导入 zip
+              </p>
+            </div>
+          </div>
+          <ChevronRight className="size-[18px] text-muted-foreground" />
+        </Link>
+
+        {/* 我的记忆 — 入口卡片（用户绑定长期记忆管理） */}
+        <Link
+          href="/settings/memories"
+          className="flex items-center justify-between rounded-2xl border border-black/[0.07] bg-card p-5 transition-colors hover:bg-black/[0.02] dark:border-white/10 dark:hover:bg-white/[0.03]"
+          style={{ boxShadow: 'var(--shadow-card)' }}
+        >
+          <div className="flex items-center gap-3">
+            <div className="flex size-9 items-center justify-center rounded-xl bg-black/[0.04] dark:bg-white/[0.06]">
+              <Brain className="size-[18px]" />
+            </div>
+            <div>
+              <p className="text-[15px] font-medium">我的记忆</p>
+              <p className="text-[12px] text-muted-foreground">
+                管理 Agent 学到的偏好与约定
               </p>
             </div>
           </div>

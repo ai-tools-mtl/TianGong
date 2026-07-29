@@ -4,6 +4,9 @@ import type {
   ListModelsResult,
   LoginRequest,
   Member,
+  Memory,
+  MemoryCreate,
+  MemoryUpdate,
   MyGrant,
   Project,
   ProjectCreate,
@@ -691,6 +694,16 @@ export const api = {
     }
     return res.json() as Promise<Skill>
   },
+
+  // ── 用户绑定长期记忆 ──
+  listMemories: (source?: string) =>
+    request<Memory[]>('/memories' + (source ? `?source=${source}` : '')),
+  createMemory: (data: MemoryCreate) =>
+    request<Memory>('/memories', { method: 'POST', body: JSON.stringify(data) }),
+  updateMemory: (id: string, data: MemoryUpdate) =>
+    request<Memory>(`/memories/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteMemory: (id: string) =>
+    request<{ ok: boolean }>(`/memories/${id}`, { method: 'DELETE' }),
 }
 
 /**

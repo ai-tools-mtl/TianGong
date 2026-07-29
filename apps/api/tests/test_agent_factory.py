@@ -112,13 +112,12 @@ def test_build_agent_assembly_args(db_session, monkeypatch):
     """验证 build_agent 把 tools/skills/store/backend 传给 create_deep_agent。
 
     装配逻辑结构断言（不依赖 deepagents 实际行为）：
-    - tools 包含 rag_search_tool
+    - tools 来自 create_agent_tools 工厂（rag_search + save_memory）
     - skills 是 list（来自 build_agent_skill_sources）
     - store 是 MinIOSkillStore
     - backend 是 StoreBackend，包装同一 store
     """
     from app.ai import agent as agent_mod
-    from app.ai.tools import rag_search_tool
     from app.services.llm_config_service import ResolvedChatConfig
     from app.skills.storage import MinIOSkillStore
     from deepagents.backends import StoreBackend
@@ -162,9 +161,10 @@ def test_build_agent_assembly_args(db_session, monkeypatch):
     user_id = uuid.uuid4()
     agent_mod.build_agent(db_session, llm_config=config, user_id=user_id)
 
-    # tools 包含 rag_search_tool
+    # tools 来自 create_agent_tools 工厂（rag_search + save_memory）
     tool_names = [getattr(t, "name", None) for t in captured["tools"]]
     assert "rag_search" in tool_names
+    assert "save_memory" in tool_names
     # skills 是 list（空也合法——无可见 skill 时 build_agent_skill_sources 返回 []）
     assert isinstance(captured["skills"], (list, type(None)))
     # store 是 MinIOSkillStore

@@ -10,6 +10,7 @@ import { api } from '@/lib/api'
 import type {
   KnowledgeFile,
   KnowledgeReview,
+  Memory,
   Project,
   ProjectCreate,
   Section,
@@ -929,5 +930,43 @@ export function useListGlobalChatModels() {
       api_key: string
       provider_template_id?: string | null
     }) => api.listGlobalChatModels(data),
+  })
+}
+
+// ── 用户绑定长期记忆 ──
+
+/** 当前用户的记忆列表。source 留空查全部。 */
+export function useMemories(source?: 'agent' | 'manual') {
+  return useQuery<Memory[]>({
+    queryKey: ['memories', source],
+    queryFn: () => api.listMemories(source),
+  })
+}
+
+/** 新增记忆。成功后失效记忆列表。 */
+export function useCreateMemory() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (vars: { content: string; source?: 'agent' | 'manual' }) =>
+      api.createMemory({ content: vars.content, source: vars.source }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['memories'] }),
+  })
+}
+
+/** 修改记忆内容。成功后失效记忆列表。 */
+export function useUpdateMemory(id: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (content: string) => api.updateMemory(id, { content }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['memories'] }),
+  })
+}
+
+/** 删除记忆。成功后失效记忆列表。 */
+export function useDeleteMemory() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.deleteMemory(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['memories'] }),
   })
 }

@@ -76,10 +76,10 @@ def engine():
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
-    # 排除原 knowledge_chunks(含 Vector 列,sqlite 建不了)
+    # 排除原表（含 Vector/HalfVec 列，sqlite 建不了）
     tables = {
         name: t for name, t in Base.metadata.tables.items()
-        if name != "knowledge_chunks"
+        if name not in ("knowledge_chunks", "user_memories")
     }
     for t in tables.values():
         t.create(eng, checkfirst=True)
@@ -112,8 +112,23 @@ def engine():
     )
     kc_compat.create(eng, checkfirst=True)
 
+    # user_memories 兼容版：与生产同名列。
+    # embedding 用 JSON 替代 pgvector.HalfVec（SQLite 不支持）——测试不关心向量内容。
+    um_compat = sa.Table(
+        "user_memories", sa.MetaData(),
+        sa.Column("id", sa.String(36), primary_key=True),
+        sa.Column("user_id", sa.String(36), nullable=False),
+        sa.Column("content", sa.Text),
+        sa.Column("embedding", sa.JSON),
+        sa.Column("source", sa.String(20), default="agent"),
+        sa.Column("created_at", sa.DateTime(timezone=True)),
+        sa.Column("updated_at", sa.DateTime(timezone=True)),
+    )
+    um_compat.create(eng, checkfirst=True)
+
     yield eng
 
+    um_compat.drop(eng, checkfirst=True)
     kc_compat.drop(eng, checkfirst=True)
     for t in reversed(list(tables.values())):
         t.drop(eng, checkfirst=True)

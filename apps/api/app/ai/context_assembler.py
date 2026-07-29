@@ -20,7 +20,9 @@ SYSTEM_PROMPT = """你是「天工」，一个专利交底书撰写助手。你�
 2. 引导用户补充关键技术细节，不要替用户编造
 3. 输出内容用 Markdown 格式（标题用 ##/###，可用列表）
 4. 保持客观准确，不夸大技术效果
-5. 如果用户的信息不完整，主动追问"""
+5. 如果用户的信息不完整，主动追问
+6. 当用户表达了值得长期记住的偏好、事实或领域约定时，调用 save_memory 工具保存。
+   只记跨项目稳定的信息（如「偏好简洁风格」「我做新能源电池」），不记项目内具体决策。"""
 
 
 def assemble_messages(
@@ -135,6 +137,16 @@ def _format_metadata(metadata: dict | None) -> str:
     return "\n".join(lines)
 
 
+def _search_user_memories(db, user_id, query: str):
+    """检索用户记忆，失败时静默返回空（不阻断 prompt 装配）。"""
+    try:
+        from app.services.memory_service import search_memories
+        return search_memories(db, user_id=user_id, query=query)
+    except Exception:
+        # embedding/检索失败不阻断主流程，记忆层留空
+        return []
+
+
 def build_system_prompt(db, section: Section) -> str:
     """装配动态 system prompt（agent loop 路线用，spec §3.1.1）。
 
@@ -161,6 +173,16 @@ def build_system_prompt(db, section: Section) -> str:
     if written:
         parts.append("# 已完成章节内容（请保持术语、技术方案一致性）")
         parts.append(written)
+
+    # 【新增】用户长期记忆层（检索注入，纯检索式策略）
+    # 用章节标题 + 目标做检索 query，覆盖本章节最可能相关的用户偏好/事实/know-how
+    # project 已在上方 fetch（L164），直接复用其 user_id，避免重复查询。
+    if project.user_id is not None:
+        memories = _search_user_memories(db, project.user_id, f"{section.title} {sp.goal}")
+        if memories:
+            memory_lines = "\n".join(f"- {m.content}" for m in memories)
+            parts.append("# 关于这位用户的长期记忆（请遵循其偏好与约定）")
+            parts.append(memory_lines)
 
     # 章节策略层（底部偏上，当前章节聚焦）
     parts.append("# 当前正在撰写章节")
