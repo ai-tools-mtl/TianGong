@@ -52,3 +52,13 @@ def on_startup():
             loguru.logger.info(f"恢复扫描：重新入队 {n_web} 个网页摄入任务")
     except Exception as e:
         loguru.logger.exception(f"网页摄入恢复扫描失败（不阻塞启动）：{e}")
+
+    # 知识文件向量化恢复（plan async-knowledge-upload：孤儿 pending/processing 重入队）
+    try:
+        from app.services.knowledge_service import recover_stale_files
+
+        n_kf = recover_stale_files()
+        if n_kf:
+            loguru.logger.info(f"恢复扫描：重新入队 {n_kf} 个知识文件向量化任务")
+    except Exception as e:
+        loguru.logger.exception(f"知识文件向量化恢复扫描失败（不阻塞启动）：{e}")

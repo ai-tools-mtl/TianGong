@@ -141,11 +141,16 @@ def delete_admin_template(
 
 @router.post("/admin/knowledge/upload")
 async def upload_global(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db),
 ):
-    """admin 直传全局库(免审,全员立即可检索)。"""
+    """admin 直传全局库(免审,全员立即可检索)。
+
+    异步向量化:落库后立即返回(status=pending),向量化在 BackgroundTasks 后台跑。
+    前端轮询文件状态 pending→processing→ready。
+    """
     from app.parsing.dispatcher import extract_text as _extract
 
     if not file.filename:
@@ -160,8 +165,11 @@ async def upload_global(
         filename=file.filename, content=content,
         mime=file.content_type or "application/octet-stream", text=text,
     )
+    # 向量化在响应返回后的后台任务执行(自开 session),不阻塞本请求
+    background_tasks.add_task(knowledge_service.run_embed_job_standalone, str(kf.id))
     return {
         "file_id": str(kf.id), "scope": kf.scope, "source_type": kf.source_type,
+        "status": kf.status, "stage": kf.stage,
     }
 
 

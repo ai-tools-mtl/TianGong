@@ -8,6 +8,7 @@ import { PageHeader, PageShell } from '@/components/page-shell'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { KnowledgeFileStatus } from '@/components/knowledge-file-status'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { api } from '@/lib/api'
 import {
@@ -58,6 +59,7 @@ function KnowledgeFileCard({
           <span>{_formatSize(kf.size)}</span>
           <span>{new Date(kf.created_at).toLocaleDateString('zh-CN')}</span>
         </div>
+        <KnowledgeFileStatus kf={kf} />
         <div className="flex items-center gap-2 pt-1">
           <Button
             variant="ghost" size="xs" asChild
@@ -92,7 +94,7 @@ export function KnowledgeManager() {
     const file = e.target.files?.[0]
     if (!file) return
     upload.mutate(file, {
-      onSuccess: () => toast.success('已上传到个人库'),
+      onSuccess: () => toast.success('已上传，正在向量化（可在列表查看进度）'),
       onError: (err) => toast.error((err as { message?: string })?.message ?? '上传失败'),
     })
     if (fileRef.current) fileRef.current.value = ''

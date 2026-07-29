@@ -11,6 +11,7 @@ import { WebIngestDialog } from '@/components/web-ingest-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { KnowledgeFileStatus } from '@/components/knowledge-file-status'
 import {
   Dialog,
   DialogContent,
@@ -51,7 +52,7 @@ export default function AdminKnowledgePage() {
     const file = e.target.files?.[0]
     if (!file) return
     upload.mutate(file, {
-      onSuccess: () => toast.success('已上传到全局库（免审，全员可检索）'),
+      onSuccess: () => toast.success('已上传，正在向量化（可在列表查看进度）'),
       onError: (err) =>
         toast.error((err as { message?: string })?.message ?? '上传失败'),
     })
@@ -153,6 +154,7 @@ function GlobalKnowledgeCard({
           <span>{formatSize(kf.size)}</span>
           <span>{new Date(kf.created_at).toLocaleDateString('zh-CN')}</span>
         </div>
+        <KnowledgeFileStatus kf={kf} />
         <div className="flex items-center gap-2 pt-1">
           <Button variant="ghost" size="xs" asChild>
             <a href={api.knowledgeFileUrl(kf.id)} download>

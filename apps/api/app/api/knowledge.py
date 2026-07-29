@@ -10,7 +10,7 @@
 
 import uuid as _uuid
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -76,16 +76,26 @@ def _file_out(kf: KnowledgeFile) -> dict:
         "source_type": kf.source_type,
         "url": kf.url,  # 网页来源的原 URL(external_web 才有值,其他为 None)
         "created_at": kf.created_at.isoformat(),
+        # 异步向量化进度字段（前端进度条用）
+        "status": kf.status,
+        "stage": kf.stage,
+        "error_message": kf.error_message,
+        "completed_at": kf.completed_at.isoformat() if kf.completed_at else None,
     }
 
 
 @router.post("/knowledge/upload")
 async def upload_personal(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """user 上传外部素材(docx/pdf)到个人库。"""
+    """user 上传外部素材(docx/pdf)到个人库。
+
+    异步向量化:落库后立即返回(status=pending),向量化在 BackgroundTasks 后台跑。
+    前端轮询文件状态 pending→processing→ready。
+    """
     if not file.filename:
         raise ValidationError("缺少文件名")
     content = await file.read()
@@ -98,6 +108,8 @@ async def upload_personal(
         filename=file.filename, content=content,
         mime=file.content_type or "application/octet-stream", text=text,
     )
+    # 向量化在响应返回后的后台任务执行(自开 session),不阻塞本请求
+    background_tasks.add_task(knowledge_service.run_embed_job_standalone, str(kf.id))
     return _file_out(kf)
 
 

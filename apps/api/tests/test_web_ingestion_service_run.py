@@ -24,6 +24,19 @@ def _patch_session_local(engine, monkeypatch):
     monkeypatch.setattr(db_module, "SessionLocal", sessionmaker(bind=engine))
 
 
+@pytest.fixture(autouse=True)
+def _no_spawn_embed(monkeypatch):
+    """跳过 crawl 流末尾的向量化 spawn（plan async-knowledge-upload 新增）。
+
+    run_job 在每页 upload 后会 spawn_background_task(run_embed_job_standalone)，
+    测试不关心向量化（upload 已 mock），且真实线程池会干扰断言，故桩掉为 no-op。
+    """
+    monkeypatch.setattr(
+        "app.services.web_ingestion_service.spawn_background_task",
+        lambda *a, **kw: None,
+    )
+
+
 def _make_page(i: int = 1) -> ScrapeResult:
     return ScrapeResult(
         url=f"https://example.com/p{i}", title=f"页{i}",

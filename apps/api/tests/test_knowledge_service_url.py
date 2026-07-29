@@ -19,7 +19,7 @@ def _mock_user(uid=None):
     return user
 
 
-@patch("app.services.knowledge_service._ingest_chunks")
+@patch("app.services.knowledge_service._write_chunks_unembedded")
 def test_upload_external_with_url(mock_ingest, db_session):
     """upload_external 的 url 参数被写入 KnowledgeFile.url。"""
     storage = _mock_storage()
@@ -33,7 +33,7 @@ def test_upload_external_with_url(mock_ingest, db_session):
     assert kf.url == "https://example.com/page"
 
 
-@patch("app.services.knowledge_service._ingest_chunks")
+@patch("app.services.knowledge_service._write_chunks_unembedded")
 def test_upload_external_without_url(mock_ingest, db_session):
     """url 默认 None,不影响现有 docx/pdf 上传。"""
     storage = _mock_storage()
@@ -46,7 +46,7 @@ def test_upload_external_without_url(mock_ingest, db_session):
     assert kf.url is None
 
 
-@patch("app.services.knowledge_service._ingest_chunks")
+@patch("app.services.knowledge_service._write_chunks_unembedded")
 def test_upload_to_global_with_url(mock_ingest, db_session):
     """upload_to_global 的 url 参数被写入。"""
     storage = _mock_storage()

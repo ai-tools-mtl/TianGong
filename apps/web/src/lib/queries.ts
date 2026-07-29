@@ -259,10 +259,17 @@ export function useDetachProjectTag() {
 }
 
 // ── 知识库(三域)──
+// 有未完成向量化的文件（pending/processing/failed）时每 3s 轮询，推进进度展示；
+// 全部 ready 则停止轮询（省请求）。plan async-knowledge-upload。
+function _hasPendingFiles(files: KnowledgeFile[] | undefined): boolean {
+  return !!files?.some((f) => f.status !== 'ready')
+}
+
 export function usePersonalKnowledge() {
   return useQuery<KnowledgeFile[]>({
     queryKey: queryKeys.knowledgePersonal,
     queryFn: () => api.listPersonalKnowledge(),
+    refetchInterval: (query) => (_hasPendingFiles(query.state.data) ? 3000 : false),
   })
 }
 
@@ -270,6 +277,7 @@ export function useGlobalKnowledge() {
   return useQuery<KnowledgeFile[]>({
     queryKey: queryKeys.knowledgeGlobal,
     queryFn: () => api.listGlobalKnowledge(),
+    refetchInterval: (query) => (_hasPendingFiles(query.state.data) ? 3000 : false),
   })
 }
 

@@ -4,7 +4,7 @@ from pgvector.sqlalchemy import HALFVEC as HalfVec
 from sqlalchemy import Boolean, Float, ForeignKey, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.base import Base, IdMixin, JSONType, TimestampMixin
+from app.models.base import Base, IdMixin, JSONType, TimestampMixin, TSVectorType
 
 # bge-m3（统一 embedding 微服务）输出 1024 维
 EMBEDDING_DIM = 1024
@@ -29,7 +29,8 @@ class KnowledgeChunk(Base, IdMixin, TimestampMixin):
     content: Mapped[str] = mapped_column(Text)
     embedding = mapped_column(HalfVec(EMBEDDING_DIM), nullable=True)
     # BM25 关键词路召回用（G3）：PG 层是 tsvector，SQLite 层用 Text 占位
-    tsv: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 用 TSVectorType 跨方言类型，避免 PG INSERT 时 VARCHAR cast 与 tsvector 列冲突
+    tsv: Mapped[str | None] = mapped_column(TSVectorType, nullable=True)
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSONType, nullable=True)
     # 关联源文件(导入类有,自产归档类可为 NULL)
     file_id: Mapped[uuid.UUID | None] = mapped_column(

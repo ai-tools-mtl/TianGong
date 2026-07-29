@@ -420,6 +420,11 @@ export interface KnowledgeFile {
   source_type: string // external_pdf / external_docx / disclosure_export
   url?: string | null // 网页来源的原 URL(external_web 才有值)
   created_at: string
+  // 异步向量化进度（plan async-knowledge-upload）
+  status: 'pending' | 'processing' | 'ready' | 'failed'
+  stage: 'uploaded' | 'embedding' | 'done' | null
+  error_message: string | null
+  completed_at: string | null
 }
 
 export interface KnowledgeReview {

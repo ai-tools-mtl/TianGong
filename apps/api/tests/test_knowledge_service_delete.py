@@ -13,8 +13,8 @@ from app.services import knowledge_service
 def _mock_ingest(monkeypatch):
     """跳过 chunk 入库的 embedding 调用(SQLite 测试库不跑 pgvector)。"""
     monkeypatch.setattr(
-        "app.services.knowledge_service._ingest_chunks",
-        lambda *args, **kwargs: None,
+        "app.services.knowledge_service._write_chunks_unembedded",
+        lambda *args, **kwargs: [],
     )
 
 

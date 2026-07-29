@@ -294,6 +294,10 @@ def _scrape_sync(
             mime="text/markdown", text=filtered.markdown, url=url,
             source_type_override="external_web",
         )
+    # 异步向量化：scrape 端点是同步路由，用 spawn_background_task 提交后台任务
+    # （BackgroundTasks 仅 async 路由可用）。自开 session，不阻塞本调用。
+    # spawn_background_task 在文件中部已 import（顶部延迟 import）
+    spawn_background_task(knowledge_service.run_embed_job_standalone, str(kf.id))
     return kf
 
 
@@ -429,6 +433,9 @@ def _ingest_crawl_pages(db, *, job, pages, config) -> None:
                     mime="text/markdown", text=filtered.markdown, url=page.url,
                     source_type_override="external_web",
                 )
+            # 异步向量化：run_job 已在后台线程，但 embed 仍耗时，再 spawn 独立任务
+            # 避免单页向量化阻塞整站抓取流程（自开 session）。
+            spawn_background_task(knowledge_service.run_embed_job_standalone, str(kf.id))
             file_ids.append(str(kf.id))
         except Exception:
             # 单页入库失败不影响其他页(对齐 spec:不引入 partial 状态)

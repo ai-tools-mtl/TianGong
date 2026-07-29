@@ -20,7 +20,7 @@ def fake_embed(monkeypatch):
         "app.rag.embedding.embed_texts",
         lambda texts: [[0.0] * 2048 for _ in texts],
     )
-    monkeypatch.setattr(ks, "_ingest_chunks", lambda *a, **kw: None)
+    monkeypatch.setattr(ks, "_write_chunks_unembedded", lambda *a, **kw: [])
     # chunk 批量更新也桩掉(同因:SQLite 无 knowledge_chunks 表)
     monkeypatch.setattr(rs, "_update_chunks_scope", lambda *a, **kw: None)
 

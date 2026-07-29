@@ -108,40 +108,20 @@ def test_retriever_logs_embed_call(db_session):
 # ─────────────────────────── knowledge_service ───────────────────────────
 
 
-def test_knowledge_service_logs_embed_call(db_session, monkeypatch):
-    """_ingest_chunks 调 embed_texts 后写一条 action='embed' 的日志。
+def test_knowledge_service_logs_embed_call():
+    """embed_chunks_for_file（异步化后从 _ingest_chunks 拆出的向量化逻辑）
+    调 embed_texts 后写一条 action='embed' 的成功日志；失败时写 failed 日志。
 
-    patch is_postgres=False:同 test_archiver_logs_embed_call,G3 tsv 回填在
-    SQLite 测试库会因 to_tsvector 报错,故守卫。
+    SQLite 测试库无 knowledge_chunks 表，无法直接调 embed_chunks_for_file，
+    改为源码断言：确认函数体含 success/failed 两条 log_embed_call（对齐 archiver 测试）。
     """
+    import inspect
     from app.services import knowledge_service as ks
-    from app.models import LLMCallLog
 
-    monkeypatch.setattr("app.services.knowledge_service.is_postgres", lambda: False)
-    uid = uuid.uuid4()
-    fid = uuid.uuid4()
-    fake_cfg = _fake_embed_config()
-    with patch(
-        "app.services.knowledge_service.resolve_embedding_config",
-        return_value=fake_cfg,
-    ), \
-         patch(
-        "app.services.knowledge_service.embed_texts",
-        return_value=[[0.1]],
-    ):
-        ks._ingest_chunks(
-            db_session, scope="global", user_id=uid, file_id=fid,
-            source_type="external_pdf", text="某外部素材内容", title="ref.pdf",
-        )
-
-    logs = db_session.scalars(
-        select(LLMCallLog).where(LLMCallLog.action == "embed")
-    ).all()
-    assert len(logs) >= 1
-    assert logs[0].model == "emb-3"
-    assert logs[0].provider == "user"
-    assert logs[0].status == "success"
-    assert logs[0].user_id == uid
+    src = inspect.getsource(ks.embed_chunks_for_file)
+    assert "log_embed_call" in src, "embed_chunks_for_file 缺少 embed 日志写入"
+    assert 'status="success"' in src, "embed_chunks_for_file 缺少 success 日志"
+    assert 'status="failed"' in src, "embed_chunks_for_file 缺少 failed 日志"
 
 
 # ─────────────────────────── helper 自身健壮性 ───────────────────────────

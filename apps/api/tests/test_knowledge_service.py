@@ -16,11 +16,12 @@ from app.services import knowledge_service as ks
 
 @pytest.fixture
 def fake_embed(monkeypatch):
-    """embedding 返回固定 2048 维零向量,不真实调智谱。
+    """embedding 返回固定零向量,不真实调 embedding 服务。
 
-    同时桩掉 knowledge_service._ingest_chunks:SQLite 测试库跳过
-    knowledge_chunks 表(pgvector Vector 不支持),chunk 写入走 PG 集成验证。
-    本测试套只验 KnowledgeFile/Review 的业务逻辑。
+    异步向量化后(plan async-knowledge-upload)：upload_external/upload_to_global 只落库
+    (写空 embedding 的 chunk),不再在请求内 embed。这里桩掉 _write_chunks_unembedded:
+    SQLite 测试库跳过 knowledge_chunks 表(pgvector Vector 不支持),chunk 写入走 PG 集成验证。
+    本测试套只验 KnowledgeFile/Review 的业务逻辑 + 异步落库后的状态字段。
     """
     dim = 2048
 
@@ -31,13 +32,14 @@ def fake_embed(monkeypatch):
     # 桩掉 chunk 写入(表在 SQLite 不存在),仅记录调用参数供断言
     ingested: list[dict] = []
 
-    def _fake_ingest(db, *, scope, user_id, file_id, source_type, text, title):
+    def _fake_write(db, *, scope, user_id, file_id, source_type, text, title):
         ingested.append({
             "scope": scope, "file_id": file_id,
             "source_type": source_type, "text": text,
         })
+        return []  # 不真实写 chunk
 
-    monkeypatch.setattr(ks, "_ingest_chunks", _fake_ingest)
+    monkeypatch.setattr(ks, "_write_chunks_unembedded", _fake_write)
     return {"ingested": ingested}
 
 

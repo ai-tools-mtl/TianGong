@@ -8,13 +8,20 @@
 上报(关键约束 2):submit_for_review 建 KnowledgeReview(pending),
   admin 审核在 review_service(T10)处理。
 
-chunk 写入复用 chunker + embedding。注意:SQLite 测试库跳过
-knowledge_chunks 表,本模块的 chunk 写入在 PG 集成验证。
+异步向量化(plan async-knowledge-upload):
+- upload_external / upload_to_global 只做落库(写空 embedding 的 chunk),立即返回
+  (file.status=pending)。向量化交给后台 run_embed_job_standalone(自开 session)。
+- 调用方(文件上传端点 / web_ingestion)负责 spawn 后台任务。
+- chunk 写入复用 chunker + embedding。注意:SQLite 测试库跳过
+  knowledge_chunks 表,本模块的 chunk 写入在 PG 集成验证。
 """
 
 import uuid
+from datetime import datetime, timezone
 
-from sqlalchemy import select, text
+from loguru import logger
+from sqlalchemy import select
+from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
 from app.core.database import is_postgres
@@ -33,8 +40,10 @@ def upload_to_global(
     url: str | None = None,
     source_type_override: str | None = None,
 ) -> KnowledgeFile:
-    """admin 直传全局库。生成 file + chunk(scope=global),全员可检索。
+    """admin 直传全局库。落库 file + 空 embedding 的 chunk(scope=global)。
 
+    异步向量化:本函数只落库(status=pending, stage=uploaded),不调 embed_texts。
+    调用方负责 spawn run_embed_job_standalone 做后台向量化。
     全局库去重:按 content_hash(SHA256)查重,已存在则返回已有记录,
     不重复存储/向量化(防 admin 反复上传同一文件导致检索结果重复)。
     """
@@ -62,10 +71,11 @@ def upload_to_global(
         size=len(content), source_type=source_type,
         content_hash=content_hash,
         url=url,
+        status="pending", stage="uploaded",
     )
     db.add(kf)
     db.flush()  # 让 kf.id 就位
-    _ingest_chunks(
+    _write_chunks_unembedded(
         db, scope="global", user_id=uploader.id, file_id=kf.id,
         source_type=source_type, text=text, title=filename,
     )
@@ -80,7 +90,11 @@ def upload_external(
     url: str | None = None,
     source_type_override: str | None = None,
 ) -> KnowledgeFile:
-    """user 上传外部素材进个人库。scope=personal,仅本人可检索。"""
+    """user 上传外部素材进个人库。落库 file + 空 embedding 的 chunk(scope=personal)。
+
+    异步向量化:本函数只落库(status=pending, stage=uploaded),不调 embed_texts。
+    调用方负责 spawn run_embed_job_standalone 做后台向量化。
+    """
     source_type = source_type_override or _source_type_for(filename)
     object_key = f"personal/{user.id}/{uuid.uuid4()}.{_ext(filename)}"
     storage.put("personal", object_key, content, mime)
@@ -93,10 +107,11 @@ def upload_external(
         size=len(content), source_type=source_type,
         content_hash=hashlib.sha256(content).hexdigest(),
         url=url,
+        status="pending", stage="uploaded",
     )
     db.add(kf)
     db.flush()
-    _ingest_chunks(
+    _write_chunks_unembedded(
         db, scope="personal", user_id=user.id, file_id=kf.id,
         source_type=source_type, text=text, title=filename,
     )
@@ -333,7 +348,7 @@ def update_chunk(
     if is_postgres() and needs_tsv_regen:
         text_for_tsv = chunk.edited_text or chunk.content
         extra = " ".join((chunk.keywords or []) + (chunk.questions or []))
-        db.execute(text(
+        db.execute(sa_text(
             "UPDATE knowledge_chunks SET tsv = to_tsvector('simple', :txt) WHERE id = :cid"
         ), {"txt": text_for_tsv + " " + extra, "cid": str(chunk.id)})
         db.commit()
@@ -342,55 +357,174 @@ def update_chunk(
     return chunk
 
 
-# ────────────────────────── 内部辅助 ──────────────────────────
+# ────────────────────────── 内部辅助(落库/embed 分离) ──────────────────────────
 
 
-def _ingest_chunks(
+def _write_chunks_unembedded(
     db: Session, *, scope: str, user_id, file_id, source_type: str,
     text: str, title: str,
-) -> None:
-    """分块 + 向量化 + 写 chunk(关联 file)。
+) -> list[KnowledgeChunk]:
+    """分块 + 写 chunk(embedding=None)+ tsv。不调 embed_texts,同步快。
 
-    向量化配置由 user_id 内部解析（断链修复：embed 真用自定义/全局/env 配置）。
-    无可用配置时跳过向量化但 chunk 仍写入（embedding=None），检索时该 chunk 不命中。
+    异步向量化:向量化交给 embed_chunks_for_file / run_embed_job_standalone 后台做。
+    返回写入的 chunk 列表(embedding 待填)。
     """
     chunks = chunk_sections([{"key": None, "title": title, "content": text}])
     if not chunks:
-        return
-    embed_config = resolve_embedding_config(db, user_id=user_id)
-    if embed_config is None:
-        # 无 LLM 配置：chunk 仍入库（embedding=None），该 chunk 不参与向量检索
-        vectors: list[list[float] | None] = [None] * len(chunks)
-    else:
-        try:
-            vectors = embed_texts([c.content for c in chunks], embed_config=embed_config)
-        except Exception:
-            # D7：embed 失败也记一条日志（仅元数据），再向上抛
-            log_embed_call(
-                db, user_id=user_id, model=embed_config.model,
-                provider=embed_config.source, status="failed",
-            )
-            raise
-        # D7：写 embedding 调用日志（让 admin 统计区分 chat/embedding）
-        log_embed_call(
-            db, user_id=user_id, model=embed_config.model,
-            provider=embed_config.source, status="success",
-        )
-    for c, vec in zip(chunks, vectors, strict=False):
-        db.add(KnowledgeChunk(
+        return []
+    written: list[KnowledgeChunk] = []
+    for c in chunks:
+        chunk = KnowledgeChunk(
             user_id=user_id, scope=scope, file_id=file_id,
             source_type=source_type, source_id=file_id,
             source_section_key=c.section_key, chunk_index=c.chunk_index,
-            content=c.content, embedding=vec,
+            content=c.content, embedding=None,  # 待后台 embed 填充
             metadata_={"title": title},
-        ))
+        )
+        db.add(chunk)
+        written.append(chunk)
 
-    # G3：生成 tsv（仅 PG）
+    # G3：生成 tsv（仅 PG）；embedding 此时为空，但 tsv 不依赖 embedding
     if is_postgres() and file_id:
-        db.execute(text(
+        db.execute(sa_text(
             "UPDATE knowledge_chunks SET tsv = to_tsvector('simple', coalesce(content, '')) "
             "WHERE tsv IS NULL AND file_id = :fid"
         ), {"fid": str(file_id)})
+    return written
+
+
+def embed_chunks_for_file(db: Session, *, file_id) -> int:
+    """对该 file 的所有 embedding 为 None 的 chunk 批量向量化并回填。
+
+    长耗时操作，由 run_embed_job_standalone 在后台调用。返回已向量化的 chunk 数。
+    向量化配置由 file.uploader_id 解析。无配置或 chunk 为空时返回 0。
+    """
+    fid = uuid.UUID(str(file_id)) if not isinstance(file_id, uuid.UUID) else file_id
+    kf = db.get(KnowledgeFile, fid)
+    if kf is None:
+        raise NotFoundError("文件不存在")
+
+    chunks = db.execute(
+        select(KnowledgeChunk)
+        .where((KnowledgeChunk.file_id == fid) & (KnowledgeChunk.embedding.is_(None)))
+    ).scalars().all()
+    if not chunks:
+        return 0
+
+    embed_config = resolve_embedding_config(db, user_id=kf.uploader_id)
+    if embed_config is None:
+        # 无配置：chunk 保持 embedding=None，不参与向量检索。视为完成（无可做的事）。
+        return 0
+
+    try:
+        vectors = embed_texts([c.content for c in chunks], embed_config=embed_config)
+    except Exception:
+        # D7：embed 失败也记一条日志（仅元数据），再向上抛（由 standalone 兜底写 failed）
+        log_embed_call(
+            db, user_id=kf.uploader_id, model=embed_config.model,
+            provider=embed_config.source, status="failed",
+        )
+        raise
+    # D7：写 embedding 调用日志（让 admin 统计区分 chat/embedding）
+    log_embed_call(
+        db, user_id=kf.uploader_id, model=embed_config.model,
+        provider=embed_config.source, status="success",
+    )
+    for c, vec in zip(chunks, vectors, strict=False):
+        c.embedding = vec
+    db.commit()
+    return len(chunks)
+
+
+# ── 异步向量化后台任务(standalone session 模式，镜像 parse_service)──
+
+
+def run_embed_job_standalone(file_id: str) -> None:
+    """供 BackgroundTasks / spawn_background_task 调用：自开 session 执行向量化。
+
+    BackgroundTasks 在响应返回后才执行，此时请求作用域的 session 已关闭，
+    因此必须自己开一个独立 session（详见设计 P0 #6，与 parse_service 同模式）。
+    状态流转：置 processing/stage=embedding → embed → ready/stage=done/completed_at；
+              异常 → failed/error_message。幂等：已是 ready 则跳过。
+    """
+    try:
+        fid = uuid.UUID(file_id)
+    except (ValueError, TypeError):
+        logger.warning(f"run_embed_job_standalone 收到非法 file_id={file_id!r}，忽略")
+        return
+
+    from app.core.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        kf = db.get(KnowledgeFile, fid)
+        if kf is None:
+            logger.warning(f"run_embed_job_standalone: 文件 {file_id} 不存在，忽略")
+            return
+        if kf.status == "ready":
+            logger.info(f"向量化任务 {file_id[:8]}... 已是 ready，跳过")
+            return
+
+        kf.status = "processing"
+        kf.stage = "embedding"
+        db.commit()
+
+        n = embed_chunks_for_file(db, file_id=fid)
+        logger.info(f"向量化任务 {file_id[:8]}... 完成，{n} 个 chunk 已向量化")
+
+        kf.status = "ready"
+        kf.stage = "done"
+        kf.error_message = None
+        kf.completed_at = datetime.now(timezone.utc)
+        db.commit()
+    except Exception as e:
+        logger.exception(f"向量化任务 {file_id[:8]}... 失败：{e}")
+        try:
+            # 失败也回写状态（重新查，避免 session 脏）
+            kf = db.get(KnowledgeFile, fid)
+            if kf is not None:
+                kf.status = "failed"
+                kf.error_message = str(e)[:500]
+                db.commit()
+        except Exception:
+            logger.exception(f"向量化任务 {file_id[:8]}... 写 failed 状态也失败")
+    finally:
+        db.close()
+
+
+def recover_stale_files(stale_minutes: int = 10) -> int:
+    """启动恢复扫描：重启后重入队孤儿知识文件。
+
+    1) status="processing" —— 上次崩溃中断（崩溃时正在跑）。
+    2) status="pending" 且 created_at 早于 stale_minutes 分钟前 —— 队列卡住。
+
+    run_embed_job_standalone 自带幂等：已是 ready 则跳过。
+    返回重新入队的文件数。
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from sqlalchemy import or_, select
+
+    from app.core.background import spawn_background_task
+    from app.core.database import SessionLocal
+
+    db = SessionLocal()
+    count = 0
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=stale_minutes)
+        stmt = select(KnowledgeFile).where(
+            or_(
+                KnowledgeFile.status == "processing",
+                (KnowledgeFile.status == "pending") & (KnowledgeFile.created_at < cutoff),
+            )
+        )
+        files = list(db.scalars(stmt))
+        for kf in files:
+            spawn_background_task(run_embed_job_standalone, str(kf.id))
+            count += 1
+    finally:
+        db.close()
+    return count
 
 
 def _source_type_for(filename: str) -> str:
