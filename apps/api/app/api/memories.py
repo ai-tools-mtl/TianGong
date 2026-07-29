@@ -54,6 +54,7 @@ def create_memory(
         db, user_id=current_user.id, content=payload.content, source=payload.source
     )
     db.commit()
+    db.refresh(mem)  # expire_on_commit=False：需显式刷新拿 server_default 的 created_at/updated_at
     return _to_out(mem)
 
 
@@ -69,6 +70,7 @@ def update_memory(
         db, memory_id=_uuid.UUID(memory_id), user_id=current_user.id, content=payload.content
     )
     db.commit()
+    db.refresh(mem)  # 同上，updated_at 有 onupdate 也需刷新
     return _to_out(mem)
 
 

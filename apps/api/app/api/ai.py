@@ -565,6 +565,7 @@ def update_conversation(
         raise NotFoundError("会话不存在")
     conv.title = payload.title
     db.commit()
+    db.refresh(conv)  # expire_on_commit=False：需显式刷新拿 onupdate 的 updated_at
     return {
         "id": str(conv.id),
         "title": conv.title,
