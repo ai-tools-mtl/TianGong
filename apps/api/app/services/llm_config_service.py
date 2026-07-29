@@ -1,9 +1,13 @@
-"""LLM 配置服务：chat / embedding 独立解析 + 用户/全局配置管理。
+"""LLM 配置服务：chat 解析 + 用户/全局配置管理，embedding 走固定微服务。
 
-chat 解析（resolve_chat_config）与 embedding 解析（resolve_embedding_config）
-完全独立：各自的 source 取值、fallback 不互通（D4）。内部后台任务（archiver /
-retriever / knowledge_service / review / summary）通过 chat_source=None 自动
-解析路径调用（admin→global chat→env；非 admin→grant→global chat→最早 chat 配置→env）。
+chat 解析（resolve_chat_config）支持多源（全局/用户自配/env），由 chat_source 控制；
+内部后台任务（archiver / retriever / knowledge_service / review / summary）通过
+chat_source=None 走 fallback 自动解析（admin→global chat→env；非 admin→grant→
+global chat→最早 chat 配置→env）。
+
+embedding 解析（resolve_embedding_config）不再多源：统一走一个固定的 bge-m3 微服务
+（OpenAI 兼容协议），连接信息从环境变量读（embedding_base_url/embedding_model/
+embedding_api_key，见 core/config.py）。用户/admin 不可配 embedding。
 
 chat source 取值：
 - "global"：全局 chat Key（admin 免授权；非 admin 须有有效 grant）
@@ -12,9 +16,8 @@ chat source 取值：
 - None：内部 fallback 路径（见上）
 
 用户自定义配置 CRUD（list/create/update/delete_user_llm_config）只管 chat 配置；
-全局配置已拆成 chat / embedding 两套独立的 SystemSetting key
-（get/set_global_chat_settings、get/set_global_embedding_settings），admin 控制台
-GET/PUT /admin/llm-config 同步拆两套。
+全局配置只保留 chat 一套（get/set_global_chat_settings），admin 控制台
+GET/PUT /admin/llm-config 也只管 chat。
 """
 
 import time
@@ -27,7 +30,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import ForbiddenError, NotFoundError, ValidationError
 from app.core.security import decrypt_value, encrypt_value
-from app.models import SystemSetting, User, UserEmbeddingConfig, UserGlobalLLMGrant, UserLLMConfig
+from app.models import SystemSetting, User, UserGlobalLLMGrant, UserLLMConfig
 
 
 # ── 用户自定义 chat 配置（多配置 CRUD，Task 2.3）──
@@ -203,69 +206,44 @@ def test_llm_connection(
     base_url: str,
     api_key: str,
     model: str,
-    embedding_model: str | None = None,
-    scope: str = "all",  # "all"（chat+embedding，需 embedding_model）/ "chat"（只 chat）/ "embedding"（只 embedding）
+    embedding_model: str | None = None,  # 保留参数兼容调用点；embedding 已走固定服务，不再此处测
+    scope: str = "chat",  # 仅 chat；embedding 由独立微服务负责，不再经此函数测
 ) -> dict:
-    """测试 LLM 连通性。scope 控制测什么。不落库、不写 LLMCallLog。
+    """测试 chat LLM 连通性。不落库、不写 LLMCallLog。
 
-    - scope="all"：chat 必测；embedding_model 提供则一并测（兼容旧默认行为）。
-    - scope="chat"：只测 chat（忽略 embedding_model）。
-    - scope="embedding"：只测 embedding（model 参数当 embedding 模型名用）。
+    embedding 的连通性不再由本函数测（embedding 统一走固定 bge-m3 微服务，
+    无需在配置时测试）。scope/embedding_model 参数保留仅为避免动调用点签名，
+    内部一律按 chat 处理。
 
     返回 TestConnectionResult：
-      {ok, chat:{ok,latency_ms,sample,error}|None, embedding:{ok,latency_ms,dim,error}|None, error}
-    chat 与 embedding 独立 try/except，互不影响。
-    所有错误经 friendly_llm_error 友好化。
+      {ok, chat:{ok,latency_ms,sample,error}|None, embedding:None, error}
+    错误经 friendly_llm_error 友好化。
     """
     from langchain_core.messages import HumanMessage
-    from langchain_openai import ChatOpenAI, OpenAIEmbeddings
+    from langchain_openai import ChatOpenAI
 
     from app.ai.llm_errors import friendly_llm_error
 
-    # ---- chat（scope=all 或 chat 时测）----
-    chat = None
-    if scope in ("all", "chat"):
-        chat = {"ok": False, "latency_ms": None, "sample": None, "error": None}
-        try:
-            llm = ChatOpenAI(
-                model=model, base_url=base_url, api_key=api_key,
-                request_timeout=_TEST_TIMEOUT,
-            )
-            t0 = time.perf_counter()
-            resp = llm.invoke([HumanMessage(content="hi")])
-            chat["latency_ms"] = int((time.perf_counter() - t0) * 1000)
-            chat["ok"] = True
-            chat["sample"] = (resp.content or "")[:50]
-        except Exception as e:
-            chat["error"] = friendly_llm_error(e)
+    chat = {"ok": False, "latency_ms": None, "sample": None, "error": None}
+    try:
+        llm = ChatOpenAI(
+            model=model, base_url=base_url, api_key=api_key,
+            request_timeout=_TEST_TIMEOUT,
+        )
+        t0 = time.perf_counter()
+        resp = llm.invoke([HumanMessage(content="hi")])
+        chat["latency_ms"] = int((time.perf_counter() - t0) * 1000)
+        chat["ok"] = True
+        chat["sample"] = (resp.content or "")[:50]
+    except Exception as e:
+        chat["error"] = friendly_llm_error(e)
 
-    # ---- embedding（scope=embedding，或 scope=all 且 embedding_model 非空时测）----
-    # embedding scope 下 model 即 emb 模型名（无需另传 embedding_model）
-    embedding = None
-    emb_model = embedding_model if scope != "embedding" else model
-    if scope == "embedding" or (scope == "all" and emb_model):
-        embedding = {"ok": False, "latency_ms": None, "dim": None, "error": None}
-        try:
-            emb = OpenAIEmbeddings(
-                model=emb_model, base_url=base_url, api_key=api_key,
-                request_timeout=_TEST_TIMEOUT,
-            )
-            t0 = time.perf_counter()
-            vec = emb.embed_query("hi")
-            embedding["latency_ms"] = int((time.perf_counter() - t0) * 1000)
-            embedding["ok"] = True
-            embedding["dim"] = len(vec) if vec else None
-        except Exception as e:
-            embedding["error"] = friendly_llm_error(e)
-
-    tested = [x for x in (chat, embedding) if x is not None]
-    ok = all(x["ok"] for x in tested) if tested else False
-    first_err = next((x["error"] for x in tested if x["error"]), None)
+    ok = chat["ok"]
     return {
         "ok": ok,
         "chat": chat,
-        "embedding": embedding,
-        "error": None if ok else first_err,
+        "embedding": None,
+        "error": None if ok else chat["error"],
     }
 
 
@@ -399,188 +377,38 @@ def _get_chat_config_by_id(db: Session, *, user_id, config_id) -> UserLLMConfig 
     return cfg
 
 
-# ── embedding 解析（与 chat 完全独立，fallback 不互通，D4）──
+# ── embedding 解析（统一走固定 bge-m3 微服务，无多源）──
 
-def resolve_embedding_config(db: Session, *, user_id, embedding_source: str | None = None) -> ResolvedEmbeddingConfig | None:
-    """解析 embedding 配置。与 chat 完全独立（fallback 不互通，D4）。
+def resolve_embedding_config(
+    db: Session | None = None, *, user_id=None,
+    embedding_source: str | None = None,  # 保留参数兼容调用点；已无实际作用
+) -> ResolvedEmbeddingConfig:
+    """返回 embedding 配置。统一走固定的 bge-m3 微服务（OpenAI 兼容协议），
+    连接信息从环境变量读（embedding_base_url/embedding_model/embedding_api_key）。
 
-    embedding_source 取值：
-    - "global"：全局 embedding Key（admin 免授权；非 admin 须有效 grant）
-    - "custom-emb:{id}"：用户自配的指定 embedding 配置（越权 NotFound）
-    - "env"：env 兜底
-    - None：内部 fallback（admin→global emb→env；非 admin→grant→global emb→最早 emb 配置→env）
+    不再支持多源（全局/用户自配/env fallback），用户/admin 不可配 embedding。
+    db / user_id / embedding_source 参数保留仅为避免动 3 个内部调用方签名，
+    内部一律返回固定配置（永不为 None）。
     """
-    user = db.get(User, user_id)
-    if embedding_source is None:
-        return _resolve_embedding_fallback(db, user=user, user_id=user_id)
-
-    if embedding_source == "global":
-        if user and user.role == "admin":
-            return _build_global_embedding_config(db, source="admin")
-        grant = _get_active_grant(db, user_id)
-        if not grant:
-            raise ForbiddenError("未授权使用全局 embedding Key，请在设置中添加自定义配置")
-        return _build_global_embedding_config(db, source="global")
-
-    if embedding_source.startswith("custom-emb:"):
-        config_id = embedding_source[len("custom-emb:"):]
-        cfg = _get_embedding_config_by_id(db, user_id=user_id, config_id=config_id)
-        if cfg is None:
-            raise NotFoundError("embedding 配置不存在")
-        return ResolvedEmbeddingConfig(
-            base_url=cfg.base_url,
-            api_key=decrypt_value(cfg.api_key_encrypted),
-            model=cfg.model,
-            source="user",
-        )
-
-    if embedding_source == "env":
-        return _build_env_embedding_config()
-
-    raise ValidationError(f"无效的 embedding_source: {embedding_source}")
-
-
-def _resolve_embedding_fallback(db: Session, *, user, user_id) -> ResolvedEmbeddingConfig | None:
-    if user and user.role == "admin":
-        cfg = _build_global_embedding_config(db, source="admin")
-        if cfg:
-            return cfg
-        return _build_env_embedding_config()
-    grant = _get_active_grant(db, user_id)
-    if grant:
-        cfg = _build_global_embedding_config(db, source="global")
-        if cfg:
-            return cfg
-    emb_cfg = db.scalar(
-        select(UserEmbeddingConfig)
-        .where(UserEmbeddingConfig.user_id == user_id)
-        .order_by(UserEmbeddingConfig.created_at)
-    )
-    if emb_cfg:
-        return ResolvedEmbeddingConfig(
-            base_url=emb_cfg.base_url,
-            api_key=decrypt_value(emb_cfg.api_key_encrypted),
-            model=emb_cfg.model,
-            source="user",
-        )
-    return _build_env_embedding_config()
-
-
-def _build_global_embedding_config(db: Session, *, source: str) -> ResolvedEmbeddingConfig | None:
-    enabled_setting = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_enabled"))
-    if enabled_setting and enabled_setting.value and enabled_setting.value.get("enabled") is False:
-        return None
-    cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_embedding_config"))
-    if cfg and cfg.value and cfg.value.get("api_key_encrypted") and cfg.value.get("model"):
-        v = cfg.value
-        return ResolvedEmbeddingConfig(
-            base_url=v.get("base_url", ""),
-            api_key=decrypt_value(v["api_key_encrypted"]),
-            model=v.get("model", ""),
-            source=source,
-        )
-    return None
-
-
-def _build_env_embedding_config() -> ResolvedEmbeddingConfig | None:
     from app.core.config import get_settings
     s = get_settings()
-    if s.glm_api_key and s.glm_embedding_model:
-        return ResolvedEmbeddingConfig(
-            base_url=s.glm_base_url,
-            api_key=s.glm_api_key,
-            model=s.glm_embedding_model,
-            source="env",
-        )
-    return None
-
-
-def _get_embedding_config_by_id(db: Session, *, user_id, config_id) -> UserEmbeddingConfig | None:
-    try:
-        cid = uuid.UUID(config_id) if isinstance(config_id, str) else config_id
-    except (ValueError, AttributeError):
-        return None
-    cfg = db.get(UserEmbeddingConfig, cid)
-    if cfg is None or cfg.user_id != user_id:
-        return None
-    return cfg
+    return ResolvedEmbeddingConfig(
+        base_url=s.embedding_base_url,
+        api_key=s.embedding_api_key,
+        model=s.embedding_model,
+        source="service",
+    )
 
 
 def _get_active_grant(db: Session, user_id):
-    """共享辅助：查有效 grant（chat 与 embedding 共用一个 grant，D5）。"""
+    """共享辅助：查有效 grant（chat 的全局 Key 授权门禁用）。"""
     return db.scalar(select(UserGlobalLLMGrant).where(
         (UserGlobalLLMGrant.user_id == user_id) &
         (UserGlobalLLMGrant.revoked_at.is_(None))
     ))
 
 
-# ── embedding 配置 CRUD（镜像 chat）──
-
-def list_user_embedding_configs(db: Session, *, user_id) -> list[dict]:
-    cfgs = db.scalars(
-        select(UserEmbeddingConfig)
-        .where(UserEmbeddingConfig.user_id == user_id)
-        .order_by(UserEmbeddingConfig.created_at)
-    ).all()
-    return [embedding_config_to_dict(c) for c in cfgs]
-
-
-def create_user_embedding_config(
-    db: Session, *, user_id, name: str, base_url: str,
-    api_key: str, model: str,
-) -> UserEmbeddingConfig:
-    cfg = UserEmbeddingConfig(
-        user_id=user_id, name=name, base_url=base_url,
-        api_key_encrypted=encrypt_value(api_key), model=model,
-    )
-    db.add(cfg); db.commit(); db.refresh(cfg)
-    return cfg
-
-
-def update_user_embedding_config(
-    db: Session, *, user_id, config_id, name: str | None = None,
-    base_url: str | None = None, api_key: str | None = None, model: str | None = None,
-) -> UserEmbeddingConfig:
-    cfg = _get_owned_embedding_config(db, user_id=user_id, config_id=config_id)
-    if name is not None:
-        cfg.name = name
-    if base_url is not None:
-        cfg.base_url = base_url
-    if api_key is not None:
-        cfg.api_key_encrypted = encrypt_value(api_key)
-    if model is not None:
-        cfg.model = model
-    db.commit(); db.refresh(cfg)
-    return cfg
-
-
-def delete_user_embedding_config(db: Session, *, user_id, config_id) -> None:
-    cfg = _get_owned_embedding_config(db, user_id=user_id, config_id=config_id)
-    db.delete(cfg); db.commit()
-
-
-def _get_owned_embedding_config(db: Session, *, user_id, config_id) -> UserEmbeddingConfig:
-    try:
-        cid = uuid.UUID(config_id) if isinstance(config_id, str) else config_id
-    except (ValueError, AttributeError):
-        raise NotFoundError("embedding 配置不存在")
-    cfg = db.get(UserEmbeddingConfig, cid)
-    if cfg is None or cfg.user_id != user_id:
-        raise NotFoundError("embedding 配置不存在")
-    return cfg
-
-
-def embedding_config_to_dict(cfg: UserEmbeddingConfig) -> dict:
-    return {
-        "id": str(cfg.id),
-        "name": cfg.name,
-        "base_url": cfg.base_url,
-        "api_key_masked": _mask_key(decrypt_value(cfg.api_key_encrypted)),
-        "model": cfg.model,
-    }
-
-
-# ── 全局 chat / embedding 配置（拆两套 SystemSetting key）──
+# ── 全局 chat 配置（embedding 已无全局配置，走固定微服务）──
 
 def get_global_chat_settings(db: Session) -> dict:
     cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_chat_config"))
@@ -595,7 +423,7 @@ def set_global_chat_settings(
     db: Session, *, enabled: bool, base_url: str | None = None,
     api_key: str | None = None, model: str | None = None,
 ) -> dict:
-    """注意：enabled 开关是 chat+embedding 共用的（llm_global_enabled）。本函数也写它。"""
+    """enabled 开关（llm_global_enabled）现在仅控制 chat（embedding 已走固定服务）。"""
     setting = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_enabled"))
     if setting:
         setting.value = {"enabled": enabled}
@@ -619,41 +447,3 @@ def set_global_chat_settings(
             db.add(SystemSetting(key="llm_global_chat_config", value=new_value))
     db.commit()
     return get_global_chat_settings(db)
-
-
-def get_global_embedding_settings(db: Session) -> dict:
-    cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_embedding_config"))
-    return {
-        "base_url": cfg.value.get("base_url", "") if cfg else "",
-        "api_key_masked": _mask_key(decrypt_value(cfg.value["api_key_encrypted"])) if cfg and cfg.value.get("api_key_encrypted") else "",
-        "model": cfg.value.get("model", "") if cfg else "",
-    }
-
-
-def set_global_embedding_settings(
-    db: Session, *, enabled: bool, base_url: str | None = None,
-    api_key: str | None = None, model: str | None = None,
-) -> dict:
-    setting = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_enabled"))
-    if setting:
-        setting.value = {"enabled": enabled}
-    else:
-        db.add(SystemSetting(key="llm_global_enabled", value={"enabled": enabled}))
-
-    if base_url or api_key or model:
-        cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_global_embedding_config"))
-        current = cfg.value if cfg else {}
-        new_value = {
-            "base_url": base_url or current.get("base_url", ""),
-            "model": model or current.get("model", ""),
-        }
-        if api_key:
-            new_value["api_key_encrypted"] = encrypt_value(api_key)
-        elif current.get("api_key_encrypted"):
-            new_value["api_key_encrypted"] = current["api_key_encrypted"]
-        if cfg:
-            cfg.value = new_value
-        else:
-            db.add(SystemSetting(key="llm_global_embedding_config", value=new_value))
-    db.commit()
-    return get_global_embedding_settings(db)

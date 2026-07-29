@@ -24,7 +24,6 @@ from app.models.template import Template
 from app.models.user import User
 from app.models.user_global_llm_grant import UserGlobalLLMGrant
 from app.models.user_llm_config import UserLLMConfig
-from app.models.user_embedding_config import UserEmbeddingConfig
 from app.models.user_memory import UserMemory
 from app.models.web_ingestion_job import WebIngestionJob
 
@@ -34,7 +33,7 @@ __all__ = [
     "SystemSetting", "Template", "ParseJob", "Section", "SectionVersion",
     "ShareLink", "Message", "Conversation", "ConversationStatus",
     "KnowledgeChunk", "KnowledgeFile", "KnowledgeReview",
-    "ReviewRubric", "ReviewRecord", "UserLLMConfig", "UserEmbeddingConfig",
+    "ReviewRubric", "ReviewRecord", "UserLLMConfig",
     "UserGlobalLLMGrant",
     "Skill",
     "LLMCallLog",

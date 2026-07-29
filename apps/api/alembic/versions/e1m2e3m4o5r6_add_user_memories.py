@@ -1,13 +1,17 @@
 """add user_memories table for long-term memory
 
 Revision ID: e1m2e3m4o5r6
-Revises: d1h2n3s4w5i6
+Revises: fbb0392f6703
 Create Date: 2026-07-28
 
 列类型严格对齐 IdMixin/TimestampMixin(base.py) + c3d4e5f6a7b8 范式:
 - id = sa.Uuid()
 - timestamps = sa.DateTime(timezone=True) server_default now() NOT NULL
 - embedding = HalfVec(2048), 与 knowledge_chunks 同维
+
+注：原 down_revision=d1h2n3s4w5i6（分叉自 HNSW 迁移）。合并 main 的
+rag-hybrid-retrieval + drop-user-embedding-configs 链路后，rebase 到
+main 当前 head fbb0392f6703，形成线性迁移链（消除分叉 head）。
 """
 from typing import Sequence, Union
 
@@ -17,7 +21,7 @@ from pgvector.sqlalchemy import HALFVEC as HalfVec
 
 
 revision: str = "e1m2e3m4o5r6"
-down_revision: Union[str, Sequence[str], None] = "d1h2n3s4w5i6"
+down_revision: Union[str, Sequence[str], None] = "fbb0392f6703"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

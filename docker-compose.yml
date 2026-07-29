@@ -1,8 +1,8 @@
 # 天工 Docker Compose
 #
 # 两种用法:
-#   1. 本地开发(只起数据层,应用用 uv/pnpm 手动起):
-#      docker compose up -d postgres minio
+#   1. 本地开发(只起数据层 + embedding,应用用 uv/pnpm 手动起):
+#      docker compose up -d postgres minio embedding
 #
 #   2. 内网全栈部署(四个服务全起,一键起):
 #      docker compose --env-file .env.production --profile full up -d --build
@@ -10,6 +10,9 @@
 #
 # 全栈服务(api/web)挂在 `full` profile 下,默认不起,
 # 避免本地开发时误起应用容器与本地 uv/pnpm 进程抢端口。
+#
+# embedding 服务默认随数据层一起起(本地开发也需要向量检索),
+# 但 CPU 首次启动需下载 bge-m3 模型(~2.3GB),建议预拉镜像 + 首次单独起。
 
 services:
   postgres:
@@ -47,6 +50,57 @@ services:
       timeout: 5s
       retries: 5
 
+  # Embedding 微服务:Infinity 跑 BAAI/bge-m3,暴露 OpenAI 兼容 /v1/embeddings。
+  # 后端通过 EMBEDDING_BASE_URL 访问:本地开发用 http://localhost:7997/v1,
+  # 容器内(api 容器)用 http://embedding:7997/v1。
+  #
+  # 模型从本地目录加载(避免联网下载 ~2.3GB):默认 ./models/bge-m3(相对 compose 文件)。
+  # 路径可通过 EMBEDDING_MODEL_DIR 环境变量覆盖(如 worktree 场景指向主仓库的绝对路径)。
+  # 模型需自行下载(huggingface-cli download BAAI/bge-m3 或 modelscope),models/ 已 gitignore。
+  #
+  # 默认 CPU(torch 引擎);切 GPU 时:
+  #   1) image 改 michaelf34/infinity:latest
+  #   2) 取消下面 deploy.resources.reservations.devices 注释(需 NVIDIA Container Toolkit)
+  #   torch 引擎 GPU/CPU 通用,无需改 --engine。
+  embedding:
+    image: michaelf34/infinity:latest-cpu
+    container_name: tiangong-embedding
+    # 镜像 entrypoint 已是 infinity_emb,command 从子命令 v2 开始。
+    # --model-id 传容器内挂载路径(本地模型,跳过联网下载)。
+    command: >
+      v2
+      --engine torch
+      --model-id /data/models/bge-m3
+      --port 7997
+    environment:
+      # HF_HOME 只管 tokenizer 等小文件缓存;权重已随挂载目录就位,不联网
+      HF_HOME: /data/.cache
+      DO_NOT_TRACK: "1"
+    ports:
+      - "7997:7997"
+    volumes:
+      # 本地预下载的模型目录(只读挂载,避免容器误改)。
+      # 默认 ./models/bge-m3;worktree 等场景用 EMBEDDING_MODEL_DIR 覆盖为绝对路径。
+      - ${EMBEDDING_MODEL_DIR:-./models/bge-m3}:/data/models/bge-m3:ro
+      # 持久化 HF 缓存(tokenizer 等运行时产物)
+      - embdata:/data/.cache
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:7997/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      # 模型已本地化,启动只需加载权重进内存,CPU 约 30-60 秒
+      start_period: 120s
+    restart: unless-stopped
+    # GPU 切换时取消注释(需先修复 NVIDIA Container Toolkit):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
   # ---- 以下为全栈部署服务,仅在 --profile full 时启动 ----
 
   api:
@@ -75,7 +129,12 @@ services:
       GLM_API_KEY: ${GLM_API_KEY}
       GLM_BASE_URL: ${GLM_BASE_URL:-https://open.bigmodel.cn/api/paas/v4}
       GLM_MODEL: ${GLM_MODEL:-glm-4.7}
-      GLM_EMBEDDING_MODEL: ${GLM_EMBEDDING_MODEL:-embedding-3}
+      # Embedding 统一走 bge-m3 微服务(本 compose 的 embedding 服务)。
+      # Infinity 端点是 /embeddings(无 /v1),故 base_url 不带 /v1。
+      # 容器间用服务名 embedding:7997;本地开发用 localhost:7997(在 apps/api/.env 配)。
+      EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-http://embedding:7997}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
+      EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
       # 首个 admin 账号(entrypoint 跑 init_db 时读取,已存在则跳过)
       INIT_ADMIN_USERNAME: ${INIT_ADMIN_USERNAME:-admin}
       INIT_ADMIN_PASSWORD: ${INIT_ADMIN_PASSWORD}
@@ -86,6 +145,8 @@ services:
       postgres:
         condition: service_healthy
       minio:
+        condition: service_healthy
+      embedding:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
@@ -122,3 +183,4 @@ services:
 volumes:
   pgdata:
   miniodata:
+  embdata:

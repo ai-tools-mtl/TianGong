@@ -1,6 +1,6 @@
 'use client'
 
-import { BarChart3, FileText, Globe, Search, Settings } from 'lucide-react'
+import { BarChart3, FileText, Globe, Search, Settings, SlidersHorizontal } from 'lucide-react'
 import Link from 'next/link'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
@@ -11,7 +11,7 @@ const CONSOLE_SECTIONS = [
     href: '/admin/console/llm',
     icon: Settings,
     title: 'LLM 配置',
-    description: '全局对话与嵌入模型凭据',
+    description: '全局对话模型凭据（嵌入统一走 bge-m3 微服务）',
   },
   {
     href: '/admin/console/firecrawl',
@@ -30,6 +30,12 @@ const CONSOLE_SECTIONS = [
     icon: Search,
     title: '检索测试',
     description: '验证 RAG 召回质量，调参闭环',
+  },
+  {
+    href: '/admin/console/rerank',
+    icon: SlidersHorizontal,
+    title: 'Rerank 配置',
+    description: '混合检索精排模型配置',
   },
   {
     href: '/admin/console/audit',

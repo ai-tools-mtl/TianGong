@@ -15,6 +15,9 @@ export interface TiptapEditorRef {
   // 新增（选区重写气泡菜单用，spec §3.1）
   getSelectionText: () => string
   getSelectionCoords: () => { top: number; left: number; bottom: number } | null
+  // 显式重置编辑器内容（apply-diff 成功后由 page.tsx 调用）。
+  // 不用 useEffect 自动同步 content prop——会和 onChange→save→refetch→content 变→setContent 形成回环。
+  resetContent: (content: object) => void
 }
 
 interface TiptapEditorProps {
@@ -68,6 +71,11 @@ export const TiptapEditor = forwardRef<TiptapEditorRef, TiptapEditorProps>(
           left: Math.min(startCoords.left, endCoords.left),
           bottom: Math.max(startCoords.bottom, endCoords.bottom),
         }
+      },
+      resetContent: (content: object) => {
+        // emitUpdate: false 避免 setContent 触发 onUpdate → onChange 回环
+        // （apply-diff 成功后 page.tsx 已 refetch，编辑器只需同步显示，不需再 save）
+        editor?.commands.setContent(content, { emitUpdate: false })
       },
     }))
 

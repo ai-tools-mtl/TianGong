@@ -25,11 +25,19 @@ class Settings(BaseSettings):
     # 加密
     encryption_key: str
 
-    # LLM（GLM via OpenAI 兼容协议）
+    # LLM chat（GLM via OpenAI 兼容协议，env 兜底用；主配置走 admin 全局/用户自配）
     glm_api_key: str = ""
     glm_base_url: str = "https://open.bigmodel.cn/api/paas/v4"
     glm_model: str = "glm-4.7"
-    glm_embedding_model: str = "embedding-3"
+
+    # Embedding（统一走 bge-m3 微服务，OpenAI 兼容协议；用户/admin 不可配）
+    # 部署时启动一个暴露 /embeddings 的服务（Infinity 等），在此填地址即可。
+    # 注意：Infinity 端点是 /embeddings（无 /v1 前缀），故 base_url 不带 /v1；
+    # langchain openai SDK 会自动在 base_url 后拼 /embeddings。
+    # 本地服务通常不校验 api_key，留空。
+    embedding_base_url: str = "http://localhost:7997"
+    embedding_model: str = "BAAI/bge-m3"
+    embedding_api_key: str = ""
 
     # Firecrawl (web ingestion;全局 key 存 SystemSetting,env 仅兜底)
     firecrawl_api_key: str = ""

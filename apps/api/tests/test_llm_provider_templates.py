@@ -32,7 +32,6 @@ def test_zhipu_template_fields():
     t = get_provider_template("zhipu")
     assert t is not None
     assert "bigmodel" in t.base_url
-    assert t.default_embedding_model == "embedding-3"
     assert t.models_endpoint == "/models"
 
 
@@ -44,12 +43,6 @@ def test_ollama_uses_tags_endpoint():
 
 def test_get_template_unknown_returns_none():
     assert get_provider_template("nonexistent") is None
-
-
-def test_no_embedding_model_providers():
-    """deepseek / openrouter 无 embedding 模型（embedding 测试逻辑依赖此契约）。"""
-    assert get_provider_template("deepseek").default_embedding_model is None
-    assert get_provider_template("openrouter").default_embedding_model is None
 
 
 def test_models_endpoint_values():
