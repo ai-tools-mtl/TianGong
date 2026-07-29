@@ -905,10 +905,9 @@ SYSTEM_PROMPT = """你是「天工」，一个专利交底书撰写助手。你�
 5. **去重依赖 embedding**：embedding 配置不可用时不去重（`find_similar_memory` 返回 None），可能产生重复——但记忆本身可降级写入，可接受。
 6. **rewrite / caption_figures 路径不带记忆**：这两个走裸 LangChain（非 agent loop），不注入记忆。后续若需要再改造。
 7. **去重阈值 0.85 对中文短句可能过激进**（2026-07-29 深度审查发现）：两条语义相近但独立的偏好（如「偏好简洁风格」vs「偏好简洁的写作」）可能被误合并。v2 可调高到 0.90-0.92，或改用「语义相似 + 内容包含」双重判断。
-8. **agent loop 共享 session 的事务隔离隐患**（2026-07-29 深度审查发现，当前未触发）：
-   - **C1**：`SessionLocal` 默认 `expire_on_commit=True`，工具内 commit 后所有 ORM 对象 expire。当前靠调用顺序侥幸未触发（system prompt 在首次工具调用前算好）。
-   - **C2**：`rag_search` 工具调 `retrieve` → `log_embed_call` 内部 commit，与同 loop 的 `save_memory` 事务边界交叉。当前因 save_memory 自身先 commit，未破坏数据原子性。
-   - 根治方案（专项重构）：`log_embed_call` 改用独立 session；或全局 `expire_on_commit=False`。影响面涉及 main 整个 RAG 日志机制，需配合集成测试，列为技术债。
+8. **agent loop 共享 session 的事务隔离隐患**（2026-07-29 深度审查发现）：
+   - **C1**（未修，技术债）：`SessionLocal` 默认 `expire_on_commit=True`，工具内 commit 后所有 ORM 对象 expire。当前靠调用顺序侥幸未触发（system prompt 在首次工具调用前算好）。全局改 `expire_on_commit=False` 影响所有 service 的 commit 行为，风险高于收益，列为技术债。
+   - ~~**C2**~~：✅ 已修复（2026-07-29）。`log_embed_call` / `log_firecrawl_call` 改用独立 session 写日志（`llm_log_helper._write_log_with_isolated_session`），与主请求 session 完全隔离。复用项目 standalone session 模式。意外修复了 archiver 的潜伏提前提交 bug。chat/generate 的 `_log_llm_call` 仍用主 session，但 finally 块已加 rollback 预清理，不再毒化后续流程。
 9. **工具返回串对 LLM 行为的影响**（2026-07-29 深度审查发现）：`save_memory` 失败返回「请稍后重试」可能诱导 LLM 重试；合并分支回显原记忆内容可能被复述进对话。v2 可优化返回措辞。
 10. **written sections 注入 + history 重复导致 token 翻倍**（2026-07-29 深度审查发现）：system prompt 注入已写章节（≤8KB），history 又含讨论这些章节的对话，长项目可能撞 context window。v2 评估 history 截断/摘要。
 
