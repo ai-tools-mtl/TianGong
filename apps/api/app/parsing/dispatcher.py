@@ -14,6 +14,10 @@ from app.parsing.pdf_parser import extract_pdf_text
 def extract_text(filename: str, content: bytes) -> str:
     """根据扩展名提取文本。
 
+    清洗 NUL(\\x00)字节：PDF/docx 解析出的文本偶尔含二进制残留的 NUL，
+    而 PostgreSQL 的 text 类型不接受 NUL 字节（psycopg 报 DataError），
+    会导致后续 chunk 入库失败。统一在提取后剔除。
+
     Raises:
         ValueError: 不支持的格式,或 PDF 为扫描件(无文本层)。
     """
@@ -23,12 +27,13 @@ def extract_text(filename: str, content: bytes) -> str:
         text = extract_pdf_text(content)
         if not text:
             raise ValueError("PDF 无文本层(疑似扫描件),暂不支持")
-        return text
+    elif ext == "docx":
+        text = _docx_to_text(content)
+    else:
+        raise ValueError(f"不支持的格式: .{ext}")
 
-    if ext == "docx":
-        return _docx_to_text(content)
-
-    raise ValueError(f"不支持的格式: .{ext}")
+    # 清洗 NUL 字节（PostgreSQL text 列不接受，PDF 解析常有残留）
+    return text.replace("\x00", "")
 
 
 def _docx_to_text(content: bytes) -> str:
