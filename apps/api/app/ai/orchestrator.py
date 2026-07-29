@@ -155,8 +155,14 @@ async def astream_generate(
     """
     from app.ai.agent import build_agent
 
-    # [L1] 传 section，让 build_agent 装配动态 system prompt（spec §3.3.1）
-    agent = build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section), section=section)
+    # [L1] 传 section + user_input，让 build_agent 装配动态 system prompt（spec §3.3.1）
+    # generate 场景无新输入，用 history 最后一条 user message 作为记忆检索信号
+    # （比章节标题强：用户刚聊的内容更可能关联其偏好/事实记忆）。
+    gen_query = next(
+        (m.content for m in reversed(history) if m.role == "user"), None
+    )
+    agent = build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section),
+                        section=section, user_input=gen_query)
     sp = get_section_prompt(section.key)
     instruction = (
         f"请根据对话历史，整理生成本章节【{section.title}】的草稿。"

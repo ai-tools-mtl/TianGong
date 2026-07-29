@@ -64,14 +64,22 @@ def list_memories(
 
 
 def update_memory(db: Session, *, memory_id, user_id, content: str) -> UserMemory:
-    """更新记忆内容，重新生成 embedding。"""
+    """更新记忆内容，重新生成 embedding。
+
+    embed 失败时保留旧 embedding（而非置空）——避免 embed 服务临时抖动
+    导致原有 embedding 丢失、记忆从此检索不到（静默数据降级）。
+    content 已更新，旧 embedding 虽不精确但仍可近似召回，优于完全检索不到。
+    """
     mem = db.get(UserMemory, memory_id)
     if mem is None or mem.user_id != user_id:
         raise NotFoundError("记忆不存在")
     if not content.strip():
         raise ValidationError("记忆内容不能为空")
     mem.content = content.strip()
-    mem.embedding = _try_embed(db, user_id, content.strip())
+    new_emb = _try_embed(db, user_id, content.strip())
+    if new_emb is not None:
+        mem.embedding = new_emb
+    # new_emb is None 时保留旧 embedding（见 docstring）
     db.flush()
     return mem
 
@@ -134,6 +142,13 @@ def search_memories(
     results = []
     for mem, distance in rows:
         score = 1.0 - distance
+        # 防御：cosine_distance 正常范围 [0,2]，零向量/异常向量可能返回 NaN。
+        # NaN 无法与阈值比较（NaN < x 恒为 False），会绕过过滤被注入 prompt。
+        # 用 distance 范围判断更稳（score=NaN 时 distance 也是 NaN，!= distance 自身）。
+        if distance != distance:  # NaN 检测（NaN != NaN）
+            continue
+        if distance < 0 or distance > 2:  # 超出 cosine_distance 合理范围
+            continue
         if score < SIMILARITY_THRESHOLD:
             continue
         results.append(MemorySearchResult(content=mem.content, score=score, id=mem.id))
@@ -150,6 +165,12 @@ def find_similar_memory(
     embedding = _try_embed(db, user_id, content)
     if embedding is None:
         return None
+
+    # 与 search_memories 对齐：显式 SET ef_search，避免 HNSW 默认 ef=40 在
+    # 记忆量增大后漏召回最相似项 → 去重失效 → 产生近似重复记忆。
+    # 去重只需 top1，ef=40 足够（search_memories 用 max(40, top_k*4) 是为多结果召回）。
+    if is_postgres():
+        db.execute(text("SET LOCAL hnsw.ef_search = 40"))
 
     stmt = (
         select(

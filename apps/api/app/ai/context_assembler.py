@@ -190,7 +190,10 @@ def build_system_prompt(db, section: Section, user_input: str | None = None) -> 
     # - 无 user_input（generate 等场景）：回退到章节标题+目标。
     # project 已在上方 fetch（L164），直接复用其 user_id，避免重复查询。
     if project.user_id is not None:
-        memory_query = user_input if user_input else f"{section.title} {sp.goal}"
+        # user_input 非空且非纯空格时用它检索；否则回退章节信号
+        # （纯空格 embed 会产出垃圾向量，污染检索结果）
+        memory_query = (user_input.strip() if user_input and user_input.strip()
+                        else f"{section.title} {sp.goal}")
         memories = _search_user_memories(db, project.user_id, memory_query)
         if memories:
             memory_lines = "\n".join(f"- {m.content}" for m in memories)
