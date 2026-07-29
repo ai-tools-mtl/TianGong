@@ -148,10 +148,10 @@ async def upload_global(
 ):
     """admin 直传全局库(免审,全员立即可检索)。
 
-    异步向量化:落库后立即返回(status=pending),向量化在 BackgroundTasks 后台跑。
-    前端轮询文件状态 pending→processing→ready。
+    异步解析+向量化(plan async-parsing):落库后立即返回(status=pending),
+    解析+分块+向量化在 BackgroundTasks 后台跑。前端轮询文件状态
+    pending(uploaded)→processing(parsing/embedding)→ready(done)。
     """
-    from app.parsing.dispatcher import extract_text as _extract
     from app.core.text_utils import sanitize_filename
 
     if not file.filename:
@@ -164,16 +164,12 @@ async def upload_global(
         )
     filename = sanitize_filename(file.filename)
     content = await file.read()
-    try:
-        text = _extract(filename, content, db=db)
-    except ValueError as e:
-        raise ValidationError(str(e))
     kf = knowledge_service.upload_to_global(
         db, storage=get_storage(), uploader=admin,
         filename=filename, content=content,
-        mime=file.content_type or "application/octet-stream", text=text,
+        mime=file.content_type or "application/octet-stream",
     )
-    # 向量化在响应返回后的后台任务执行(自开 session),不阻塞本请求
+    # 解析+向量化在响应返回后的后台任务执行(自开 session),不阻塞本请求
     background_tasks.add_task(knowledge_service.run_embed_job_standalone, str(kf.id))
     return {
         "file_id": str(kf.id), "scope": kf.scope, "source_type": kf.source_type,

@@ -31,6 +31,9 @@ def fake_embed(monkeypatch):
     .env 的 database_url 解析(本机指向 PG),不 patch 会触发 tsv 回填里的
     `to_tsvector` 在 SQLite 上报错。这是 is_postgres 检查模块级 engine 的已知
     限制(详见 test_admin_retrieval.py 同名注释),非 G3 引入。
+
+    异步解析(plan async-parsing):upload 不再写 chunk,需调用方按需 spawn
+    _run_parse_pipeline_for 才会落 chunk。本 fixture 不负责解析,只桩 embed。
     """
     fake_vec = [0.0] * 2048
     monkeypatch.setattr(
@@ -40,6 +43,22 @@ def fake_embed(monkeypatch):
     monkeypatch.setattr("app.rag.embedding.embed_text", lambda t, **kwargs: fake_vec)
     monkeypatch.setattr("app.services.knowledge_service.is_postgres", lambda: False)
     monkeypatch.setattr("app.rag.archiver.is_postgres", lambda: False)
+
+
+def _run_parse_pipeline_for(monkeypatch, engine, file_id: str) -> None:
+    """跑后台"解析+分块+向量化"流水线，让 chunk 落库（供流 B 测试断言 chunk）。
+
+    异步化后 upload 不写 chunk；审核流测试需要 chunk 存在，故手动同步执行一次
+    run_embed_job_standalone（绑定 SessionLocal 到测试 engine + 桩 extract_text）。
+    """
+    from sqlalchemy.orm import sessionmaker
+
+    from app.core import database as db_module
+    import app.parsing.dispatcher as dispatcher
+
+    monkeypatch.setattr(db_module, "SessionLocal", sessionmaker(bind=engine))
+    monkeypatch.setattr(dispatcher, "extract_text", lambda filename, content, db=None: "解析文本")
+    ks.run_embed_job_standalone(file_id)
 
 
 @pytest.fixture
@@ -160,18 +179,21 @@ def test_flow_a_submit_idempotent(
 
 
 def test_flow_b_approve_deletes_old_personal_object(
-    db_session, normal_user, admin_user, fake_embed, _reset_storage
+    db_session, normal_user, admin_user, fake_embed, _reset_storage, engine, monkeypatch
 ):
     """流 B:approve 后旧 personal 对象应被删除(防 minio 存储泄漏)。"""
     from app.core.storage import get_storage
 
     storage = get_storage()
-    # 上传个人素材(走真实 _ingest_chunks,写 chunk)
+    # 上传个人素材(异步化后只落 file)，再跑解析流水线让 chunk 落库
     kf = ks.upload_external(
         db_session, storage=storage, user=normal_user,
         filename="ref.docx", content=b"docx bytes",
-        mime="application/docx", text="参考资料",
+        mime="application/docx",
     )
+    _run_parse_pipeline_for(monkeypatch, engine, str(kf.id))
+    db_session.expire_all()
+
     review = ks.submit_for_review(
         db_session, submitter_id=str(normal_user.id), file_id=str(kf.id),
     )
@@ -189,7 +211,7 @@ def test_flow_b_approve_deletes_old_personal_object(
 
 
 def test_flow_b_approve_promotes_chunks_to_global(
-    db_session, normal_user, admin_user, fake_embed, _reset_storage
+    db_session, normal_user, admin_user, fake_embed, _reset_storage, engine, monkeypatch
 ):
     """流 B:approve 后关联的 chunk scope 升 global(走真实 _update_chunks_scope)。"""
     from app.core.storage import get_storage
@@ -198,9 +220,12 @@ def test_flow_b_approve_promotes_chunks_to_global(
     kf = ks.upload_external(
         db_session, storage=storage, user=normal_user,
         filename="ref.docx", content=b"docx",
-        mime="application/docx", text="参考资料内容足够长",
+        mime="application/docx",
     )
-    # upload_external 已通过真实 _ingest_chunks 写了 chunk
+    # 异步化后 upload 不写 chunk；手动跑解析流水线让 chunk 落库（personal scope）
+    _run_parse_pipeline_for(monkeypatch, engine, str(kf.id))
+    db_session.expire_all()
+
     chunks = list(db_session.scalars(select(KnowledgeChunk).where(KnowledgeChunk.file_id == kf.id)))
     assert len(chunks) >= 1
     assert all(c.scope == "personal" for c in chunks)
@@ -230,12 +255,12 @@ def test_global_upload_dedup_by_content_hash(
     kf1 = ks.upload_to_global(
         db_session, storage=storage, uploader=admin_user,
         filename="a.pdf", content=content,
-        mime="application/pdf", text="某内容",
+        mime="application/pdf",
     )
     kf2 = ks.upload_to_global(
         db_session, storage=storage, uploader=admin_user,
         filename="b.pdf",  # 不同文件名,同内容
-        content=content, mime="application/pdf", text="某内容",
+        content=content, mime="application/pdf",
     )
 
     assert kf1.id == kf2.id, "同内容应去重,返回同一 KnowledgeFile"
@@ -260,12 +285,12 @@ def test_personal_upload_not_dedup(
     kf1 = ks.upload_external(
         db_session, storage=storage, user=normal_user,
         filename="a.docx", content=content,
-        mime="application/docx", text="x",
+        mime="application/docx",
     )
     kf2 = ks.upload_external(
         db_session, storage=storage, user=normal_user,
         filename="b.docx", content=content,
-        mime="application/docx", text="x",
+        mime="application/docx",
     )
     assert kf1.id != kf2.id, "个人库不去重"
     assert kf1.content_hash == kf2.content_hash  # hash 仍记录,只是不用于查重
@@ -281,11 +306,11 @@ def test_global_upload_different_content_not_dedup(
     kf1 = ks.upload_to_global(
         db_session, storage=storage, uploader=admin_user,
         filename="a.pdf", content=b"AAA",
-        mime="application/pdf", text="a",
+        mime="application/pdf",
     )
     kf2 = ks.upload_to_global(
         db_session, storage=storage, uploader=admin_user,
         filename="b.pdf", content=b"BBB",
-        mime="application/pdf", text="b",
+        mime="application/pdf",
     )
     assert kf1.id != kf2.id
