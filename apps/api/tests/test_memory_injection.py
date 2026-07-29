@@ -58,6 +58,45 @@ def test_build_system_prompt_no_memories_omits_section(db_session, monkeypatch):
     assert "关于这位用户的长期记忆" not in prompt
 
 
+# ===== S3-2：记忆使用规则指令（spec 2026-07-29-prompt-content-design §4 S3-2）=====
+
+def test_build_system_prompt_memories_has_usage_rules(db_session, monkeypatch):
+    """[S3-2] 有记忆时注入使用规则（自然融入/不机械复读/无关则忽略）。
+
+    注意：现有记忆段标题已含「请遵循其偏好与约定」，故断言用使用规则的独有特征词
+    （「机械复读」「无关」），确保测的是新增规则而非旧文案。
+    """
+    from app.ai.context_assembler import build_system_prompt
+    from app.models import Project, Section
+
+    project = Project(title="测试项目", user_id=uuid.uuid4())
+    db_session.add(project)
+    db_session.commit()
+    section = Section(
+        project_id=project.id, template_section_id="background",
+        key="background", title="背景技术",
+        order=1, content=None,
+    )
+    db_session.add(section)
+    db_session.commit()
+
+    from app.services import memory_service
+
+    class _FakeMem:
+        content = "偏好简洁风格"
+
+    monkeypatch.setattr(memory_service, "search_memories",
+                        lambda db, *, user_id, query, top_k=5: [_FakeMem()])
+    # 无画像，避免画像段干扰
+    monkeypatch.setattr(memory_service, "list_memories",
+                        lambda db, *, user_id, source=None, limit=200: [])
+
+    prompt = build_system_prompt(db_session, section)
+    # 使用规则的独有特征词（旧文案「请遵循其偏好与约定」没有）
+    assert "机械复读" in prompt or "复读" in prompt  # 不要机械复读
+    assert "无关" in prompt                            # 无关记忆忽略
+
+
 def test_build_system_prompt_user_input_used_as_retrieval_query(db_session, monkeypatch):
     """user_input 应作为记忆检索的唯一 query（spec §5.3 升级）。
 

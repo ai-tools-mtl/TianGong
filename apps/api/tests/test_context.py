@@ -283,6 +283,38 @@ def test_build_system_prompt_excludes_current_section_from_written(db_session):
     assert "我自己" not in prompt
 
 
+# ===== S3-1：前文一致性约束指令（spec 2026-07-29-prompt-content-design §4 S3-1）=====
+
+def test_build_system_prompt_written_sections_has_consistency_constraints(db_session):
+    """[S3-1] 有已写章节时注入一致性约束指令（术语/呼应/不矛盾）。
+
+    注意：现有前文段标题已含「一致性」「术语」（「请保持术语、技术方案一致性」），
+    故断言用约束指令的独有特征词（「呼应」「不矛盾」），确保测的是新增指令而非旧文案。
+    """
+    from app.ai.context_assembler import build_system_prompt
+    p = _make_project(db_session)
+    _make_db_section(db_session, p.id, key="problem", title="技术问题", order=4, content=_tiptap("门锁自动上锁问题"))
+    s = _make_db_section(db_session, p.id, key="solution", title="技术方案", order=5, content=None)
+    db_session.commit()
+    prompt = build_system_prompt(db_session, s)
+    # 一致性约束指令的独有特征词（旧文案没有）
+    assert "呼应" in prompt      # 必须呼应前文
+    assert "不矛盾" in prompt or "矛盾" in prompt  # 不与前文矛盾
+
+
+def test_build_system_prompt_no_written_sections_omits_constraints(db_session):
+    """[S3-1] 无已写章节时不注入一致性约束（不留空指令）。"""
+    from app.ai.context_assembler import build_system_prompt
+    p = _make_project(db_session)
+    # 只有当前章节，无其他非空章节
+    s = _make_db_section(db_session, p.id, key="name", title="发明名称", order=1, content=None)
+    db_session.commit()
+    prompt = build_system_prompt(db_session, s)
+    assert "已完成章节" not in prompt  # 无前文段
+    # 一致性约束紧跟前文段，前文缺失时约束也不该出现
+    assert "一致性要求" not in prompt
+
+
 def test_build_system_prompt_includes_system_prompt_role(db_session):
     """末尾含 SYSTEM_PROMPT 角色定义。"""
     from app.ai.context_assembler import build_system_prompt, SYSTEM_PROMPT
