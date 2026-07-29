@@ -56,6 +56,18 @@
   - 用 `scripts/init_db.py`（而非手动一条条敲）做初始化，扩展依赖已在迁移内闭环
 - **影响任务**：计划 6（知识库 RAG，建 knowledge_chunks 表）+ 全员本地初始化
 
+### G6: SessionLocal expire_on_commit=False —— commit 后读 server-default 列必须显式 refresh ⚠️
+
+- **现象**：某次把 `SessionLocal` 从默认 `expire_on_commit=True` 改为 `False`（C1 修复）后，新写的「commit 后读 ORM 属性」代码读到的 `created_at`/`updated_at` 是 None（PG 上表现为 API 返回空时间戳），而不是 DB 生成的真实值
+- **根因**：`expire_on_commit=False` 意味着 commit 后 ORM 对象**不再自动 expire**，属性访问不再触发 lazy reload。对于 `created_at`/`updated_at`（`TimestampMixin` 里 `server_default=func.now()`，由 DB 端赋值）这类列，Python 端 INSERT 时根本没有该值——commit 后不 reload 就永远是 None。客户端生成的 UUID 主键（`default=uuid.uuid4`）则无此问题（flush 时已在 Python 端赋值）
+- **修复**：`SessionLocal` 设 `expire_on_commit=False`（C1 修复，根治 commit 后冗余 lazy load）；**同时**任何「commit 后要读 server-default 列」的地方补 `db.refresh(obj)`。全项目审计后只有 `memories.py:56/71` 两处需要补
+- **预防**（编码规范）：
+  - **commit 后读 server-default 列（时间戳 / 自增 ID / DB 端 default）→ 必须先 `db.refresh(obj)`**
+  - commit 后读客户端 UUID 主键或 Python 端赋值的字段（status/scope 等）→ 无需 refresh，直接读
+  - 新增 create/update service 时，遵循主流 `commit(); refresh(obj)` 模式（项目里已有 44 处这么写）
+  - 配置守卫测试：`tests/test_sessionlocal_config.py::test_sessionlocal_expire_on_commit_is_false`
+- **影响**：C1 技术债修复（`fix/c1-expire-on-commit` 分支），见 [2026-07-29-c1-expire-on-commit-design.md](superpowers/specs/2026-07-29-c1-expire-on-commit-design.md)
+
 ---
 
 ## 前端（apps/web）

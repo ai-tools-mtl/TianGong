@@ -197,12 +197,12 @@ return _to_out(mem)
 
 ## 6. 验收标准
 
-- [ ] `database.py:10` 的 `SessionLocal` 设 `expire_on_commit=False`，附注释
-- [ ] `memories.py:56/71` 两处补 `db.refresh(mem)`
-- [ ] 新增测试 `tests/test_c1_expire_on_commit.py`（配置断言 + 行为测试）通过
-- [ ] 新增/补充 agent loop 回归测试通过
-- [ ] 全量 `uv run pytest`（776+）全绿
-- [ ] 真实 PG 手动验证（§5.5）对话 + memories API 无 InternalError、时间戳非空
+- [x] `database.py:10` 的 `SessionLocal` 设 `expire_on_commit=False`，附注释
+- [x] `memories.py:56/71` 两处补 `db.refresh(mem)`
+- [x] 新增测试 `tests/test_sessionlocal_config.py`（配置断言 + 行为测试，含 True 对照组）通过
+- [x] 新增 agent loop 回归测试 `tests/test_agent_loop_expire.py` 通过
+- [x] 全量 `uv run pytest` 全绿（800 passed + 1 xfailed，baseline 792 → +8 新测试，零回归）
+- [ ] 真实 PG 手动验证（§5.5）：对话触发 save_memory 后继续对话不报 InternalError；POST /memories 返回的 created_at/updated_at 非空
 
 ---
 
