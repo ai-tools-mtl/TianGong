@@ -69,3 +69,51 @@ def test_content_too_long_rejected(client, registered_user):
     _login(client, registered_user)
     r = client.post("/api/v1/memories", json={"content": "x" * 501})
     assert r.status_code == 422
+
+
+def test_create_memory_calls_refresh_after_commit(client, registered_user, monkeypatch):
+    """C1 修复：POST /memories commit 后必须 db.refresh(mem)。
+
+    expire_on_commit=False 下，读 server-default 时间戳需显式 refresh。
+    SQLite 不执行 server_default，无法断言时间戳非空，故 spy refresh 调用验证修复存在。
+    """
+    from sqlalchemy.orm import Session
+    _no_embed(monkeypatch)
+    _login(client, registered_user)
+
+    call_count = {"n": 0}
+    orig_refresh = Session.refresh
+
+    def spy_refresh(self, *args, **kwargs):
+        call_count["n"] += 1
+        return orig_refresh(self, *args, **kwargs)
+
+    monkeypatch.setattr(Session, "refresh", spy_refresh)
+
+    r = client.post("/api/v1/memories", json={"content": "偏好简洁风格"})
+    assert r.status_code == 200, r.text
+    assert call_count["n"] >= 1, "POST /memories commit 后必须调用 db.refresh（C1 修复）"
+
+
+def test_update_memory_calls_refresh_after_commit(client, registered_user, monkeypatch):
+    """C1 修复：PATCH /memories/{id} commit 后必须 db.refresh(mem)。"""
+    from sqlalchemy.orm import Session
+    _no_embed(monkeypatch)
+    _login(client, registered_user)
+
+    # 先创建一条记忆（创建路径也会调 refresh，但我们只关心 update 的 refresh）
+    created = client.post("/api/v1/memories", json={"content": "原文"}).json()
+
+    # 重置计数，只统计 update 的 refresh
+    call_count = {"n": 0}
+    orig_refresh = Session.refresh
+
+    def spy_refresh(self, *args, **kwargs):
+        call_count["n"] += 1
+        return orig_refresh(self, *args, **kwargs)
+
+    monkeypatch.setattr(Session, "refresh", spy_refresh)
+
+    r = client.patch(f"/api/v1/memories/{created['id']}", json={"content": "新偏好"})
+    assert r.status_code == 200, r.text
+    assert call_count["n"] >= 1, "PATCH /memories commit 后必须调用 db.refresh（C1 修复）"
