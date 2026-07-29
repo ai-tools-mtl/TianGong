@@ -81,3 +81,13 @@ def on_startup():
             loguru.logger.info(f"恢复扫描：重新入队 {n_kf} 个知识文件向量化任务")
     except Exception as e:
         loguru.logger.exception(f"知识文件向量化恢复扫描失败（不阻塞启动）：{e}")
+
+    # 归档向量化恢复（archiving 态孤儿项目重入队）
+    try:
+        from app.rag.archiver import recover_stale_archives
+
+        n_arc = recover_stale_archives()
+        if n_arc:
+            loguru.logger.info(f"恢复扫描：重新入队 {n_arc} 个归档向量化任务")
+    except Exception as e:
+        loguru.logger.exception(f"归档向量化恢复扫描失败（不阻塞启动）：{e}")

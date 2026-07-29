@@ -159,8 +159,8 @@ def test_api_archive_success(client, registered_user, db_session, monkeypatch):
     p = _seed_project_with_confirmed_section(db_session, registered_user)
     _login(client, registered_user)
 
-    def fake_archive(db, *, user_id, project_id):
-        return {"project_id": project_id, "chunks": 5, "status": "archived"}
+    def fake_archive(db, *, user_id, project_id, background_tasks=None):
+        return {"project_id": project_id, "chunks": 5, "status": "archiving"}
     monkeypatch.setattr("app.api.projects.archive_service.archive", fake_archive)
 
     res = client.post(f"/api/v1/projects/{p.id}/archive")
@@ -168,7 +168,8 @@ def test_api_archive_success(client, registered_user, db_session, monkeypatch):
     body = res.json()
     assert body["project_id"] == str(p.id)
     assert body["chunks"] == 5
-    assert body["status"] == "archived"
+    # 异步化：请求内返回 archiving（后台向量化后变 archived）
+    assert body["status"] == "archiving"
 
 
 def test_api_archive_idempotent(client, registered_user, db_session, monkeypatch):
@@ -176,8 +177,8 @@ def test_api_archive_idempotent(client, registered_user, db_session, monkeypatch
     p = _seed_project_with_confirmed_section(db_session, registered_user)
     _login(client, registered_user)
 
-    def fake_archive(db, *, user_id, project_id):
-        return {"project_id": project_id, "chunks": 5, "status": "archived"}
+    def fake_archive(db, *, user_id, project_id, background_tasks=None):
+        return {"project_id": project_id, "chunks": 5, "status": "archiving"}
     monkeypatch.setattr("app.api.projects.archive_service.archive", fake_archive)
 
     r1 = client.post(f"/api/v1/projects/{p.id}/archive")

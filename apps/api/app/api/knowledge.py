@@ -34,10 +34,11 @@ class SearchRequest(BaseModel):
 @router.post("/projects/{project_id}/archive")
 def archive_project(
     project_id: str,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    result = archive_service.archive(db, user_id=current_user.id, project_id=project_id)
+    result = archive_service.archive(db, user_id=current_user.id, project_id=project_id, background_tasks=background_tasks)
     return result
 
 

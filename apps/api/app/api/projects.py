@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -85,7 +85,7 @@ def detach_tag(project_id: str, tag_id: str, current_user: User = Depends(get_cu
 
 
 @router.post("/{project_id}/archive")
-def archive(project_id: str, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def archive(project_id: str, background_tasks: BackgroundTasks, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     # 归属校验：非本人项目返回 404（防探测，与其他端点一致）
     project = project_service.get_project(db, user=current_user, project_id=project_id)
 
@@ -100,5 +100,5 @@ def archive(project_id: str, current_user: User = Depends(get_current_user), db:
     if has_confirmed is None:
         raise ValidationError("内容不足，无法归档（需至少一个已确认的非空章节）")
 
-    # archive_service.archive 内部二次校验归属并调 rag/archiver（幂等：先删旧 chunk 再重生）
-    return archive_service.archive(db, user_id=current_user.id, project_id=project_id)
+    # 异步归档：请求内落库（status=archiving），后台 spawn 向量化（archiving→archived）
+    return archive_service.archive(db, user_id=current_user.id, project_id=project_id, background_tasks=background_tasks)

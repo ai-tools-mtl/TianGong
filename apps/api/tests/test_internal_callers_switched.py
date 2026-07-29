@@ -60,16 +60,24 @@ def test_summary_service_calls_resolve_chat_config(db_session):
     m.assert_called()
 
 
-def test_archiver_calls_resolve_embedding_config(db_session):
-    """archiver.archive_project 应调 resolve_embedding_config。"""
+def test_archiver_calls_resolve_embedding_config():
+    """异步化后 run_archive_embed_standalone（而非 archive_project）调 resolve_embedding_config。
+
+    archive_project 只落库不 embed；向量化在 standalone 后台任务，它解析配置。
+    """
+    import inspect
     from app.rag import archiver
-    with patch("app.rag.archiver.resolve_embedding_config", return_value=None) as m:
-        from app.models import Project
-        import uuid
-        p = Project(id=uuid.uuid4(), user_id=uuid.uuid4(), title="t")
-        db_session.add(p); db_session.commit()
-        archiver.archive_project(db_session, project=p, user_id=p.user_id)
-    m.assert_called()
+
+    # archive_project 不再调 resolve_embedding_config（异步化）
+    archive_src = inspect.getsource(archiver.archive_project)
+    assert "resolve_embedding_config" not in archive_src, (
+        "archive_project 异步化后不应调 resolve_embedding_config"
+    )
+    # run_archive_embed_standalone 调 resolve_embedding_config
+    standalone_src = inspect.getsource(archiver.run_archive_embed_standalone)
+    assert "resolve_embedding_config" in standalone_src, (
+        "run_archive_embed_standalone 应调 resolve_embedding_config"
+    )
 
 
 def test_retriever_calls_resolve_embedding_config(db_session):

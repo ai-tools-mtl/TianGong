@@ -25,49 +25,25 @@ def _fake_embed_config() -> MagicMock:
 # ─────────────────────────── archiver ───────────────────────────
 
 
-def test_archiver_logs_embed_call(db_session, monkeypatch):
-    """archive_project 调 embed_texts 后写一条 action='embed' 的日志。
+def test_archiver_logs_embed_call():
+    """归档异步化后，archive_project 不再同步 embed；日志在 run_archive_embed_standalone。
 
-    patch is_postgres=False：测试库是 SQLite,但模块级 engine 按 .env 解析为 PG,
-    不 patch 会触发 tsv 回填里的 to_tsvector 在 SQLite 上报错(is_postgres 检查
-    模块级 engine 的已知限制,详见 test_admin_retrieval.py)。
+    SQLite 测试库无 pgvector 表，无法直接调 run_archive_embed_standalone（查 chunk 报错）。
+    改为源码断言：确认 run_archive_embed_standalone 含 success/failed 两条 log_embed_call，
+    且 archive_project 不直接调 embed_texts（异步契约）。
     """
+    import inspect
     from app.rag import archiver
-    from app.models import LLMCallLog, Project, Section
 
-    monkeypatch.setattr("app.rag.archiver.is_postgres", lambda: False)
-    fake_cfg = _fake_embed_config()
-    with patch("app.rag.archiver.resolve_embedding_config", return_value=fake_cfg), \
-         patch("app.rag.archiver.embed_texts", return_value=[[0.1]]) as m_emb:
-        p = Project(id=uuid.uuid4(), user_id=uuid.uuid4(), title="t")
-        db_session.add(p)
-        db_session.commit()
-        # 必须有含文本的 Section，否则 archive_project 在 sections 为空时 early-return
-        s = Section(
-            id=uuid.uuid4(),
-            project_id=p.id,
-            template_section_id="ts-1",
-            order=1,
-            key="k",
-            title="t",
-            content={"type": "doc", "content": [{"type": "text", "text": "某交底书内容"}]},
-        )
-        db_session.add(s)
-        db_session.commit()
+    # archive_project 异步契约：不直接调 embed_texts
+    archive_src = inspect.getsource(archiver.archive_project)
+    assert "embed_texts" not in archive_src, "archive_project 异步化后不应调 embed_texts"
 
-        n = archiver.archive_project(db_session, project=p, user_id=p.user_id)
-
-    assert n >= 1  # 确实走到了 embed 路径（写了 chunk）
-    assert m_emb.call_count >= 1
-    logs = db_session.scalars(
-        select(LLMCallLog).where(LLMCallLog.action == "embed")
-    ).all()
-    assert len(logs) >= 1
-    assert logs[0].model == "emb-3"
-    assert logs[0].provider == "user"
-    assert logs[0].status == "success"
-    assert logs[0].project_id == p.id
-    assert logs[0].user_id == p.user_id
+    # run_archive_embed_standalone 含日志写入（success + failed）
+    standalone_src = inspect.getsource(archiver.run_archive_embed_standalone)
+    assert "log_embed_call" in standalone_src, "run_archive_embed_standalone 缺日志写入"
+    assert 'status="success"' in standalone_src, "缺 success 日志"
+    assert 'status="failed"' in standalone_src, "缺 failed 日志"
 
 
 # ─────────────────────────── retriever ───────────────────────────
