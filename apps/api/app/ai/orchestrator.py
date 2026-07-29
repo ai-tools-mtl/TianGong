@@ -78,6 +78,37 @@ def _section_owner(db, section: Section):
     return project.user_id if project else None
 
 
+def build_generate_instruction(section: Section) -> str:
+    """[S4-2] 构造 generate 草稿指令（含 CoT 分步思考引导）。
+
+    此前 instruction 是端到端的「请整理生成草稿」，模型直接吐内容，容易：
+    - 漏掉前文章节的呼应（如方案没对准技术问题）
+    - 漏覆盖 completion_criteria 的维度（如只写结构没写流程）
+    - 与前文术语不一致
+
+    CoT（Chain-of-Thought）引导模型在生成前分步思考：回顾→梳理维度→检查一致性→输出。
+    注意：CoT 是引导模型【内部推理】，指令明确要求只输出最终草稿，
+    不把思考过程展示给用户（草稿是给用户看的成品，不是推理 trace）。
+
+    Args:
+        section: 当前要生成草稿的章节。
+
+    Returns:
+        含 CoT 引导的指令字符串，作为 messages 的最后一条 user 消息。
+    """
+    sp = get_section_prompt(section.key)
+    return (
+        f"请根据对话历史，整理生成本章节【{section.title}】的草稿。"
+        f"格式要求：{sp.output_format}，用 Markdown 输出。"
+        f"达标判定：{sp.completion_criteria}\n\n"
+        f"思考步骤（【只输出最终草稿，不要输出思考过程】）：\n"
+        f"1. 回顾对话中已确定的技术要点，以及前文章节（技术问题/技术方案等）的关键信息\n"
+        f"2. 梳理本章应覆盖的维度（按上述达标判定）\n"
+        f"3. 检查与「技术问题」「技术方案」等前文章节的一致性（术语、表述、不矛盾）\n"
+        f"4. 输出最终 Markdown 草稿"
+    )
+
+
 async def astream_chat(
     db, section: Section, history: list[Message], user_input: str,
     *, llm_config: ResolvedChatConfig, usage_sink: dict | None = None,
@@ -167,11 +198,8 @@ async def astream_generate(
     # [S2-2] generate 场景无新输入，意图恒为「代写草稿」——直接传 draft（比让规则层猜更准）
     agent = build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section),
                         section=section, user_input=gen_query, intent="draft")
-    sp = get_section_prompt(section.key)
-    instruction = (
-        f"请根据对话历史，整理生成本章节【{section.title}】的草稿。"
-        f"要求：{sp.output_format}。用 Markdown 格式输出。"
-    )
+    # [S4-2] 用 build_generate_instruction 构造含 CoT 分步思考的指令
+    instruction = build_generate_instruction(section)
 
     # [L2] 透传本章节对话历史（spec §3.3.1）
     messages = []
