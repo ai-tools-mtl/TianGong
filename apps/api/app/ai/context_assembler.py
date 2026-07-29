@@ -152,13 +152,17 @@ def _search_user_memories(db, user_id, query: str):
         return []
 
 
-def build_system_prompt(db, section: Section) -> str:
+def build_system_prompt(db, section: Section, user_input: str | None = None) -> str:
     """装配动态 system prompt（agent loop 路线用，spec §3.1.1）。
 
     拼接顺序：项目元信息 [L4] → 已写章节 [前文直注入] → 当前章节策略 → 角色定义。
 
     项目元信息在顶部（全局不变量先建立上下文），角色定义在底部（行为规范在看到具体任务后理解更准确）。
     此顺序与原 assemble_messages 的拼接顺序保持心智模型统一。
+
+    user_input（可选）：用户当前输入。用于记忆检索 query——用户刚说的话往往是最强的
+    检索信号（如「检查我的写作风格」直接关联「偏好简洁风格」记忆）。MVP 策略：用户输入
+    为主，章节信号（标题+目标）为辅，拼接检索。None 时（如非 chat 场景）回退到纯章节信号。
     """
     project = db.get(Project, section.project_id)
     sp = get_section_prompt(section.key)
@@ -180,10 +184,14 @@ def build_system_prompt(db, section: Section) -> str:
         parts.append(written)
 
     # 【新增】用户长期记忆层（检索注入，纯检索式策略）
-    # 用章节标题 + 目标做检索 query，覆盖本章节最可能相关的用户偏好/事实/know-how
+    # 检索 query 选择（实测：混拼会稀释语义信号，必须二选一）：
+    # - 有 user_input（chat 场景）：只用用户输入。它是最强语义信号，
+    #   如「检查我的写作风格」→命中「偏好简洁风格」记忆。
+    # - 无 user_input（generate 等场景）：回退到章节标题+目标。
     # project 已在上方 fetch（L164），直接复用其 user_id，避免重复查询。
     if project.user_id is not None:
-        memories = _search_user_memories(db, project.user_id, f"{section.title} {sp.goal}")
+        memory_query = user_input if user_input else f"{section.title} {sp.goal}"
+        memories = _search_user_memories(db, project.user_id, memory_query)
         if memories:
             memory_lines = "\n".join(f"- {m.content}" for m in memories)
             parts.append("# 关于这位用户的长期记忆（请遵循其偏好与约定）")

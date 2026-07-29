@@ -37,7 +37,7 @@ __all__ = ["build_agent"]
 
 def build_agent(
     db, *, llm_config: ResolvedChatConfig, user_id,
-    section=None,
+    section=None, user_input: str | None = None,
 ) -> CompiledStateGraph:
     """构造 deepagents agent（路线 B 的装配入口）。
 
@@ -102,9 +102,10 @@ def build_agent(
     llm = get_llm(llm_config, streaming=True)
 
     # [L1][L4][前文直注入] section 非 None 时装配动态 system prompt（spec §3.2）
+    # user_input 透传给记忆检索（用户当前输入是最强检索信号，spec §5.3 升级）
     if section is not None:
         from app.ai.context_assembler import build_system_prompt
-        system_prompt = build_system_prompt(db, section)
+        system_prompt = build_system_prompt(db, section, user_input=user_input)
     else:
         system_prompt = SYSTEM_PROMPT  # 向后兼容兜底
 
