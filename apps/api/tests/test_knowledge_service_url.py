@@ -27,7 +27,7 @@ def test_upload_external_with_url(mock_ingest, db_session):
     kf = knowledge_service.upload_external(
         db_session, storage=storage, user=user,
         filename="page.md", content="正文".encode() * 100,
-        mime="text/markdown", text="正文" * 100,
+        mime="text/markdown",
         url="https://example.com/page",
     )
     assert kf.url == "https://example.com/page"
@@ -41,7 +41,7 @@ def test_upload_external_without_url(mock_ingest, db_session):
     kf = knowledge_service.upload_external(
         db_session, storage=storage, user=user,
         filename="doc.docx", content=b"content",
-        mime="application/octet-stream", text="text",
+        mime="application/octet-stream",
     )
     assert kf.url is None
 
@@ -55,7 +55,7 @@ def test_upload_to_global_with_url(mock_ingest, db_session):
     kf = knowledge_service.upload_to_global(
         db_session, storage=storage, uploader=admin,
         filename="page.md", content=b"unique-content-for-url-test-1",
-        mime="text/markdown", text="unique-content-for-url-test-1",
+        mime="text/markdown",
         url="https://example.com/global",
     )
     assert kf.url == "https://example.com/global"

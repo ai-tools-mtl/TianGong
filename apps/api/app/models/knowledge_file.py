@@ -5,8 +5,8 @@
 - bucket/object_key: minio 定位
 - source_type: 区分文件来源(归档导出 / 外部 docx / 外部 pdf)
 
-异步向量化(plan async-knowledge-upload):上传立即落库(status=pending),
-向量化在后台跑,通过 status/stage 跟踪进度。
+异步向量化(plan async-knowledge-upload + async-parsing):上传立即落库
+(status=pending),解析+分块+向量化在后台跑,通过 status/stage 跟踪进度。
 """
 
 import uuid
@@ -37,11 +37,11 @@ class KnowledgeFile(Base, IdMixin, TimestampMixin):
     # 网页来源的原 URL(external_web 才有;其他来源为 None)
     url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
 
-    # ── 异步向量化进度(plan async-knowledge-upload)──
-    # status: 文件级状态机。pending(刚落库待向量化) / processing(向量化中) /
-    #         ready(完成,可检索) / failed(向量化失败)。老数据迁移时 backfill 为 ready。
-    # stage: 细分阶段,前端进度条用。uploaded(已落库) / embedding(向量化中) /
-    #        done(完成)。失败时保留上一个 stage + status=failed。
+    # ── 异步解析+向量化进度(plan async-knowledge-upload + async-parsing)──
+    # status: 文件级状态机。pending(刚落库待处理) / processing(解析/向量化中) /
+    #         ready(完成,可检索) / failed(解析/向量化失败)。老数据迁移时 backfill 为 ready。
+    # stage: 细分阶段,前端进度条用。uploaded(已落库) / parsing(解析中) /
+    #        embedding(向量化中) / done(完成)。失败时保留上一个 stage + status=failed。
     # 前端轮询列表接口看 status/stage 推进。
     status: Mapped[str] = mapped_column(String(20), default="pending", index=True)
     stage: Mapped[str | None] = mapped_column(String(20), nullable=True)

@@ -27,7 +27,7 @@ def test_delete_global_file_removes_record_and_storage(db_session):
     kf = knowledge_service.upload_to_global(
         db_session, storage=storage, uploader=admin,
         filename="test.md", content=b"unique-delete-test-content",
-        mime="text/markdown", text="正文内容" * 50,
+        mime="text/markdown",
     )
     chunk = KnowledgeChunk(
         user_id=admin.id, scope="global", file_id=kf.id,
@@ -69,7 +69,7 @@ def test_delete_global_file_refuses_personal(db_session):
     kf = knowledge_service.upload_external(
         db_session, storage=storage, user=user,
         filename="personal.md", content=b"personal-content",
-        mime="text/markdown", text="text",
+        mime="text/markdown",
     )
     with pytest.raises(ValidationError):
         knowledge_service.delete_global_file(

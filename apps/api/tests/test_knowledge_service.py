@@ -18,10 +18,12 @@ from app.services import knowledge_service as ks
 def fake_embed(monkeypatch):
     """embedding 返回固定零向量,不真实调 embedding 服务。
 
-    异步向量化后(plan async-knowledge-upload)：upload_external/upload_to_global 只落库
-    (写空 embedding 的 chunk),不再在请求内 embed。这里桩掉 _write_chunks_unembedded:
-    SQLite 测试库跳过 knowledge_chunks 表(pgvector Vector 不支持),chunk 写入走 PG 集成验证。
-    本测试套只验 KnowledgeFile/Review 的业务逻辑 + 异步落库后的状态字段。
+    异步解析+向量化后(plan async-parsing)：upload_external/upload_to_global 只落库
+    (status=pending),不解析、不分块、不 embed——全部移到后台 run_embed_job_standalone。
+    这里桩掉 _write_chunks_unembedded 仅记录调用参数供断言（本套测试不跑后台任务，
+    故 upload 不会触发它；记录器留作后台任务测试断言用）。SQLite 测试库跳过
+    knowledge_chunks 表(pgvector Vector 不支持),chunk 真实写入走 PG 集成验证。
+    本测试套只验 KnowledgeFile/Review 的业务逻辑 + 落库后的状态字段。
     """
     dim = 2048
 
@@ -67,14 +69,18 @@ def normal_user(db_session, registered_user):
 
 
 def test_upload_to_global_creates_global_file(db_session, admin_user, fake_embed, _reset_storage):
-    """admin 直传全局库:KnowledgeFile scope=global,文件存 global bucket,chunk 以 global 入库。"""
+    """admin 直传全局库:KnowledgeFile scope=global,文件存 global bucket,落库 status=pending。
+
+    解析+分块已移到后台(plan async-parsing),upload 时不写 chunk,
+    所以 ingested 应为空(chunk 在后台 run_embed_job_standalone 才写)。
+    """
     from app.core.storage import get_storage
 
     storage = get_storage()
     kf = ks.upload_to_global(
         db_session, storage=storage, uploader=admin_user,
         filename="case.pdf", content=b"%PDF-1.4 fake",
-        mime="application/pdf", text="某专利技术方案详细描述",
+        mime="application/pdf",
     )
     db_session.refresh(kf)
     assert kf.scope == "global"
@@ -82,9 +88,8 @@ def test_upload_to_global_creates_global_file(db_session, admin_user, fake_embed
     assert kf.source_type == "external_pdf"
     assert kf.uploader_id == admin_user.id
     assert storage.stat("global", kf.object_key) is True
-    # chunk 以 global scope 入库
-    assert len(fake_embed["ingested"]) == 1
-    assert fake_embed["ingested"][0]["scope"] == "global"
+    # 异步化后 upload 不写 chunk（后台才写）
+    assert len(fake_embed["ingested"]) == 0
 
 
 def test_upload_external_to_personal(db_session, normal_user, fake_embed, _reset_storage):
@@ -95,7 +100,7 @@ def test_upload_external_to_personal(db_session, normal_user, fake_embed, _reset
     kf = ks.upload_external(
         db_session, storage=storage, user=normal_user,
         filename="ref.docx", content=b"docx bytes",
-        mime="application/docx", text="参考资料内容",
+        mime="application/docx",
     )
     db_session.refresh(kf)
     assert kf.scope == "personal"
@@ -112,7 +117,7 @@ def test_submit_for_review_creates_pending(db_session, normal_user, fake_embed, 
     storage = get_storage()
     kf = ks.upload_external(
         db_session, storage=storage, user=normal_user,
-        filename="ref.pdf", content=b"x", mime="application/pdf", text="案例",
+        filename="ref.pdf", content=b"x", mime="application/pdf",
     )
     review = ks.submit_for_review(
         db_session, submitter_id=str(normal_user.id), file_id=str(kf.id),
@@ -130,7 +135,7 @@ def test_submit_for_review_idempotent(db_session, normal_user, fake_embed, _rese
     storage = get_storage()
     kf = ks.upload_external(
         db_session, storage=storage, user=normal_user,
-        filename="ref.pdf", content=b"x", mime="application/pdf", text="案例",
+        filename="ref.pdf", content=b"x", mime="application/pdf",
     )
     r1 = ks.submit_for_review(
         db_session, submitter_id=str(normal_user.id), file_id=str(kf.id),
@@ -156,7 +161,7 @@ def test_submit_for_review_rejects_not_owner(
     storage = get_storage()
     kf = ks.upload_external(
         db_session, storage=storage, user=normal_user,
-        filename="ref.pdf", content=b"x", mime="application/pdf", text="案例",
+        filename="ref.pdf", content=b"x", mime="application/pdf",
     )
     # 造另一个用户
     other = User(username="other", email="other@test.com", password_hash=hash_password("P1!"), name="O")

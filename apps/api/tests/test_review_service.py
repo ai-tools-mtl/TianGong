@@ -52,7 +52,7 @@ def _upload_personal(db_session, storage, normal_user):
     kf = ks.upload_external(
         db_session, storage=storage, user=normal_user,
         filename="case.pdf", content=b"pdf bytes",
-        mime="application/pdf", text="某案例文本",
+        mime="application/pdf",
     )
     review = ks.submit_for_review(
         db_session, submitter_id=str(normal_user.id), file_id=str(kf.id),
@@ -116,7 +116,7 @@ def test_approve_global_file_skips_copy(db_session, admin_user, fake_embed, _res
     kf = ks.upload_to_global(
         db_session, storage=storage, uploader=admin_user,
         filename="archived.docx", content=b"docx",
-        mime="application/docx", text="归档交底书内容",
+        mime="application/docx",
     )
     # 手动建工单(归档流 A 的 source_type)
     review = KnowledgeReview(
