@@ -5,7 +5,13 @@
 （ai.py:239 读 section.id/conv.id、ai.py:347 读 section.status）。
 
 C1 修复（expire_on_commit=False）后这些访问不触发冗余 lazy load，也不在
-aborted session 上抛 InternalError。本测试固化这一正确行为，防止未来误改回 True。
+aborted session 上抛 InternalError。本测试固化这一正确行为（commit/rollback 后
+访问 ORM 不抛异常、值正确）。
+
+注意：conftest 的 db_session fixture 自建 sessionmaker（默认 expire_on_commit=True），
+不引用生产 SessionLocal，故本测试无法在 SQLite 上模拟「改回 True 后必红」——
+配置级断言见 test_sessionlocal_config.py::test_sessionlocal_expire_on_commit_is_false。
+本测试的价值是端到端行为覆盖（含 rollback 后访问、写后读），属行为固化而非配置守卫。
 """
 import uuid
 
