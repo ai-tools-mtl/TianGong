@@ -53,7 +53,14 @@ def generate_summary(db: Session, section: Section) -> str:
 
 
 def _extract_text(tiptap_doc: dict) -> str:
-    """从 Tiptap JSON 提取纯文本。"""
+    """从 Tiptap JSON 提取纯文本。
+
+    返回前清洗 NUL/控制字符（sanitize_text_for_pg）：用户在编辑器粘贴的内容
+    可能含控制字符，写入 Section.summary / KnowledgeChunk.content（PG text 列）
+    会触发 DataError。与 dispatcher.extract_text 同根，统一在出口清洗。
+    """
+    from app.core.text_utils import sanitize_text_for_pg
+
     parts: list[str] = []
 
     def walk(node):
@@ -67,4 +74,4 @@ def _extract_text(tiptap_doc: dict) -> str:
                 walk(item)
 
     walk(tiptap_doc)
-    return "".join(parts)
+    return sanitize_text_for_pg("".join(parts))

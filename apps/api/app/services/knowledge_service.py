@@ -30,6 +30,10 @@ from app.core.storage import Storage
 from app.models import KnowledgeChunk, KnowledgeFile, KnowledgeReview
 from app.rag.chunker import chunk_sections
 from app.rag.embedding import embed_texts
+
+# 知识库文件大小上限（50MB）。一次性 read 进内存，防超大文件 DoS。
+MAX_KNOWLEDGE_FILE_SIZE = 50 * 1024 * 1024
+
 from app.services.llm_config_service import resolve_embedding_config
 from app.services.llm_log_helper import log_embed_call
 
@@ -46,8 +50,12 @@ def upload_to_global(
     调用方负责 spawn run_embed_job_standalone 做后台向量化。
     全局库去重:按 content_hash(SHA256)查重,已存在则返回已有记录,
     不重复存储/向量化(防 admin 反复上传同一文件导致检索结果重复)。
+    并发去重:check-then-insert 有 TOCTOU 竞态，靠部分唯一索引
+   （迁移 4c736cec13b7：scope='global' 的 content_hash 唯一）兜底，
+    IntegrityError 时回滚重查返回已存在记录。
     """
     import hashlib
+    from sqlalchemy.exc import IntegrityError
 
     source_type = source_type_override or _source_type_for(filename)
     content_hash = hashlib.sha256(content).hexdigest()
@@ -74,14 +82,27 @@ def upload_to_global(
         status="pending", stage="uploaded",
     )
     db.add(kf)
-    db.flush()  # 让 kf.id 就位
-    _write_chunks_unembedded(
-        db, scope="global", user_id=uploader.id, file_id=kf.id,
-        source_type=source_type, text=text, title=filename,
-    )
-    db.commit()
-    db.refresh(kf)
-    return kf
+    try:
+        db.flush()  # 让 kf.id 就位（触发唯一索引校验）
+        _write_chunks_unembedded(
+            db, scope="global", user_id=uploader.id, file_id=kf.id,
+            source_type=source_type, text=text, title=filename,
+        )
+        db.commit()
+        db.refresh(kf)
+        return kf
+    except IntegrityError:
+        # 并发去重竞态：另一个请求已插入同 hash，回滚重查返回已存在记录
+        db.rollback()
+        existing = db.scalar(
+            select(KnowledgeFile).where(
+                (KnowledgeFile.scope == "global")
+                & (KnowledgeFile.content_hash == content_hash)
+            )
+        )
+        if existing is not None:
+            return existing
+        raise
 
 
 def upload_external(
@@ -258,13 +279,14 @@ def submit_disclosure_for_review(
     storage.put("global", object_key, docx_bytes, mime)
 
     import hashlib
+    from app.core.text_utils import sanitize_filename
 
     kf = KnowledgeFile(
         uploader_id=submitter.id,
         scope="global",  # 文件已在 global bucket(归档流特点)
         bucket="global",
         object_key=object_key,
-        filename=f"{project.title}.docx",
+        filename=sanitize_filename(f"{project.title}.docx"),
         mime_type=mime, size=len(docx_bytes),
         source_type="disclosure_export",
         content_hash=hashlib.sha256(docx_bytes).hexdigest(),
@@ -321,14 +343,18 @@ def update_chunk(
         raise PermissionError("chunk locked")
 
     old_edited = chunk.edited_text
+    # 写入前清洗（admin 编辑入口，防 NUL/控制字符入 PG text 列）
+    from app.core.text_utils import sanitize_text_for_pg
+
     if "keywords" in payload:
-        chunk.keywords = payload["keywords"]
+        chunk.keywords = [sanitize_text_for_pg(k) for k in payload["keywords"]]
     if "questions" in payload:
-        chunk.questions = payload["questions"]
+        chunk.questions = [sanitize_text_for_pg(q) for q in payload["questions"]]
     if "weight" in payload:
         chunk.weight = payload["weight"]
     if "edited_text" in payload:
-        chunk.edited_text = payload["edited_text"] or None  # 空串归一化为 None（表示用原 content）
+        cleaned = sanitize_text_for_pg(payload["edited_text"])
+        chunk.edited_text = cleaned or None  # 空串归一化为 None（表示用原 content）
     if "locked" in payload:
         chunk.locked = payload["locked"]
 
@@ -368,7 +394,13 @@ def _write_chunks_unembedded(
 
     异步向量化:向量化交给 embed_chunks_for_file / run_embed_job_standalone 后台做。
     返回写入的 chunk 列表(embedding 待填)。
+
+    入口统一清洗 sanitize_text_for_pg（PDF/docx/web 三路汇聚点，防 NUL 入 PG）。
     """
+    from app.core.text_utils import sanitize_text_for_pg
+
+    text = sanitize_text_for_pg(text)
+    title = sanitize_text_for_pg(title)
     chunks = chunk_sections([{"key": None, "title": title, "content": text}])
     if not chunks:
         return []
@@ -384,8 +416,10 @@ def _write_chunks_unembedded(
         db.add(chunk)
         written.append(chunk)
 
-    # G3：生成 tsv（仅 PG）；embedding 此时为空，但 tsv 不依赖 embedding
+    # G3：生成 tsv（仅 PG）；embedding 此时为空，但 tsv 不依赖 embedding。
+    # 必须先 flush 让 INSERT 落 DB，UPDATE ... WHERE file_id 才能命中本批 chunk。
     if is_postgres() and file_id:
+        db.flush()
         db.execute(sa_text(
             "UPDATE knowledge_chunks SET tsv = to_tsvector('simple', coalesce(content, '')) "
             "WHERE tsv IS NULL AND file_id = :fid"
@@ -457,9 +491,19 @@ def run_embed_job_standalone(file_id: str) -> None:
 
     db = SessionLocal()
     try:
-        kf = db.get(KnowledgeFile, fid)
+        # FOR UPDATE SKIP LOCKED（仅 PG）：防 recover_stale_files 与 background embed 并发
+        # 夺同一文件——被锁的行直接跳过（返回 None），避免两个 session 互相覆盖 status。
+        # SQLite 不支持 SKIP LOCKED，用普通 get（SQLite 单写锁本身串行，无竞态）。
+        if is_postgres():
+            kf = db.scalar(
+                select(KnowledgeFile)
+                .where(KnowledgeFile.id == fid)
+                .with_for_update(skip_locked=True)
+            )
+        else:
+            kf = db.get(KnowledgeFile, fid)
         if kf is None:
-            logger.warning(f"run_embed_job_standalone: 文件 {file_id} 不存在，忽略")
+            logger.info(f"向量化任务 {file_id[:8]}... 文件不存在或被锁（跳过），忽略")
             return
         if kf.status == "ready":
             logger.info(f"向量化任务 {file_id[:8]}... 已是 ready，跳过")

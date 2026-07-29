@@ -96,16 +96,25 @@ async def upload_personal(
     异步向量化:落库后立即返回(status=pending),向量化在 BackgroundTasks 后台跑。
     前端轮询文件状态 pending→processing→ready。
     """
+    from app.core.text_utils import sanitize_filename
+
     if not file.filename:
         raise ValidationError("缺少文件名")
+    # 文件大小上限（防 DoS：一次性 read 进内存，超大文件打满内存）
+    if file.size and file.size > knowledge_service.MAX_KNOWLEDGE_FILE_SIZE:
+        raise ValidationError(
+            f"文件过大（{file.size // 1024 // 1024}MB），上限 "
+            f"{knowledge_service.MAX_KNOWLEDGE_FILE_SIZE // 1024 // 1024}MB"
+        )
+    filename = sanitize_filename(file.filename)
     content = await file.read()
     try:
-        text = extract_text(file.filename, content)
+        text = extract_text(filename, content)
     except ValueError as e:
         raise ValidationError(str(e))
     kf = knowledge_service.upload_external(
         db, storage=get_storage(), user=current_user,
-        filename=file.filename, content=content,
+        filename=filename, content=content,
         mime=file.content_type or "application/octet-stream", text=text,
     )
     # 向量化在响应返回后的后台任务执行(自开 session),不阻塞本请求

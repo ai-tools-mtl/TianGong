@@ -21,6 +21,7 @@ from urllib.parse import urlparse
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
+from app.core.database import is_postgres
 from app.core.exceptions import NotFoundError, ValidationError
 from app.models import LLMCallLog, User, WebIngestionJob
 from app.services.llm_log_helper import log_firecrawl_call
@@ -244,10 +245,15 @@ def create_job(
 
 
 def _derive_filename(title: str, url: str) -> str:
-    """从标题或 URL 推导展示用文件名(.md)。"""
+    """从标题或 URL 推导展示用文件名(.md)。
+
+    用 sanitize_filename 统一清洗（去 NUL/控制符/路径分隔），补此前漏掉的 NUL：
+    网页 <title> 畸形 HTML 可能含 \\x00，进 KnowledgeFile.filename（PG varchar）会 DataError。
+    """
+    from app.core.text_utils import sanitize_filename
+
     if title:
-        # 文件名安全:去掉 Windows/Linux 非法字符
-        safe = "".join(c for c in title if c not in '\\/:*?"<>|')[:80]
+        safe = sanitize_filename(title)[:80]
         return f"{safe}.md" if safe else "webpage.md"
     parsed = urlparse(url)
     base = parsed.path.strip("/").replace("/", "_") or parsed.netloc
@@ -341,9 +347,17 @@ def run_job(job_id: str) -> None:
     db = SessionLocal()
     job = None
     try:
-        job = db.get(WebIngestionJob, uuid.UUID(job_id))
+        # FOR UPDATE SKIP LOCKED（仅 PG）：防 recover 与 background run_job 并发夺同一 job。
+        if is_postgres():
+            job = db.scalar(
+                select(WebIngestionJob)
+                .where(WebIngestionJob.id == uuid.UUID(job_id))
+                .with_for_update(skip_locked=True)
+            )
+        else:
+            job = db.get(WebIngestionJob, uuid.UUID(job_id))
         if job is None or job.status in ("completed", "failed"):
-            return  # 幂等:已完成/失败的 job 重跑无副作用
+            return  # 幂等:已完成/失败的 job 重跑无副作用；被锁则跳过
         config = resolve_firecrawl_config(db)
         if config is None:
             _mark_failed(db, job, "Firecrawl 配置丢失")
@@ -418,19 +432,21 @@ def _ingest_crawl_pages(db, *, job, pages, config) -> None:
             continue
         content_bytes = filtered.markdown.encode("utf-8")
         filename = _derive_filename(filtered.title, page.url)
+        # page.url 截断到 2048（KnowledgeFile.url 列上限；某些站点带长 token 的 URL 会超长）
+        page_url = (page.url or "")[:2048]
         try:
             if job.scope == "global":
                 kf = knowledge_service.upload_to_global(
                     db, storage=storage, uploader=user,
                     filename=filename, content=content_bytes,
-                    mime="text/markdown", text=filtered.markdown, url=page.url,
+                    mime="text/markdown", text=filtered.markdown, url=page_url,
                     source_type_override="external_web",
                 )
             else:
                 kf = knowledge_service.upload_external(
                     db, storage=storage, user=user,
                     filename=filename, content=content_bytes,
-                    mime="text/markdown", text=filtered.markdown, url=page.url,
+                    mime="text/markdown", text=filtered.markdown, url=page_url,
                     source_type_override="external_web",
                 )
             # 异步向量化：run_job 已在后台线程，但 embed 仍耗时，再 spawn 独立任务

@@ -8,15 +8,16 @@
 
 from io import BytesIO
 
+from app.core.text_utils import sanitize_text_for_pg
 from app.parsing.pdf_parser import extract_pdf_text
 
 
 def extract_text(filename: str, content: bytes) -> str:
     """根据扩展名提取文本。
 
-    清洗 NUL(\\x00)字节：PDF/docx 解析出的文本偶尔含二进制残留的 NUL，
-    而 PostgreSQL 的 text 类型不接受 NUL 字节（psycopg 报 DataError），
-    会导致后续 chunk 入库失败。统一在提取后剔除。
+    统一用 sanitize_text_for_pg 清洗 NUL + C0 控制字符：PDF/docx 解析出的文本
+    偶尔含二进制残留的 NUL，PostgreSQL 的 text 类型不接受（psycopg 报 DataError），
+    会导致后续 chunk 入库失败。
 
     Raises:
         ValueError: 不支持的格式,或 PDF 为扫描件(无文本层)。
@@ -32,8 +33,7 @@ def extract_text(filename: str, content: bytes) -> str:
     else:
         raise ValueError(f"不支持的格式: .{ext}")
 
-    # 清洗 NUL 字节（PostgreSQL text 列不接受，PDF 解析常有残留）
-    return text.replace("\x00", "")
+    return sanitize_text_for_pg(text)
 
 
 def _docx_to_text(content: bytes) -> str:

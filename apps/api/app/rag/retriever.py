@@ -90,16 +90,18 @@ def retrieve(
     )
     vec_rows = db.execute(vec_stmt).all()
 
-    # 关键词路召回（BM25 via tsvector，仅 PG；SQLite 跳过——无 tsvector/GIN 支持）
+    # 关键词路召回（pg_trgm 相似度，仅 PG；SQLite 跳过——无 pg_trgm 扩展）。
+    # 改自 to_tsvector('simple')：simple 配置对中文不分词（按空格切），关键词路失效。
+    # pg_trgm 按 trigram 匹配，对中文子串效果好（需迁移 4c736cec13b7 建扩展+GIN 索引）。
     kw_rows = []
     if is_postgres():
-        tsquery = func.plainto_tsquery('simple', query)
+        db.execute(text("SET LOCAL pg_trgm.similarity_threshold = :th"), {"th": 0.1})
         kw_stmt = (
             select(
                 KnowledgeChunk,
-                func.ts_rank_cd(KnowledgeChunk.tsv, tsquery).label("rank"),
+                func.similarity(KnowledgeChunk.content, query).label("rank"),
             )
-            .where(KnowledgeChunk.tsv.match(tsquery))
+            .where(KnowledgeChunk.content.op("%")(query))
             .where(scope_filter)
             .order_by(text("rank DESC"))
             .limit(RETRIEVAL_CANDIDATE_POOL)
