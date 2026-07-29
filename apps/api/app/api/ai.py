@@ -267,10 +267,21 @@ async def chat(
             err = e
             yield _sse_event("error", {"code": "llm_error", "message": _friendly_llm_error(e)})
         finally:
+            # 防御：agent loop 内任何 DB 操作失败会让事务进入 aborted 状态。
+            # 此处 rollback 确保 _log_llm_call 的参数求值（current_user.id 触发
+            # lazy load）和日志写入不会因事务中毒而二次失败。user_id/project_id
+            # 预先取值，避免 rollback 后对象 expire 又触发 lazy load。
+            try:
+                _uid = current_user.id
+                _pid = section.project_id
+            except Exception:
+                _uid = None
+                _pid = None
+            db.rollback()
             _log_llm_call(
                 db,
-                user_id=current_user.id,
-                project_id=section.project_id,
+                user_id=_uid,
+                project_id=_pid,
                 action="chat",
                 model=_resolve_model(llm_config),
                 provider=_resolve_provider(llm_config),
@@ -352,10 +363,19 @@ async def generate_draft(
             err = e
             yield _sse_event("error", {"code": "llm_error", "message": _friendly_llm_error(e)})
         finally:
+            # 防御：同 chat 端点，agent loop 内 DB 失败可能毒化事务，
+            # rollback + 预取 id 确保 _log_llm_call 不二次失败。
+            try:
+                _uid = current_user.id
+                _pid = section.project_id
+            except Exception:
+                _uid = None
+                _pid = None
+            db.rollback()
             _log_llm_call(
                 db,
-                user_id=current_user.id,
-                project_id=section.project_id,
+                user_id=_uid,
+                project_id=_pid,
                 action="generate",
                 model=_resolve_model(llm_config),
                 provider=_resolve_provider(llm_config),

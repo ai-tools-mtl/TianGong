@@ -39,7 +39,12 @@ def create_agent_tools(db: Any, user_id):
             _uuid.UUID(str(user_id))  # 校验合法性
         except (ValueError, TypeError):
             return []
-        results = retrieve(db, user_id=user_id, query=query)
+        # 工具是事务边界：检索失败必须 rollback，避免毒化 agent loop 后续查询
+        try:
+            results = retrieve(db, user_id=user_id, query=query)
+        except Exception:
+            db.rollback()
+            return []
         return [
             {
                 "content": r.content,
@@ -77,16 +82,23 @@ def create_agent_tools(db: Any, user_id):
         if not content:
             return "未保存：内容为空"
 
-        # 去重：查找高度相似的已有记忆
-        similar = find_similar_memory(db, user_id=user_id, content=content)
-        if similar is not None:
-            # 合并：相似度 ≥ 阈值，更新已有记忆
-            update_memory(db, memory_id=similar.id, user_id=user_id, content=content)
-            db.commit()
-            return f"已合并更新已有记忆（原：「{similar.content[:50]}...」）"
+        # 工具是 agent loop 与主请求的事务边界：任何 DB 失败必须 rollback，
+        # 否则 PG 事务进入 aborted 状态，毒化同一 session 的后续查询
+        # （如对话 finally 里的 _log_llm_call 访问 current_user.id 触发 lazy load）。
+        try:
+            # 去重：查找高度相似的已有记忆
+            similar = find_similar_memory(db, user_id=user_id, content=content)
+            if similar is not None:
+                # 合并：相似度 ≥ 阈值，更新已有记忆
+                update_memory(db, memory_id=similar.id, user_id=user_id, content=content)
+                db.commit()
+                return f"已合并更新已有记忆（原：「{similar.content[:50]}...」）"
 
-        create_memory(db, user_id=user_id, content=content, source=SOURCE_AGENT)
-        db.commit()
-        return "已保存"
+            create_memory(db, user_id=user_id, content=content, source=SOURCE_AGENT)
+            db.commit()
+            return "已保存"
+        except Exception:
+            db.rollback()
+            return "未保存：写入失败，请稍后重试"
 
     return [rag_search, save_memory]
