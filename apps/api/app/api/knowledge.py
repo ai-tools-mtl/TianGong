@@ -20,7 +20,6 @@ from app.core.exceptions import NotFoundError, ValidationError
 from app.core.storage import get_storage
 from app.deps import get_current_user
 from app.models import KnowledgeFile, User
-from app.parsing.dispatcher import extract_text
 from app.services import archive_service, knowledge_service
 
 router = APIRouter(tags=["knowledge"])
@@ -94,8 +93,9 @@ async def upload_personal(
 ):
     """user 上传外部素材(docx/pdf)到个人库。
 
-    异步向量化:落库后立即返回(status=pending),向量化在 BackgroundTasks 后台跑。
-    前端轮询文件状态 pending→processing→ready。
+    异步解析+向量化(plan async-parsing):落库后立即返回(status=pending),
+    解析+分块+向量化在 BackgroundTasks 后台跑。前端轮询文件状态
+    pending(uploaded)→processing(parsing/embedding)→ready(done)。
     """
     from app.core.text_utils import sanitize_filename
 
@@ -109,16 +109,12 @@ async def upload_personal(
         )
     filename = sanitize_filename(file.filename)
     content = await file.read()
-    try:
-        text = extract_text(filename, content, db=db)
-    except ValueError as e:
-        raise ValidationError(str(e))
     kf = knowledge_service.upload_external(
         db, storage=get_storage(), user=current_user,
         filename=filename, content=content,
-        mime=file.content_type or "application/octet-stream", text=text,
+        mime=file.content_type or "application/octet-stream",
     )
-    # 向量化在响应返回后的后台任务执行(自开 session),不阻塞本请求
+    # 解析+向量化在响应返回后的后台任务执行(自开 session),不阻塞本请求
     background_tasks.add_task(knowledge_service.run_embed_job_standalone, str(kf.id))
     return _file_out(kf)
 

@@ -8,9 +8,10 @@
 上报(关键约束 2):submit_for_review 建 KnowledgeReview(pending),
   admin 审核在 review_service(T10)处理。
 
-异步向量化(plan async-knowledge-upload):
-- upload_external / upload_to_global 只做落库(写空 embedding 的 chunk),立即返回
-  (file.status=pending)。向量化交给后台 run_embed_job_standalone(自开 session)。
+异步解析+向量化(plan async-knowledge-upload + async-parsing):
+- upload_external / upload_to_global 只做落库(file.status=pending),立即返回;
+  不解析、不分块、不向量化。解析(从 minio 读回 content)、分块、向量化全部
+  交给后台 run_embed_job_standalone(自开 session)。
 - 调用方(文件上传端点 / web_ingestion)负责 spawn 后台任务。
 - chunk 写入复用 chunker + embedding。注意:SQLite 测试库跳过
   knowledge_chunks 表,本模块的 chunk 写入在 PG 集成验证。
@@ -40,14 +41,15 @@ from app.services.llm_log_helper import log_embed_call
 
 def upload_to_global(
     db: Session, *, storage: Storage, uploader, filename: str,
-    content: bytes, mime: str, text: str,
+    content: bytes, mime: str,
     url: str | None = None,
     source_type_override: str | None = None,
 ) -> KnowledgeFile:
-    """admin 直传全局库。落库 file + 空 embedding 的 chunk(scope=global)。
+    """admin 直传全局库。只落库 file(scope=global)，不解析不分块不向量化。
 
-    异步向量化:本函数只落库(status=pending, stage=uploaded),不调 embed_texts。
-    调用方负责 spawn run_embed_job_standalone 做后台向量化。
+    异步解析+向量化(plan async-parsing):本函数只落库(status=pending, stage=uploaded)。
+    解析(读回 content)、分块、向量化全部交给后台 run_embed_job_standalone。
+    调用方负责 spawn run_embed_job_standalone。
     全局库去重:按 content_hash(SHA256)查重,已存在则返回已有记录,
     不重复存储/向量化(防 admin 反复上传同一文件导致检索结果重复)。
     并发去重:check-then-insert 有 TOCTOU 竞态，靠部分唯一索引
@@ -84,10 +86,6 @@ def upload_to_global(
     db.add(kf)
     try:
         db.flush()  # 让 kf.id 就位（触发唯一索引校验）
-        _write_chunks_unembedded(
-            db, scope="global", user_id=uploader.id, file_id=kf.id,
-            source_type=source_type, text=text, title=filename,
-        )
         db.commit()
         db.refresh(kf)
         return kf
@@ -107,14 +105,15 @@ def upload_to_global(
 
 def upload_external(
     db: Session, *, storage: Storage, user, filename: str,
-    content: bytes, mime: str, text: str,
+    content: bytes, mime: str,
     url: str | None = None,
     source_type_override: str | None = None,
 ) -> KnowledgeFile:
-    """user 上传外部素材进个人库。落库 file + 空 embedding 的 chunk(scope=personal)。
+    """user 上传外部素材进个人库。只落库 file(scope=personal)，不解析不分块不向量化。
 
-    异步向量化:本函数只落库(status=pending, stage=uploaded),不调 embed_texts。
-    调用方负责 spawn run_embed_job_standalone 做后台向量化。
+    异步解析+向量化(plan async-parsing):本函数只落库(status=pending, stage=uploaded)。
+    解析(读回 content)、分块、向量化全部交给后台 run_embed_job_standalone。
+    调用方负责 spawn run_embed_job_standalone。
     """
     source_type = source_type_override or _source_type_for(filename)
     object_key = f"personal/{user.id}/{uuid.uuid4()}.{_ext(filename)}"
@@ -132,10 +131,6 @@ def upload_external(
     )
     db.add(kf)
     db.flush()
-    _write_chunks_unembedded(
-        db, scope="personal", user_id=user.id, file_id=kf.id,
-        source_type=source_type, text=text, title=filename,
-    )
     db.commit()
     db.refresh(kf)
     return kf
@@ -474,12 +469,24 @@ def embed_chunks_for_file(db: Session, *, file_id) -> int:
 
 
 def run_embed_job_standalone(file_id: str) -> None:
-    """供 BackgroundTasks / spawn_background_task 调用：自开 session 执行向量化。
+    """供 BackgroundTasks / spawn_background_task 调用：自开 session 执行
+    解析 + 分块 + 向量化（统一后台流水线）。
 
     BackgroundTasks 在响应返回后才执行，此时请求作用域的 session 已关闭，
     因此必须自己开一个独立 session（详见设计 P0 #6，与 parse_service 同模式）。
-    状态流转：置 processing/stage=embedding → embed → ready/stage=done/completed_at；
-              异常 → failed/error_message。幂等：已是 ready 则跳过。
+
+    流水线（plan async-parsing）：
+      1. 从 minio 读回 content（上传时只落库，未解析）
+      2. 按 source_type 分流解析得到 text：
+         - external_web → content 本就是 markdown 编码，直接 decode
+         - external_pdf / external_docx → 走 extract_text（MinerU/pypdf）
+      3. 分块写空 embedding chunk（_write_chunks_unembedded）
+      4. 向量化（embed_chunks_for_file）
+
+    状态流转：
+      pending(uploaded) → processing(parsing) → processing(embedding)
+      → ready(done/completed_at)；异常 → failed/error_message。
+    幂等：已是 ready 则跳过（含 recover_stale_files 重入队场景）。
     """
     try:
         fid = uuid.UUID(file_id)
@@ -488,10 +495,11 @@ def run_embed_job_standalone(file_id: str) -> None:
         return
 
     from app.core.database import SessionLocal
+    from app.core.storage import get_storage
 
     db = SessionLocal()
     try:
-        # FOR UPDATE SKIP LOCKED（仅 PG）：防 recover_stale_files 与 background embed 并发
+        # FOR UPDATE SKIP LOCKED（仅 PG）：防 recover_stale_files 与 background 任务并发
         # 夺同一文件——被锁的行直接跳过（返回 None），避免两个 session 互相覆盖 status。
         # SQLite 不支持 SKIP LOCKED，用普通 get（SQLite 单写锁本身串行，无竞态）。
         if is_postgres():
@@ -503,18 +511,33 @@ def run_embed_job_standalone(file_id: str) -> None:
         else:
             kf = db.get(KnowledgeFile, fid)
         if kf is None:
-            logger.info(f"向量化任务 {file_id[:8]}... 文件不存在或被锁（跳过），忽略")
+            logger.info(f"知识文件任务 {file_id[:8]}... 文件不存在或被锁（跳过），忽略")
             return
         if kf.status == "ready":
-            logger.info(f"向量化任务 {file_id[:8]}... 已是 ready，跳过")
+            logger.info(f"知识文件任务 {file_id[:8]}... 已是 ready，跳过")
             return
 
+        # ── 阶段 1：解析（stage=parsing）──
         kf.status = "processing"
+        kf.stage = "parsing"
+        db.commit()
+
+        content = get_storage().get(kf.bucket, kf.object_key)
+        text = _parse_content(kf, content, db)
+
+        # ── 阶段 2：分块（写空 embedding chunk）──
+        _write_chunks_unembedded(
+            db, scope=kf.scope, user_id=kf.uploader_id, file_id=kf.id,
+            source_type=kf.source_type, text=text, title=kf.filename,
+        )
+        db.commit()
+
+        # ── 阶段 3：向量化（stage=embedding）──
         kf.stage = "embedding"
         db.commit()
 
         n = embed_chunks_for_file(db, file_id=fid)
-        logger.info(f"向量化任务 {file_id[:8]}... 完成，{n} 个 chunk 已向量化")
+        logger.info(f"知识文件任务 {file_id[:8]}... 完成，{n} 个 chunk 已向量化")
 
         kf.status = "ready"
         kf.stage = "done"
@@ -522,7 +545,7 @@ def run_embed_job_standalone(file_id: str) -> None:
         kf.completed_at = datetime.now(timezone.utc)
         db.commit()
     except Exception as e:
-        logger.exception(f"向量化任务 {file_id[:8]}... 失败：{e}")
+        logger.exception(f"知识文件任务 {file_id[:8]}... 失败：{e}")
         try:
             # 失败也回写状态（重新查，避免 session 脏）
             kf = db.get(KnowledgeFile, fid)
@@ -531,9 +554,23 @@ def run_embed_job_standalone(file_id: str) -> None:
                 kf.error_message = str(e)[:500]
                 db.commit()
         except Exception:
-            logger.exception(f"向量化任务 {file_id[:8]}... 写 failed 状态也失败")
+            logger.exception(f"知识文件任务 {file_id[:8]}... 写 failed 状态也失败")
     finally:
         db.close()
+
+
+def _parse_content(kf: KnowledgeFile, content: bytes, db: Session) -> str:
+    """按 source_type 分流解析 content，返回纯文本。
+
+    - external_web：content 是 markdown 的 utf-8 编码（web_ingestion 存的就是
+      filtered.markdown），直接 decode 还原。
+    - external_pdf / external_docx / 其他二进制：走 extract_text（MinerU/pypdf/docx）。
+      extract_text 会对 .md 等不支持的格式抛 ValueError，故 web 必须走 decode 分支。
+    """
+    if kf.source_type == "external_web":
+        return content.decode("utf-8", errors="replace")
+    from app.parsing.dispatcher import extract_text
+    return extract_text(kf.filename, content, db=db)
 
 
 def recover_stale_files(stale_minutes: int = 10) -> int:

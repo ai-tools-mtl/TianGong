@@ -94,7 +94,7 @@ export function KnowledgeManager() {
     const file = e.target.files?.[0]
     if (!file) return
     upload.mutate(file, {
-      onSuccess: () => toast.success('已上传，正在向量化（可在列表查看进度）'),
+      onSuccess: () => toast.success('已上传，正在后台解析与向量化（可在列表查看进度）'),
       onError: (err) => toast.error((err as { message?: string })?.message ?? '上传失败'),
     })
     if (fileRef.current) fileRef.current.value = ''

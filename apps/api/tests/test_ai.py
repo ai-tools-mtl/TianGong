@@ -516,3 +516,37 @@ def test_generate_emits_tool_call_and_tool_result_events(client, registered_user
     from app.models import Section
     s = db_session.get(Section, section.id)
     assert s.content is not None
+
+
+def test_update_conversation_calls_refresh_after_commit(client, registered_user, db_session, monkeypatch):
+    """C1 修复：PATCH /sections/{sid}/conversations/{cid} commit 后必须 db.refresh(conv)。
+
+    与 memories.py 同类 stale-read：update_conversation 读 updated_at（onupdate）后未 refresh，
+    expire_on_commit=False 下返回 stale 时间戳。SQLite 不执行 PG server_default/onupdate，
+    无法断言时间戳变化，故 spy Session.refresh 验证修复存在。
+    """
+    from sqlalchemy.orm import Session
+    section = _make_logged_in_section(client, registered_user, db_session)
+
+    # 先建一个会话（create 路径也会调 refresh，但我们只关心 update 的 refresh）
+    created = client.post(
+        f"/api/v1/sections/{section.id}/conversations", json={"title": "原标题"}
+    ).json()
+    cid = created["id"]
+
+    # 重置计数，只统计 update 的 refresh
+    call_count = {"n": 0}
+    orig_refresh = Session.refresh
+
+    def spy_refresh(self, *args, **kwargs):
+        call_count["n"] += 1
+        return orig_refresh(self, *args, **kwargs)
+
+    monkeypatch.setattr(Session, "refresh", spy_refresh)
+
+    r = client.patch(
+        f"/api/v1/sections/{section.id}/conversations/{cid}", json={"title": "新标题"}
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["title"] == "新标题"
+    assert call_count["n"] >= 1, "update_conversation commit 后必须调用 db.refresh（C1 修复）"
