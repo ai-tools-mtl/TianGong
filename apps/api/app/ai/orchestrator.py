@@ -98,11 +98,14 @@ async def astream_chat(
     （astream_rewrite 仍在用）仍正确填充 usage_sink。
     """
     from app.ai.agent import build_agent
+    from app.ai.intent import classify_intent
 
     # [L1] 传 section + user_input，让 build_agent 装配动态 system prompt（spec §3.3.2）
     # user_input 用于记忆检索（用户当前输入是最强语义信号，如「检查写作风格」→命中偏好记忆）
+    # [S2-2] 规则层意图识别：draft/edit/info/guide → 注入对应行为指令（D1，LLM 兜底默认关）
+    intent = classify_intent(user_input)
     agent = build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section),
-                        section=section, user_input=user_input)
+                        section=section, user_input=user_input, intent=intent)
 
     # [L2] 透传历史 + 当前用户输入（spec §3.3.2）
     messages = []
@@ -161,8 +164,9 @@ async def astream_generate(
     gen_query = next(
         (m.content for m in reversed(history) if m.role == "user"), None
     )
+    # [S2-2] generate 场景无新输入，意图恒为「代写草稿」——直接传 draft（比让规则层猜更准）
     agent = build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section),
-                        section=section, user_input=gen_query)
+                        section=section, user_input=gen_query, intent="draft")
     sp = get_section_prompt(section.key)
     instruction = (
         f"请根据对话历史，整理生成本章节【{section.title}】的草稿。"

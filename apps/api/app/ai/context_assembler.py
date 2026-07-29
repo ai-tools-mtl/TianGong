@@ -38,7 +38,13 @@ def assemble_messages(
     sp = get_section_prompt(section.key)
     system_content = SYSTEM_PROMPT + f"\n\n当前正在撰写章节：【{section.title}】\n"
     system_content += f"本章目标：{sp.goal}\n"
-    system_content += f"输出格式要求：{sp.output_format}"
+    # [S1] 知识资产激活：注入 guide_questions + completion_criteria
+    # 此前两字段定义了却从未注入，模型不知道「什么算写完」、缺少主动追问引导。
+    if sp.guide_questions:
+        system_content += "引导要点（可主动追问用户，不必逐条回答）：\n"
+        system_content += "\n".join(f"- {q}" for q in sp.guide_questions) + "\n"
+    system_content += f"输出格式要求：{sp.output_format}\n"
+    system_content += f"达标判定：{sp.completion_criteria}"
 
     if project_summaries:
         summary_text = "\n".join(
@@ -87,6 +93,35 @@ def get_project_summaries(db, project_id) -> list[dict]:
 # 前文注入字符软上限（T1 方案，spec §2.3 决策③）
 # MVP 阶段无真实长文数据，覆盖 90% 场景；超长文场景等真实数据出现再做分块/滑动窗口
 WRITTEN_SECTIONS_CHAR_BUDGET = 8000
+
+# [S2-1] 章节状态 → 行为模式提示（让模型据状态切换策略，而非一刀切）。
+# 状态后端已有（Section.status），此前没进 prompt——模型不知道白纸/草稿/定稿该用不同策略。
+SECTION_STATUS_HINTS = {
+    "empty": (
+        "章节进度：本章还是空白。你的首要任务是【引导用户补充关键技术细节】，"
+        "不要急着代写——信息不足时主动追问，而非凭空编造。"
+    ),
+    "drafting": (
+        "章节进度：本章已有草稿。用户可能在打磨或追问，"
+        "【根据用户意图决定是补充、修改还是答疑】，避免推翻已有内容。"
+    ),
+    "confirmed": (
+        "章节进度：本章已定稿。用户若再次提问，【默认是微调或答疑，避免大改】，"
+        "除非用户明确要求重写。"
+    ),
+}
+
+# [S2-2] 意图 → 行为指令（让模型据用户意图切换行为，spec §4 S2-2）。
+# 此前用户输入直接塞进 messages，模型不区分「代写/答疑/改写/引导」，
+# 导致该代写时不停追问、该答疑时甩一整段草稿。
+# 意图由 app.ai.intent.classify_intent（规则层）识别，注入此处对应指令。
+# "none"（未识别）不在此表 → 不注入意图段，走默认行为（不强分类，D1 决策）。
+INTENT_HINTS = {
+    "draft": "用户意图：【想让你代写】。综合对话和前文章节，直接产出结构化内容，不要反复追问。",
+    "edit": "用户意图：【想改某段】。先定位要改的内容，按用户指令做最小修改，保持其余不变。",
+    "info": "用户意图：【在问问题】。简洁答疑，必要时举例，不要借机代写整段内容。",
+    "guide": "用户意图：【想被引导】。用引导式提问帮用户厘清思路，而非直接代写。",
+}
 
 
 def get_written_sections_text(db, project_id, exclude_key: str) -> str:
@@ -152,7 +187,45 @@ def _search_user_memories(db, user_id, query: str):
         return []
 
 
-def build_system_prompt(db, section: Section, user_input: str | None = None) -> str:
+def _get_profile_memories(db, user_id):
+    """[S2-3] 取用户画像记忆（source=profile）。失败静默返回空（不阻断 prompt 装配）。
+
+    画像记忆存职业/领域/专业水平（如「用户是专利代理人，机械领域」），
+    用于调节模型的表达密度。与 _search_user_memories 同样需 rollback 防事务毒化。
+    """
+    try:
+        from app.services.memory_service import list_memories
+        return list_memories(db, user_id=user_id, source="profile")
+    except Exception:
+        db.rollback()
+        return []
+
+
+# [S2-3] 画像 → 表达密度指令关键词。
+# 代理人/律师：可高密度专业表达；发明人/工程师：需通俗化。
+# 关键词判定优先级：专业身份在前（更明确），无命中则走中间档（不强行通俗也不堆术语）。
+_PROFESSIONAL_KEYWORDS = ("代理人", "律师", "审查员", "知识产权", "patent attorney")
+_INVENTOR_KEYWORDS = ("发明人", "工程师", "研究员", "开发者", "技术员")
+
+
+def _profile_density_hint(profile_text: str) -> str:
+    """据画像内容返回表达密度指令（让模型适配用户专业水平）。
+
+    代理人/律师 → 可用高密度专利术语，无需过度解释。
+    发明人/工程师 → 把术语翻译成大白话，必要时类比。
+    其他/无法判定 → 维持默认（专业但通俗）。
+    """
+    if any(kw in profile_text for kw in _PROFESSIONAL_KEYWORDS):
+        return "用户是专利专业人士，可使用高密度专利术语，无需过度解释基础概念。"
+    if any(kw in profile_text for kw in _INVENTOR_KEYWORDS):
+        return "用户是技术发明人，把专利术语翻译成大白话，必要时用类比，避免生硬法律术语。"
+    return "保持专业但通俗的中文交流。"
+
+
+
+def build_system_prompt(
+    db, section: Section, user_input: str | None = None, intent: str | None = None
+) -> str:
     """装配动态 system prompt（agent loop 路线用，spec §3.1.1）。
 
     拼接顺序：项目元信息 [L4] → 已写章节 [前文直注入] → 当前章节策略 → 角色定义。
@@ -163,6 +236,10 @@ def build_system_prompt(db, section: Section, user_input: str | None = None) -> 
     user_input（可选）：用户当前输入。用于记忆检索 query——用户刚说的话往往是最强的
     检索信号（如「检查我的写作风格」直接关联「偏好简洁风格」记忆）。MVP 策略：用户输入
     为主，章节信号（标题+目标）为辅，拼接检索。None 时（如非 chat 场景）回退到纯章节信号。
+
+    intent（可选，S2-2）：用户意图（draft/edit/info/guide/none），由 classify_intent 识别。
+    非 none 时注入对应行为指令，让模型据意图切换行为（代写/改写/答疑/引导）。
+    None 或 "none" 时不注入意图段（走默认行为）。
     """
     project = db.get(Project, section.project_id)
     sp = get_section_prompt(section.key)
@@ -200,11 +277,41 @@ def build_system_prompt(db, section: Section, user_input: str | None = None) -> 
             parts.append("# 关于这位用户的长期记忆（请遵循其偏好与约定）")
             parts.append(memory_lines)
 
+        # [S2-3] 用户画像层：source=profile 的记忆（职业/领域/专业水平），全量注入。
+        # 画像不走语义检索（量少、要全量），用 list_memories(source=profile) 直取。
+        # 据画像内容调节表达密度：代理人/律师 → 高密度专业术语；发明人/工程师 → 通俗化。
+        profile = _get_profile_memories(db, project.user_id)
+        if profile:
+            profile_text = "\n".join(f"- {m.content}" for m in profile)
+            density_hint = _profile_density_hint(profile_text)
+            parts.append("# 用户画像")
+            parts.append(profile_text)
+            parts.append(f"表达密度：{density_hint}")
+
     # 章节策略层（底部偏上，当前章节聚焦）
     parts.append("# 当前正在撰写章节")
     parts.append(f"章节标题：【{section.title}】")
     parts.append(f"本章目标：{sp.goal}")
+    # [S1] 知识资产激活：注入 guide_questions + completion_criteria。
+    # 此前两字段定义了却从未注入——模型缺主动追问引导，也不知道「什么算写完」。
+    # guide_questions 注入为「可追问要点」（非必答清单，避免模型机械逐条问）；
+    # completion_criteria 让模型有明确的完成线（最直接的质量杠杆）。
+    if sp.guide_questions:
+        parts.append("引导要点（可主动追问用户，不必逐条回答）：")
+        parts.append("\n".join(f"- {q}" for q in sp.guide_questions))
     parts.append(f"输出格式要求：{sp.output_format}")
+    parts.append(f"达标判定：{sp.completion_criteria}")
+
+    # [S2-1] 章节状态行为提示：让模型据 empty/drafting/confirmed 切换策略
+    status_hint = SECTION_STATUS_HINTS.get(section.status)
+    if status_hint:
+        parts.append(status_hint)
+
+    # [S2-2] 意图行为提示：让模型据用户意图（代写/改写/答疑/引导）切换行为。
+    # intent=None 或 "none" 时跳过（走默认行为，不强分类，D1 决策）。
+    intent_hint = INTENT_HINTS.get(intent) if intent else None
+    if intent_hint:
+        parts.append(intent_hint)
 
     # 角色定义层（最底部，兜底规范）
     parts.append(SYSTEM_PROMPT)

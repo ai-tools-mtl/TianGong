@@ -327,3 +327,36 @@ def test_build_agent_with_section_prompt_not_equal_static(db_session, monkeypatc
     agent_mod.build_agent(db_session, llm_config=config, user_id=uuid.uuid4(), section=section)
 
     assert captured["system_prompt"] != SYSTEM_PROMPT
+
+
+# ===== S2-2：意图识别贯穿 build_agent（spec 2026-07-29-prompt-content-design §4 S2-2）=====
+
+def test_build_agent_passes_intent_to_prompt(db_session, monkeypatch):
+    """[S2-2] 传 intent=draft 时，system_prompt 含代写行为指令。"""
+    from app.ai import agent as agent_mod
+    from app.services.llm_config_service import ResolvedChatConfig
+
+    section = _build_section_with_project(db_session)
+    captured: dict = {}
+
+    def _fake_create(model=None, tools=None, *, system_prompt=None, **kw):
+        captured["system_prompt"] = system_prompt
+        return type("_S", (), {"ainvoke": lambda *a: None, "astream_events": lambda *a: None})()
+
+    monkeypatch.setattr(agent_mod, "get_llm", lambda config, **kw: _mock_llm())
+    monkeypatch.setattr(agent_mod, "create_deep_agent", _fake_create)
+    from app.core import storage as storage_mod
+
+    class _FakeStorage:
+        def __init__(self): self._client = None
+        def _resolve(self, a): return a
+    monkeypatch.setattr(storage_mod, "get_storage", lambda: _FakeStorage())
+
+    config = ResolvedChatConfig(base_url="http://x", api_key="k", model="glm-4.7", source="env")
+    agent_mod.build_agent(
+        db_session, llm_config=config, user_id=uuid.uuid4(),
+        section=section, intent="draft",
+    )
+
+    # 代写意图指令的特征词（INTENT_HINTS["draft"]）
+    assert "代写" in captured["system_prompt"]

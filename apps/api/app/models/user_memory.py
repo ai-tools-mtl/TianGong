@@ -12,6 +12,7 @@ EMBEDDING_DIM = 1024
 # 记忆来源（写路径区分）
 SOURCE_AGENT = "agent"      # agent 在 loop 中自动写入
 SOURCE_MANUAL = "manual"    # 用户在前端手动添加
+SOURCE_PROFILE = "profile"  # [S2-3] 用户画像：职业/领域/专业水平，用于调节表达密度
 
 
 class UserMemory(Base, IdMixin, TimestampMixin):

@@ -55,6 +55,7 @@ SECTION_PROMPTS: dict[str, SectionPrompt] = {
         guide_questions=[
             "这个发明针对什么技术问题？",
             "解决这个问题的意义是什么？",
+            "注意：这里要陈述的是『技术问题』而非商业/市场问题——专利法只保护技术方案的改进",
         ],
         output_format="发明目的与技术问题的清晰陈述",
         completion_criteria="明确指出要解决的技术问题",
@@ -65,20 +66,22 @@ SECTION_PROMPTS: dict[str, SectionPrompt] = {
         guide_questions=[
             "方案的整体结构/流程是怎样的？",
             "有哪些关键组件/步骤？它们如何配合？",
+            "方案的每个关键组件，具体解决『技术问题』里的哪个子问题？",
             "有没有替代实现方式？",
         ],
         output_format="技术方案应包含：整体架构 + 关键要素 + 工作原理",
-        completion_criteria="至少覆盖结构、流程、关键要素三个维度",
+        completion_criteria="至少覆盖结构、流程、关键要素三个维度，且必须显式呼应『技术问题』章节的表述",
     ),
     "effect": SectionPrompt(
         key="effect",
         goal="阐述发明带来的有益效果",
         guide_questions=[
             "相比现有技术，这个方案有什么优势？",
-            "能带来哪些具体的效果（性能/成本/效率）？",
+            "能带来哪些具体的效果（性能/成本/效率）？尽量给出可量化数据或对比",
+            "每个效果与技术方案的哪个组件直接相关？",
         ],
         output_format="有益效果应具体、可量化",
-        completion_criteria="至少描述一个有益效果并与技术方案对应",
+        completion_criteria="至少描述一个有益效果并与技术方案对应，尽量给出可量化数据",
     ),
     "drawings": SectionPrompt(
         key="drawings",

@@ -21,6 +21,25 @@ def test_assemble_includes_section_goal():
     assert "技术方案" in msgs[0].content
 
 
+def test_assemble_includes_completion_criteria():
+    """[S1] assemble_messages 路径也注入 completion_criteria（双装配保持一致）。"""
+    from app.ai.section_prompts import get_section_prompt
+    section = _make_section("solution")
+    msgs = assemble_messages(section, [], user_input="测试")
+    sp = get_section_prompt("solution")
+    assert sp.completion_criteria in msgs[0].content
+
+
+def test_assemble_includes_guide_questions():
+    """[S1] assemble_messages 路径也注入 guide_questions（双装配保持一致）。"""
+    from app.ai.section_prompts import get_section_prompt
+    section = _make_section("background")
+    msgs = assemble_messages(section, [], user_input="测试")
+    sp = get_section_prompt("background")
+    for q in sp.guide_questions:
+        assert q in msgs[0].content
+
+
 def test_assemble_includes_history():
     section = _make_section()
     history = [
@@ -219,6 +238,30 @@ def test_build_system_prompt_includes_current_section_strategy(db_session):
     assert "技术方案" in prompt
 
 
+def test_build_system_prompt_includes_completion_criteria(db_session):
+    """[S1] 含当前章节 completion_criteria（知识资产激活，让模型知道「什么算写完」）。"""
+    from app.ai.context_assembler import build_system_prompt
+    from app.ai.section_prompts import get_section_prompt
+    p = _make_project(db_session)
+    s = _make_db_section(db_session, p.id, key="solution", title="技术方案", order=5, content=None)
+    prompt = build_system_prompt(db_session, s)
+    sp = get_section_prompt("solution")
+    assert sp.completion_criteria in prompt
+
+
+def test_build_system_prompt_includes_guide_questions(db_session):
+    """[S1] 含当前章节 guide_questions（知识资产激活，引导模型主动追问）。"""
+    from app.ai.context_assembler import build_system_prompt
+    from app.ai.section_prompts import get_section_prompt
+    p = _make_project(db_session)
+    s = _make_db_section(db_session, p.id, key="background", title="背景技术", order=3, content=None)
+    prompt = build_system_prompt(db_session, s)
+    sp = get_section_prompt("background")
+    # guide_questions 非空时，每个问题都应进 prompt
+    for q in sp.guide_questions:
+        assert q in prompt
+
+
 def test_build_system_prompt_includes_written_sections(db_session):
     """[前文注入] 含已写章节标题 + 内容。"""
     from app.ai.context_assembler import build_system_prompt
@@ -258,3 +301,112 @@ def test_build_system_prompt_first_chapter_no_written(db_session):
     prompt = build_system_prompt(db_session, s)
     assert "已完成章节" not in prompt  # 无前文，跳过该段
     assert "测试交底书" in prompt  # 项目标题仍在
+
+
+# ===== S2-1：章节状态感知注入（spec 2026-07-29-prompt-content-design §4 S2-1）=====
+
+def test_build_system_prompt_status_empty_guides_not_draft(db_session):
+    """[S2-1] status=empty 时提示「引导优先、勿急着代写」。"""
+    from app.ai.context_assembler import build_system_prompt
+    p = _make_project(db_session)
+    s = _make_db_section(db_session, p.id, key="name", title="发明名称", order=1, content=None)
+    s.status = "empty"
+    db_session.commit()  # 提交状态变更，避免 build_system_prompt 内查询触发 expire 回滚
+    prompt = build_system_prompt(db_session, s)
+    assert "章节进度" in prompt  # 有专属状态提示段
+    assert "空白" in prompt  # empty → 空白章节
+
+
+def test_build_system_prompt_status_drafting_allows_refine(db_session):
+    """[S2-1] status=drafting 时提示「可打磨/修改/答疑」。"""
+    from app.ai.context_assembler import build_system_prompt
+    p = _make_project(db_session)
+    s = _make_db_section(db_session, p.id, key="name", title="发明名称", order=1, content=None)
+    s.status = "drafting"
+    db_session.commit()
+    prompt = build_system_prompt(db_session, s)
+    assert "章节进度" in prompt
+    assert "草稿" in prompt  # drafting → 草稿章节
+
+
+def test_build_system_prompt_status_confirmed_avoids_major_change(db_session):
+    """[S2-1] status=confirmed 时提示「默认微调/答疑，避免大改」。"""
+    from app.ai.context_assembler import build_system_prompt
+    p = _make_project(db_session)
+    s = _make_db_section(db_session, p.id, key="name", title="发明名称", order=1, content=None)
+    s.status = "confirmed"
+    db_session.commit()
+    prompt = build_system_prompt(db_session, s)
+    assert "章节进度" in prompt
+    assert "定稿" in prompt  # confirmed → 定稿章节
+
+
+def test_build_system_prompt_status_differentiates_behavior(db_session):
+    """[S2-1] empty 与 confirmed 的状态提示必须不同（验证状态真的影响 prompt）。"""
+    from app.ai.context_assembler import build_system_prompt
+    p = _make_project(db_session)
+    s_empty = _make_db_section(db_session, p.id, key="name", title="发明名称", order=1, content=None)
+    s_empty.status = "empty"
+    db_session.commit()
+    prompt_empty = build_system_prompt(db_session, s_empty)
+
+    s_confirmed = _make_db_section(db_session, p.id, key="field", title="技术领域", order=2, content=None)
+    s_confirmed.status = "confirmed"
+    db_session.commit()
+    prompt_confirmed = build_system_prompt(db_session, s_confirmed)
+
+    # 两个状态的「章节进度」提示行必须不同
+    assert "空白" in prompt_empty and "空白" not in prompt_confirmed
+    assert "定稿" in prompt_confirmed and "定稿" not in prompt_empty
+
+
+# ===== S2-2：意图识别注入（spec 2026-07-29-prompt-content-design §4 S2-2）=====
+
+def test_build_system_prompt_intent_draft_instructs_to_write(db_session):
+    """[S2-2] intent=draft 时注入「代写」行为指令。"""
+    from app.ai.context_assembler import build_system_prompt
+    p = _make_project(db_session)
+    s = _make_db_section(db_session, p.id, key="solution", title="技术方案", order=5, content=None)
+    db_session.commit()
+    prompt = build_system_prompt(db_session, s, intent="draft")
+    assert "代写" in prompt  # 代写意图的行为指令
+
+
+def test_build_system_prompt_intent_info_instructs_to_answer(db_session):
+    """[S2-2] intent=info 时注入「答疑」行为指令，避免借机代写。"""
+    from app.ai.context_assembler import build_system_prompt
+    p = _make_project(db_session)
+    s = _make_db_section(db_session, p.id, key="solution", title="技术方案", order=5, content=None)
+    db_session.commit()
+    prompt = build_system_prompt(db_session, s, intent="info")
+    assert "答疑" in prompt or "问问题" in prompt  # 答疑意图的行为指令
+
+
+def test_build_system_prompt_intent_none_has_no_intent_section(db_session):
+    """[S2-2] intent=none（默认/未识别）时不注入意图指令段。
+
+    断言用 INTENT_HINTS 的独有特征词（「直接产出结构化内容」「不要借机代写」），
+    避免与 S2-1 drafting 状态提示里的「用户意图」「答疑」措辞冲突。
+    """
+    from app.ai.context_assembler import build_system_prompt
+    p = _make_project(db_session)
+    s = _make_db_section(db_session, p.id, key="solution", title="技术方案", order=5, content=None)
+    db_session.commit()
+    prompt_default = build_system_prompt(db_session, s)  # 不传 intent
+    prompt_none = build_system_prompt(db_session, s, intent="none")
+    # 默认与显式 none 行为一致：无意图指令段（用意图指令的独有特征词判断）
+    assert "直接产出结构化内容" not in prompt_default  # draft 指令特征
+    assert "不要借机代写" not in prompt_default          # info 指令特征
+    assert "直接产出结构化内容" not in prompt_none
+    assert "不要借机代写" not in prompt_none
+
+
+def test_build_system_prompt_intent_differentiates(db_session):
+    """[S2-2] draft 与 info 的意图指令必须不同（验证意图真的影响 prompt）。"""
+    from app.ai.context_assembler import build_system_prompt
+    p = _make_project(db_session)
+    s = _make_db_section(db_session, p.id, key="solution", title="技术方案", order=5, content=None)
+    db_session.commit()
+    prompt_draft = build_system_prompt(db_session, s, intent="draft")
+    prompt_info = build_system_prompt(db_session, s, intent="info")
+    assert prompt_draft != prompt_info

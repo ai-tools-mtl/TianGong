@@ -126,3 +126,102 @@ def test_build_system_prompt_no_user_input_falls_back_to_section_signal(db_sessi
     build_system_prompt(db_session, section, user_input=None)
 
     assert "背景技术" in captured_query["query"]
+
+
+# ===== S2-3：用户画像 + 表达密度指令（spec 2026-07-29-prompt-content-design §4 S2-3）=====
+
+def test_build_system_prompt_injects_profile_and_density(db_session, monkeypatch):
+    """[S2-3] 有画像记忆（source=profile）时注入画像 + 表达密度指令。"""
+    from app.ai.context_assembler import build_system_prompt
+    from app.models import Project, Section
+
+    project = Project(title="测试项目", user_id=uuid.uuid4())
+    db_session.add(project)
+    db_session.commit()
+    section = Section(
+        project_id=project.id, template_section_id="background",
+        key="background", title="背景技术",
+        order=1, content=None,
+    )
+    db_session.add(section)
+    db_session.commit()
+
+    from app.services import memory_service
+
+    # 语义检索返回空（画像走单独的 list_memories(source=profile)）
+    monkeypatch.setattr(memory_service, "search_memories",
+                        lambda db, *, user_id, query, top_k=5: [])
+
+    # 画像检索返回一条「专利代理人」画像
+    class _FakeProfile:
+        content = "用户是专利代理人，机械领域"
+    monkeypatch.setattr(memory_service, "list_memories",
+                        lambda db, *, user_id, source=None, limit=200: [_FakeProfile()] if source == "profile" else [])
+
+    prompt = build_system_prompt(db_session, section)
+
+    assert "专利代理人" in prompt          # 画像内容注入
+    assert "专业术语" in prompt or "高密度" in prompt  # 代理人 → 高密度专业表达指令
+
+
+def test_build_system_prompt_inventor_profile_gets_plain_language(db_session, monkeypatch):
+    """[S2-3] 画像是发明人（非代理人）时注入「通俗化」表达指令。
+
+    注意：SYSTEM_PROMPT 第1条含「通俗」，故断言用画像密度指令的独有标识词（「大白话」
+    /「翻译成」/「过度解释」），避免被现有 SYSTEM_PROMPT 误命中。
+    """
+    from app.ai.context_assembler import build_system_prompt
+    from app.models import Project, Section
+
+    project = Project(title="测试项目", user_id=uuid.uuid4())
+    db_session.add(project)
+    db_session.commit()
+    section = Section(
+        project_id=project.id, template_section_id="background",
+        key="background", title="背景技术",
+        order=1, content=None,
+    )
+    db_session.add(section)
+    db_session.commit()
+
+    from app.services import memory_service
+    monkeypatch.setattr(memory_service, "search_memories",
+                        lambda db, *, user_id, query, top_k=5: [])
+
+    class _FakeProfile:
+        content = "用户是机械工程师，发明人"
+    monkeypatch.setattr(memory_service, "list_memories",
+                        lambda db, *, user_id, source=None, limit=200: [_FakeProfile()] if source == "profile" else [])
+
+    prompt = build_system_prompt(db_session, section)
+
+    assert "用户画像" in prompt  # 画像段存在
+    # 发明人 → 通俗化指令（用画像密度指令独有词，避开 SYSTEM_PROMPT 的「通俗」）
+    assert "大白话" in prompt or "翻译成" in prompt or "过度解释" in prompt
+
+
+def test_build_system_prompt_no_profile_omits_density(db_session, monkeypatch):
+    """[S2-3] 无画像记忆时不注入表达密度段。"""
+    from app.ai.context_assembler import build_system_prompt
+    from app.models import Project, Section
+
+    project = Project(title="测试项目", user_id=uuid.uuid4())
+    db_session.add(project)
+    db_session.commit()
+    section = Section(
+        project_id=project.id, template_section_id="background",
+        key="background", title="背景技术",
+        order=1, content=None,
+    )
+    db_session.add(section)
+    db_session.commit()
+
+    from app.services import memory_service
+    monkeypatch.setattr(memory_service, "search_memories",
+                        lambda db, *, user_id, query, top_k=5: [])
+    monkeypatch.setattr(memory_service, "list_memories",
+                        lambda db, *, user_id, source=None, limit=200: [])
+
+    prompt = build_system_prompt(db_session, section)
+    # 无画像 → 不出现画像密度指令段（用密度指令的独有特征词判断）
+    assert "用户画像" not in prompt

@@ -55,13 +55,15 @@ def create_agent_tools(db: Any, user_id):
         ]
 
     @tool("save_memory")
-    def save_memory(content: str) -> str:
+    def save_memory(content: str, memory_type: str = "preference") -> str:
         """当用户表达了值得长期记住的偏好、事实或领域约定时调用，将记忆保存到用户档案。
 
         何时调用：
         - 用户明确说「记住我喜欢...」「以后都用...」
         - 用户透露跨项目稳定的事实（如「我在某公司做新能源」）
         - 用户纠正你的写法并强调「应该这样写」
+        - [S2-3] 首次对话时识别到用户职业/专业水平（如「我是专利代理人」「我是机械工程师」），
+          用 memory_type="profile" 保存，系统会据此调节表达密度
 
         何时不要调用：
         - 临时性信息（「我现在在写电池专利」）
@@ -70,17 +72,24 @@ def create_agent_tools(db: Any, user_id):
 
         Args:
             content: 一条原子化记忆，建议一句话（≤200 字）。
+            memory_type: 记忆类型，决定保存位置。
+                - "preference"（默认）：用户偏好/事实类记忆（写作风格、领域约定等）
+                - "profile"：用户画像（职业、专业水平），用于调节系统表达密度
 
         Returns:
             操作结果描述（已保存 / 已合并到已有记忆 / 未保存）。
         """
+        from app.models.user_memory import SOURCE_AGENT, SOURCE_PROFILE
         from app.services.memory_service import (
-            create_memory, find_similar_memory, update_memory, SOURCE_AGENT,
+            create_memory, find_similar_memory, update_memory,
         )
 
         content = (content or "").strip()
         if not content:
             return "未保存：内容为空"
+
+        # [S2-3] memory_type → source 映射。未知值降级为 agent（偏好类）。
+        source = SOURCE_PROFILE if memory_type == "profile" else SOURCE_AGENT
 
         # 工具是 agent loop 与主请求的事务边界：任何 DB 失败必须 rollback，
         # 否则 PG 事务进入 aborted 状态，毒化同一 session 的后续查询
@@ -94,7 +103,7 @@ def create_agent_tools(db: Any, user_id):
                 db.commit()
                 return f"已合并更新已有记忆（原：「{similar.content[:50]}...」）"
 
-            create_memory(db, user_id=user_id, content=content, source=SOURCE_AGENT)
+            create_memory(db, user_id=user_id, content=content, source=source)
             db.commit()
             return "已保存"
         except Exception:

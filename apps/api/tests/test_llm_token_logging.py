@@ -100,7 +100,7 @@ def _fake_agent_streaming(content_chunks):
                 chunk.content = text
                 yield {"event": "on_chat_model_stream", "data": {"chunk": chunk}}
 
-    def _build_agent(db, *, llm_config, user_id, section=None, user_input=None):
+    def _build_agent(db, *, llm_config, user_id, section=None, user_input=None, intent=None):
         return _FakeAgent()
 
     return _build_agent
