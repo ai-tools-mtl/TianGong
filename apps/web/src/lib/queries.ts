@@ -58,6 +58,8 @@ export const queryKeys = {
     // Console 域（refactor/admin-ia-phase2 切片 2）
     llmConfig: ['admin', 'llm-config'] as const,
     firecrawlConfig: ['admin', 'firecrawl-config'] as const,
+    // MinerU 配置（PDF→Markdown 解析）
+    mineruConfig: ['admin', 'mineru-config'] as const,
     // G3 rerank 配置（混合检索精排）
     rerankConfig: ['admin', 'rerank-config'] as const,
     llmStats: (days: number) => ['admin', 'llm-stats', days] as const,
@@ -665,6 +667,32 @@ export function useSaveFirecrawlConfig() {
       qc.invalidateQueries({ queryKey: queryKeys.admin.firecrawlConfig })
       qc.invalidateQueries({ queryKey: queryKeys.admin.all })
     },
+  })
+}
+
+// ── MinerU 全局配置（PDF→Markdown 解析）──
+export function useMineruConfig() {
+  return useQuery({
+    queryKey: queryKeys.admin.mineruConfig,
+    queryFn: () => api.getMineruConfig(),
+  })
+}
+
+export function useSaveMineruConfig() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: import('@/types/api').MineruConfigPayload) =>
+      api.setMineruConfig(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.admin.mineruConfig })
+      qc.invalidateQueries({ queryKey: queryKeys.admin.all })
+    },
+  })
+}
+
+export function useTestMineruConfig() {
+  return useMutation({
+    mutationFn: () => api.testMineruConfig(),
   })
 }
 

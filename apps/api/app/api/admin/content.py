@@ -165,7 +165,7 @@ async def upload_global(
     filename = sanitize_filename(file.filename)
     content = await file.read()
     try:
-        text = _extract(filename, content)
+        text = _extract(filename, content, db=db)
     except ValueError as e:
         raise ValidationError(str(e))
     kf = knowledge_service.upload_to_global(

@@ -1,6 +1,6 @@
 'use client'
 
-import { BarChart3, FileText, Globe, Search, Settings, SlidersHorizontal } from 'lucide-react'
+import { BarChart3, FileText, Globe, ScanText, Search, Settings, SlidersHorizontal } from 'lucide-react'
 import Link from 'next/link'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
@@ -18,6 +18,12 @@ const CONSOLE_SECTIONS = [
     icon: Globe,
     title: 'Firecrawl 配置',
     description: '网页摄入 API 凭据',
+  },
+  {
+    href: '/admin/console/mineru',
+    icon: ScanText,
+    title: 'MinerU 配置',
+    description: 'PDF 转 Markdown 解析（保留表格/OCR）',
   },
   {
     href: '/admin/console/stats',

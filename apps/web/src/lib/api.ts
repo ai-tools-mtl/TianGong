@@ -367,6 +367,22 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  // ── MinerU 全局配置(admin) — PDF→Markdown 云端解析 ──
+  getMineruConfig: () =>
+    request<import('@/types/api').MineruSettings>('/admin/console/mineru'),
+
+  setMineruConfig: (payload: import('@/types/api').MineruConfigPayload) =>
+    request<{ ok: true }>('/admin/console/mineru', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+
+  /** 测试 MinerU 连通性（解析一个极小 PDF 样本）。 */
+  testMineruConfig: () =>
+    request<{ ok: boolean; message: string }>('/admin/console/mineru/test', {
+      method: 'POST',
+    }),
+
   // admin LLM 连接测试 / 模型拉取（embedding 走固定服务，只剩 chat 两端点）
   /** admin 测试全局 chat 连接。字段全可选：留空走当前已存的 chat 配置复检。 */
   testGlobalChat: (data: {

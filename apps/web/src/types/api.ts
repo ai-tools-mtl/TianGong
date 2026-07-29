@@ -622,6 +622,22 @@ export interface FirecrawlConfigPayload {
   base_url: string | null
 }
 
+// MinerU 全局配置（GET /admin/console/mineru）— PDF→Markdown 云端解析
+export interface MineruSettings {
+  enabled: boolean
+  api_token_masked: string
+  base_url: string
+  model_version: string
+}
+
+// MinerU 配置 PUT 请求体
+export interface MineruConfigPayload {
+  enabled: boolean
+  api_token: string
+  base_url: string | null
+  model_version: string | null
+}
+
 // ── 用户绑定长期记忆 ──
 
 export interface Memory {

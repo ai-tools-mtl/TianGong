@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     firecrawl_base_url: str = "https://api.firecrawl.dev"
     firecrawl_enabled: bool = False
 
+    # MinerU（PDF→Markdown 云端解析;全局 token 存 SystemSetting,env 仅兜底）
+    # 未配置时 PDF 解析降级到 pypdf 纯文本提取。
+    mineru_api_token: str = ""
+    mineru_base_url: str = "https://mineru.net"
+    mineru_model_version: str = "vlm"  # vlm（高精度）/ pipeline（快）
+
     # 文件上传（设计 13.2，附录 B：MVP 本地存储）
     upload_dir: str = "uploads"
     max_image_size_mb: int = 10

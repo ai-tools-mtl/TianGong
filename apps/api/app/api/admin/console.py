@@ -257,6 +257,63 @@ def set_firecrawl_config(
     return {"ok": True}
 
 
+# ── MinerU 配置（PDF→Markdown 解析）───────────────────────────
+
+
+class MineruConfigRequest(BaseModel):
+    """admin 设置全局 MinerU 配置。api_token 空串=不改（保留现有）。"""
+    enabled: bool
+    api_token: str = ""
+    base_url: str | None = None
+    model_version: str | None = None
+
+
+@router.get("/admin/console/mineru")
+def get_mineru_config(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """读全局 MinerU 配置（api_token 脱敏）。"""
+    from app.services.mineru_client import get_mineru_settings
+
+    return get_mineru_settings(db)
+
+
+@router.put("/admin/console/mineru")
+def set_mineru_config(
+    payload: MineruConfigRequest,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """写全局 MinerU 配置。"""
+    from app.services.mineru_client import set_mineru_settings
+
+    set_mineru_settings(
+        db, enabled=payload.enabled, api_token=payload.api_token,
+        base_url=payload.base_url, model_version=payload.model_version,
+    )
+    return {"ok": True}
+
+
+@router.post("/admin/console/mineru/test")
+def test_mineru_config(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """测试 MinerU 配置是否有效（解析一个极小 PDF 样本）。"""
+    from app.services.mineru_client import resolve_mineru_config, parse_pdf_to_markdown
+
+    cfg = resolve_mineru_config(db)
+    if cfg is None:
+        return {"ok": False, "message": "MinerU 未配置（需启用并填 api_token）"}
+    sample_pdf = b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R]/Count 0>>endobj\n3 0 obj<</Type/Page/Parent 2 0 R>>endobj\nxref\n0 4\ntrailer<</Root 1 0 R>>\n%%EOF"
+    try:
+        parse_pdf_to_markdown(db, content=sample_pdf, filename="connectivity-test.pdf")
+        return {"ok": True, "message": f"MinerU 连通正常（{cfg.base_url}）"}
+    except Exception as e:
+        return {"ok": False, "message": f"MinerU 测试失败：{str(e)[:200]}"}
+
+
 # ── G3 rerank 配置 ──────────────────────────────────────────
 
 

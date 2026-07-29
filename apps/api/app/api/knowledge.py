@@ -110,7 +110,7 @@ async def upload_personal(
     filename = sanitize_filename(file.filename)
     content = await file.read()
     try:
-        text = extract_text(filename, content)
+        text = extract_text(filename, content, db=db)
     except ValueError as e:
         raise ValidationError(str(e))
     kf = knowledge_service.upload_external(
