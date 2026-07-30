@@ -256,6 +256,109 @@ export const api = {
     return _consumeSSE(res, onToken)
   },
 
+  // ── 项目初始化助手（对话式新建）──
+  /** 从描述建项目 + 8 空章节，返回 project_id（首轮对话前调用）。 */
+  createProjectFromChat: (description: string) =>
+    request<{ project_id: string; section_id: string | null; title: string }>(
+      '/projects/from-chat',
+      { method: 'POST', body: JSON.stringify({ description }) },
+    ),
+
+  /** 初始化对话（SSE）。事件同 chat：token / done / heartbeat / error。 */
+  streamInitChat: async (
+    projectId: string,
+    message: string,
+    onToken: (t: string) => void,
+    signal?: AbortSignal,
+    conversationId?: string,
+    onDone?: (data: { message_id: string; conversation_id?: string }) => void,
+  ) => {
+    const res = await fetch(`${BASE}/api/v1/projects/${projectId}/init-chat`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        message,
+        conversation_id: conversationId ?? null,
+      }),
+      signal,
+    })
+    if (!res.ok) throw await _sseHttpError(res)
+    return _consumeSSE(res, onToken, onDone)
+  },
+
+  /**
+   * 批量生成各章节初稿（SSE）。事件比 chat 多 chapter_start / chapter_done：
+   * - chapter_start {index, total, title, key}：开始生成某章
+   * - token {text}：当前章节的生成 token（实时累加显示）
+   * - chapter_done {index, title, status, error}：某章完成（status: ok|failed）
+   * - done {project_id}：全部完成
+   */
+  streamInitGenerate: async (
+    projectId: string,
+    handlers: {
+      onChapterStart?: (d: { index: number; total: number; title: string; key: string }) => void
+      onToken?: (t: string) => void
+      onChapterDone?: (d: { index: number; title: string; status: string; error: string | null }) => void
+      onAllDone?: (d: { project_id: string }) => void
+    },
+    signal?: AbortSignal,
+    conversationId?: string,
+  ) => {
+    const res = await fetch(`${BASE}/api/v1/projects/${projectId}/init-generate`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversation_id: conversationId ?? null }),
+      signal,
+    })
+    if (!res.ok) throw await _sseHttpError(res)
+    if (!res.body) return
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const events = buffer.split('\n\n')
+      buffer = events.pop() || ''
+      for (const evt of events) {
+        const lines = evt.split('\n')
+        let eventType = 'message'
+        let dataLine = ''
+        for (const line of lines) {
+          if (line.startsWith('event: ')) eventType = line.slice(7).trim()
+          else if (line.startsWith('data: ')) dataLine = line.slice(6)
+        }
+        if (!dataLine) continue
+        let data: Record<string, unknown> = {}
+        try {
+          data = JSON.parse(dataLine)
+        } catch {
+          continue
+        }
+        if (eventType === 'error') {
+          throw {
+            code: (data.code as string) || 'llm_error',
+            message: (data.message as string) || 'AI 服务错误',
+          } as ApiError
+        }
+        if (eventType === 'chapter_start') {
+          handlers.onChapterStart?.(data as { index: number; total: number; title: string; key: string })
+        } else if (eventType === 'token') {
+          const text = data.text as string | undefined
+          if (text) handlers.onToken?.(text)
+        } else if (eventType === 'chapter_done') {
+          handlers.onChapterDone?.(data as { index: number; title: string; status: string; error: string | null })
+        } else if (eventType === 'done') {
+          handlers.onAllDone?.(data as { project_id: string })
+        }
+        // heartbeat：忽略
+      }
+    }
+  },
+
   listMessages: (sectionId: string, conversationId?: string) =>
     request<{ id: string; role: string; content: string; created_at: string }[]>(
       `/sections/${sectionId}/messages${conversationId ? `?conversation_id=${conversationId}` : ''}`,

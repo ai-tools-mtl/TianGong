@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react'
 import { Search } from 'lucide-react'
 
 import { CreateProjectDialog } from '@/components/create-project-dialog'
+import { InitAssistantDialog } from '@/components/init-assistant-dialog'
 import { PageHeader, PageShell } from '@/components/page-shell'
 import { ProjectCard } from '@/components/project-card'
 import { Badge } from '@/components/ui/badge'
@@ -53,7 +54,10 @@ export function ProjectList() {
   return (
     <PageShell>
       <PageHeader title="我的项目" description="管理你的专利交底书">
-        <CreateProjectDialog />
+        <div className="flex gap-2">
+          <InitAssistantDialog />
+          <CreateProjectDialog />
+        </div>
       </PageHeader>
 
       <div className="space-y-4 py-6">
@@ -112,7 +116,7 @@ export function ProjectList() {
           <EmptyState
             description={
               projects.length === 0
-                ? '还没有项目，点击右上角「新建项目」开始你的第一份交底书'
+                ? '还没有项目，点右上角「AI 对话新建」用一句话开始，或「新建项目」手动创建'
                 : '没有符合条件的项目'
             }
           />
