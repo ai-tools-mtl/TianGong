@@ -33,3 +33,39 @@ class Snapshot:
     est_tokens_before: int
     est_tokens_after: int
     fallback: bool = False
+
+
+def estimate_tokens(text: str) -> int:
+    """轻量 token 近似估算（无 tiktoken）。
+
+    GLM 用不了 tiktoken 的 cl100k 编码（本身也是近似），故用混合字符加权：
+    - CJK 字符按 ~1.5 字/token（即每字符 ~0.67 token）
+    - 其他字符（英文/标点/数字）按 ~4 字符/token（即每字符 ~0.25 token）
+
+    精度 ±25%，配合条数闸兜底（should_compress），不会明显误判触发。
+    """
+    if not text:
+        return 0
+    cjk = sum(1 for ch in text if _is_cjk(ch))
+    other = len(text) - cjk
+    # 向上取整，避免短文本估为 0
+    return max(1, round(cjk / 1.5 + other / 4))
+
+
+def _is_cjk(ch: str) -> bool:
+    """判断字符是否为 CJK 统一表意文字（中日韩）。"""
+    code = ord(ch)
+    return (
+        0x4E00 <= code <= 0x9FFF    # CJK 统一表意文字
+        or 0x3400 <= code <= 0x4DBF  # CJK 扩展 A
+        or 0x3000 <= code <= 0x303F  # CJK 标点
+    )
+
+
+def estimate_tokens_messages(messages) -> int:
+    """对消息列表（Message 对象或 dict）累加 content 的 token 估算。"""
+    total = 0
+    for m in messages:
+        content = m.get("content") if isinstance(m, dict) else getattr(m, "content", "")
+        total += estimate_tokens(content or "")
+    return total
