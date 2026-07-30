@@ -56,6 +56,10 @@ def on_startup():
                         f"但 knowledge_chunks.embedding 列是 {EMBEDDING_DIM} 维。"
                         f"请检查 EMBEDDING_MODEL 配置或跑维度对齐迁移。"
                     )
+                else:
+                    loguru.logger.info(
+                        f"embedding 服务连通正常（{cfg.base_url}，模型 {cfg.model}，输出 {len(vec)} 维）"
+                    )
         except Exception as e:
             loguru.logger.warning(f"embedding 维度探测失败（不阻塞启动）：{e}")
 
