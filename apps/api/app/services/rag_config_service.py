@@ -1,60 +1,31 @@
 """G3 rerank 配置 service（spec §5.3, D6）。
 
-镜像 embedding 配置的 global 解析模式（rerank 暂不做用户级 BYOK，简化）。
-配置存 SystemSetting key='rag_rerank_config'。
-"""
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+镜像 embedding 配置的解析模式：统一走固定的 bge-reranker-v2-m3 本地微服务
+（Infinity，OpenAI 兼容的 /rerank 端点），连接信息从环境变量读
+（rerank_enabled/rerank_base_url/rerank_model/rerank_api_key）。
 
-from app.core.security import encrypt_value, decrypt_value
-from app.models import SystemSetting
+不再支持 SystemSetting 全局配置 / 加密存储。用户/admin 不可配 rerank。
+与 embedding 的唯一不对称：rerank 是 fail-open 设计（挂了降级原序），
+故保留 rerank_enabled 开关供运维降级；embedding 无开关因其挂了 RAG 直接崩。
+
+db / user_id 参数保留仅为避免动调用方签名，内部一律返回 env 配置。
+"""
+from app.core.config import get_settings
 from app.rag.reranker import RerankConfig
 
-RERANK_SETTING_KEY = "rag_rerank_config"
 
+def resolve_rerank_config(db=None, *, user_id=None) -> RerankConfig:
+    """返回 rerank 配置。统一读环境变量（rerank_*）。
 
-def get_global_rerank_settings(db: Session) -> dict:
-    """读取全局 rerank 配置（api_key 返回 _encrypted 后缀，不返回明文）。"""
-    setting = db.execute(
-        select(SystemSetting).where(SystemSetting.key == RERANK_SETTING_KEY)
-    ).scalar_one_or_none()
-    if not setting:
-        return {"enabled": False, "base_url": "", "api_key_encrypted": "", "model": ""}
-    return dict(setting.value)
+    不再从 SystemSetting 读取。db / user_id 参数保留仅为兼容调用方签名
+    （retriever.py 传 user_id），内部忽略，永不为 None。
 
-
-def set_global_rerank_settings(
-    db: Session, *, enabled: bool, base_url: str, api_key: str, model: str
-) -> None:
-    """upsert 全局 rerank 配置（api_key 加密存储）。"""
-    value = {
-        "enabled": enabled,
-        "base_url": base_url,
-        "api_key_encrypted": encrypt_value(api_key) if api_key else "",
-        "model": model,
-    }
-    setting = db.execute(
-        select(SystemSetting).where(SystemSetting.key == RERANK_SETTING_KEY)
-    ).scalar_one_or_none()
-    if setting:
-        setting.value = value
-    else:
-        db.add(SystemSetting(key=RERANK_SETTING_KEY, value=value))
-    db.commit()
-
-
-def resolve_rerank_config(db: Session, *, user_id) -> RerankConfig:
-    """解析 rerank 配置（global only，不做 user 级）。
-
-    返回 RerankConfig。enabled=False 表示关闭（不返回 None，调用方无需判空）。
+    rerank_enabled=False 时返回 disabled 配置（fail-open 跳过 rerank）。
     """
-    settings = get_global_rerank_settings(db)
-    if not settings.get("base_url"):
-        return RerankConfig(enabled=False, base_url="", api_key="", model="")
-    api_key = decrypt_value(settings["api_key_encrypted"]) if settings.get("api_key_encrypted") else ""
+    s = get_settings()
     return RerankConfig(
-        enabled=bool(settings.get("enabled")),
-        base_url=settings["base_url"],
-        api_key=api_key,
-        model=settings.get("model", ""),
+        enabled=s.rerank_enabled,
+        base_url=s.rerank_base_url,
+        api_key=s.rerank_api_key,
+        model=s.rerank_model,
     )

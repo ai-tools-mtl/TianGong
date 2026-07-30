@@ -39,6 +39,16 @@ class Settings(BaseSettings):
     embedding_model: str = "BAAI/bge-m3"
     embedding_api_key: str = ""
 
+    # Rerank（本地 Infinity 微服务跑 bge-reranker-v2-m3，与 embedding 对称）
+    # 部署时启动一个暴露 /rerank 的服务（Infinity 等），在此填地址即可。
+    # 与 embedding 同属「本地推理微服务」——用户/admin 不可配，连接信息从 env 读。
+    # 与 embedding 的唯一不对称：rerank 是 fail-open 设计（挂了降级原序），
+    # 故保留 enabled 开关供运维降级（embedding 无开关因其挂了 RAG 直接崩）。
+    rerank_enabled: bool = True
+    rerank_base_url: str = "http://localhost:7998"
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    rerank_api_key: str = ""  # 本地服务通常不校验 key，留空
+
     # Firecrawl (web ingestion;全局 key 存 SystemSetting,env 仅兜底)
     firecrawl_api_key: str = ""
     firecrawl_base_url: str = "https://api.firecrawl.dev"

@@ -32,25 +32,59 @@ app.include_router(api_router)
 
 @app.on_event("startup")
 def on_startup():
+    import os
     loguru.logger.info("TianGong API 启动")
+
+    # 预检（embedding 维度 / rerank 连通性）连真实推理微服务，测试环境没有。
+    # TIANGONG_TESTING=1 时跳过，避免每个 client fixture 触发 startup 时的网络超时累加。
+    _skip_preflight = os.environ.get("TIANGONG_TESTING") == "1"
+
     # embedding 维度一致性断言（P3-12）：启动时探测一次，维度不匹配 fail fast
     # 而非等到第一次真实写入才在 DB 报 DataException。embedding 服务未起时降级 warning。
-    try:
-        from app.rag.embedding import embed_text
-        from app.services.llm_config_service import resolve_embedding_config
-        from app.models.knowledge_chunk import EMBEDDING_DIM
+    if not _skip_preflight:
+        try:
+            from app.rag.embedding import embed_text
+            from app.services.llm_config_service import resolve_embedding_config
+            from app.models.knowledge_chunk import EMBEDDING_DIM
 
-        cfg = resolve_embedding_config()
-        if cfg is not None:
-            vec = embed_text("维度探测", embed_config=cfg)
-            if len(vec) != EMBEDDING_DIM:
-                loguru.logger.error(
-                    f"⚠️ embedding 维度不匹配：模型输出 {len(vec)} 维，"
-                    f"但 knowledge_chunks.embedding 列是 {EMBEDDING_DIM} 维。"
-                    f"请检查 EMBEDDING_MODEL 配置或跑维度对齐迁移。"
-                )
-    except Exception as e:
-        loguru.logger.warning(f"embedding 维度探测失败（不阻塞启动）：{e}")
+            cfg = resolve_embedding_config()
+            if cfg is not None:
+                vec = embed_text("维度探测", embed_config=cfg)
+                if len(vec) != EMBEDDING_DIM:
+                    loguru.logger.error(
+                        f"⚠️ embedding 维度不匹配：模型输出 {len(vec)} 维，"
+                        f"但 knowledge_chunks.embedding 列是 {EMBEDDING_DIM} 维。"
+                        f"请检查 EMBEDDING_MODEL 配置或跑维度对齐迁移。"
+                    )
+        except Exception as e:
+            loguru.logger.warning(f"embedding 维度探测失败（不阻塞启动）：{e}")
+
+        # rerank 连通性探测（与 embedding 维度探测同级）：rerank_enabled=True 才探测。
+        # 服务未起或返回异常 → warning 不阻塞（rerank 是 fail-open，检索会降级原序）；
+        # 目的是让运维从启动日志第一时间发现 rerank 没生效，而非靠检索变慢才发现。
+        try:
+            from app.services.rag_config_service import resolve_rerank_config
+            import httpx
+
+            rerank_cfg = resolve_rerank_config()
+            if rerank_cfg.enabled:
+                health_url = rerank_cfg.base_url.rstrip("/") + "/health"
+                r = httpx.get(health_url, timeout=3.0)
+                if r.status_code < 500:
+                    loguru.logger.info(
+                        f"rerank 服务连通正常（{rerank_cfg.base_url}，模型 {rerank_cfg.model}）"
+                    )
+                else:
+                    loguru.logger.warning(
+                        f"⚠️ rerank 服务返回 {r.status_code}（{rerank_cfg.base_url}），"
+                        f"检索将走 fail-open 原序降级"
+                    )
+            else:
+                loguru.logger.info("rerank 已关闭（RERANK_ENABLED=false），检索不走精排")
+        except Exception as e:
+            loguru.logger.warning(
+                f"rerank 服务连通探测失败（不阻塞启动，检索将降级原序）：{e}"
+            )
 
     # 恢复扫描：重启后重入队崩溃中断的解析任务（设计 P0 #6）
     try:

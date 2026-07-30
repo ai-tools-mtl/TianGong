@@ -101,6 +101,37 @@ services:
     #           count: all
     #           capabilities: [gpu]
 
+  # Rerank 微服务:Infinity 跑 BAAI/bge-reranker-v2-m3,暴露 OpenAI 兼容 /rerank。
+  # 与 embedding 服务同款镜像、同款挂载方式,仅模型与端口不同。
+  # 后端通过 RERANK_BASE_URL 访问:本地开发用 http://localhost:7998,
+  # 容器内(api 容器)用 http://rerank:7998。
+  # 默认随数据层一起起(本地开发也需要);首次启动需下载/挂载 bge-reranker-v2-m3 模型(~2.2GB)。
+  rerank:
+    image: michaelf34/infinity:latest-cpu
+    container_name: tiangong-rerank
+    command: >
+      v2
+      --engine torch
+      --model-id /data/models/bge-reranker-v2-m3
+      --port 7998
+    environment:
+      HF_HOME: /data/.cache
+      DO_NOT_TRACK: "1"
+    ports:
+      - "7998:7998"
+    volumes:
+      # 本地预下载的模型目录(只读挂载,避免容器误改)。
+      # 默认 ./models/bge-reranker-v2-m3;worktree 等场景用 RERANK_MODEL_DIR 覆盖为绝对路径。
+      - ${RERANK_MODEL_DIR:-./models/bge-reranker-v2-m3}:/data/models/bge-reranker-v2-m3:ro
+      - rerankdata:/data/.cache
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:7998/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 120s
+    restart: unless-stopped
+
   # ---- 以下为全栈部署服务,仅在 --profile full 时启动 ----
 
   api:
@@ -135,6 +166,13 @@ services:
       EMBEDDING_BASE_URL: ${EMBEDDING_BASE_URL:-http://embedding:7997}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-BAAI/bge-m3}
       EMBEDDING_API_KEY: ${EMBEDDING_API_KEY:-}
+      # Rerank 统一走 bge-reranker-v2-m3 微服务(本 compose 的 rerank 服务)。
+      # 与 embedding 对称,容器间用服务名 rerank:7998;本地开发用 localhost:7998(在 apps/api/.env 配)。
+      # rerank 是 fail-open 设计,保留 RERANK_ENABLED 开关供运维降级(embedding 无开关因其挂了 RAG 直接崩)。
+      RERANK_ENABLED: ${RERANK_ENABLED:-true}
+      RERANK_BASE_URL: ${RERANK_BASE_URL:-http://rerank:7998}
+      RERANK_MODEL: ${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
+      RERANK_API_KEY: ${RERANK_API_KEY:-}
       # 首个 admin 账号(entrypoint 跑 init_db 时读取,已存在则跳过)
       INIT_ADMIN_USERNAME: ${INIT_ADMIN_USERNAME:-admin}
       INIT_ADMIN_PASSWORD: ${INIT_ADMIN_PASSWORD}
@@ -147,6 +185,8 @@ services:
       minio:
         condition: service_healthy
       embedding:
+        condition: service_healthy
+      rerank:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
@@ -184,3 +224,4 @@ volumes:
   pgdata:
   miniodata:
   embdata:
+  rerankdata:
