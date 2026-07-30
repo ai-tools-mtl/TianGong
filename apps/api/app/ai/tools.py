@@ -119,6 +119,7 @@ async def create_agent_tools(db: Any, user_id):
     try:
         tools.extend(await load_mcp_tools(db))
     except Exception as e:
+        db.rollback()
         logger.warning("MCP 工具整体加载失败，跳过: %s", e)
     return tools
 
