@@ -526,6 +526,7 @@ export interface Skill {
   owner_id: string | null
   status: SkillStatus
   minio_prefix: string
+  is_builtin: boolean
   created_at: string
   updated_at: string
 }

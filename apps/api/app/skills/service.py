@@ -70,7 +70,7 @@ def delete_skill_directory(*, bucket: str, prefix: str) -> None:
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import ConflictError, NotFoundError
+from app.core.exceptions import ConflictError, ForbiddenError, NotFoundError
 from app.models.skill import SCOPE_GLOBAL, STATUS_DRAFT, Skill
 
 
@@ -138,8 +138,14 @@ def get_skill(db: Session, *, skill_id) -> Skill:
 
 
 def update_skill(db: Session, *, skill_id, **fields) -> Skill:
-    """更新 skill。name 不可改（spec: name=目录名）。"""
+    """更新 skill。name 不可改（spec: name=目录名）。
+
+    内置 skill（is_builtin=True）由文件系统管理，禁止在 UI/编辑：启动时同步，
+    编辑应改 assets/skills/ 下源文件后重启，而非在线覆盖。
+    """
     skill = get_skill(db, skill_id=skill_id)
+    if getattr(skill, "is_builtin", False):
+        raise ForbiddenError("内置技能由文件系统管理，不可编辑")
     for k, v in fields.items():
         if k == "name":
             continue  # 忽略 name 改动
@@ -162,7 +168,14 @@ def update_skill(db: Session, *, skill_id, **fields) -> Skill:
 
 
 def delete_skill(db: Session, *, skill_id) -> None:
+    """删除 skill（DB + MinIO 目录，幂等）。
+
+    内置 skill（is_builtin=True）禁止删除：其生命周期由 assets/skills/ 文件
+    系统管理，删源文件后重启才会移除（且当前同步不做自动删，仅 warning）。
+    """
     skill = get_skill(db, skill_id=skill_id)
+    if getattr(skill, "is_builtin", False):
+        raise ForbiddenError("内置技能由文件系统管理，不可删除")
     bucket = _bucket_for_scope(skill.scope)
     delete_skill_directory(bucket=bucket, prefix=skill.minio_prefix)
     db.delete(skill)

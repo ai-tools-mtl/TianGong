@@ -62,6 +62,7 @@ class SkillOut(BaseModel):
     owner_id: str | None = None
     status: str
     minio_prefix: str
+    is_builtin: bool = False
     created_at: str
     updated_at: str
 
