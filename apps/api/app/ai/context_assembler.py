@@ -329,12 +329,15 @@ def build_system_prompt(
     #   如「检查我的写作风格」→命中「偏好简洁风格」记忆。
     # - 无 user_input（generate 等场景）：回退到章节标题+目标。
     # project 已在上方 fetch（L164），直接复用其 user_id，避免重复查询。
-    if project.user_id is not None:
+    project_user_id = project.user_id  # 预取值：_search_user_memories 内部失败会 rollback，
+    # 导致 project 对象被 expire；后续访问 project.user_id 会触发惰性加载，
+    # 若事务已被毒化则抛 InFailedSqlTransaction。用局部变量绑定，避开惰性加载。
+    if project_user_id is not None:
         # user_input 非空且非纯空格时用它检索；否则回退章节信号
         # （纯空格 embed 会产出垃圾向量，污染检索结果）
         memory_query = (user_input.strip() if user_input and user_input.strip()
                         else f"{section.title} {sp.goal}")
-        memories = _search_user_memories(db, project.user_id, memory_query)
+        memories = _search_user_memories(db, project_user_id, memory_query)
         if memories:
             memory_lines = "\n".join(f"- {m.content}" for m in memories)
             parts.append("# 关于这位用户的长期记忆（请遵循其偏好与约定）")
@@ -351,7 +354,7 @@ def build_system_prompt(
         # [S2-3] 用户画像层：source=profile 的记忆（职业/领域/专业水平），全量注入。
         # 画像不走语义检索（量少、要全量），用 list_memories(source=profile) 直取。
         # 据画像内容调节表达密度：代理人/律师 → 高密度专业术语；发明人/工程师 → 通俗化。
-        profile = _get_profile_memories(db, project.user_id)
+        profile = _get_profile_memories(db, project_user_id)
         if profile:
             profile_text = "\n".join(f"- {m.content}" for m in profile)
             density_hint = _profile_density_hint(profile_text)
