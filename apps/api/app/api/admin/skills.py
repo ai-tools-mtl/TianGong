@@ -32,6 +32,7 @@ def _to_out(skill) -> SkillOut:
         owner_id=str(skill.owner_id) if skill.owner_id else None,
         status=skill.status,
         minio_prefix=skill.minio_prefix,
+        is_builtin=bool(skill.is_builtin),
         created_at=skill.created_at.isoformat() if skill.created_at else "",
         updated_at=skill.updated_at.isoformat() if skill.updated_at else "",
     )

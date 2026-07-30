@@ -91,3 +91,22 @@ def on_startup():
             loguru.logger.info(f"恢复扫描：重新入队 {n_arc} 个归档向量化任务")
     except Exception as e:
         loguru.logger.exception(f"归档向量化恢复扫描失败（不阻塞启动）：{e}")
+
+    # 内置 skill 同步：扫描项目根 assets/skills/，幂等 upsert 进 DB + MinIO
+    # （标记 is_builtin=True，scope=global/status=active 自动喂给 agent）。
+    # 失败不阻塞启动（MinIO 未起、目录缺失等降级为 warning）。
+    try:
+        from app.core.database import SessionLocal
+        from app.skills.builtin_loader import sync_builtin_skills
+
+        db = SessionLocal()
+        try:
+            created, updated = sync_builtin_skills(db)
+            if created or updated:
+                loguru.logger.info(
+                    f"内置技能同步：新建 {created}，更新 {updated}"
+                )
+        finally:
+            db.close()
+    except Exception as e:
+        loguru.logger.exception(f"内置技能同步失败（不阻塞启动）：{e}")
