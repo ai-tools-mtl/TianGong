@@ -4,6 +4,7 @@
 避免逻辑分裂。覆盖智谱 GLM / OpenAI 兼容协议常见错误码：
 - 1214 / "model code cannot be empty" / get_llm 的 ValueError「缺少 model」→ 提示补模型名
 - 1002 / 401 / Authorization / Invalid API Key → 提示查 Key
+- JSON 解析失败（Expecting value / JSONDecodeError）→ 提示检查 API 地址和密钥
 - 超时 / 连接 → 提示网络
 未匹配保留 str(e)（截断 200），不丢信息。
 """
@@ -18,6 +19,10 @@ def friendly_llm_error(e: Exception) -> str:
     # 1002 / key 非法 / 401
     if "1002" in msg or "Authorization" in msg or "API Key" in msg or "Invalid API Key" in msg:
         return "API Key 无效或已过期，请前往设置检查密钥"
+    # JSON 解析失败：base_url 指向非 API 端点（返回 HTML / 空响应）时，
+    # langchain_openai 内部 httpx → json.loads 抛 JSONDecodeError。
+    if "Expecting value" in msg or "JSONDecodeError" in msg or "Expecting property name" in msg:
+        return "LLM 服务返回了无效响应，请检查 API 地址和密钥配置是否正确"
     # 超时 / 连接
     if "timed out" in msg.lower() or "timeout" in msg.lower():
         return "LLM 请求超时，请稍后重试"
