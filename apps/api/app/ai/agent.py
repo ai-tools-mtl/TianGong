@@ -18,6 +18,8 @@
 测试用 monkeypatch.setattr(agent_mod, "create_deep_agent", ...) 装配断言时
 替换的是模块属性。
 """
+import logging
+
 from langgraph.graph.state import CompiledStateGraph
 
 from app.ai.context_assembler import SYSTEM_PROMPT
@@ -31,6 +33,8 @@ from app.skills.visibility import build_agent_skill_sources
 # 模块顶层 import：测试通过 monkeypatch agent_mod.create_deep_agent 替换装配。
 from deepagents import create_deep_agent
 from deepagents.backends import StoreBackend
+
+logger = logging.getLogger("tiangong.ai")
 
 __all__ = ["build_agent"]
 
@@ -77,6 +81,7 @@ async def build_agent(
     """
     # 1. 自定义配置降级检测——第一道闸，不支持立即拒绝
     check_tool_support(model=llm_config.model)
+    logger.debug("build_agent: tool support ok for %s", llm_config.model)
 
     # 2. MinIO BaseStore + StoreBackend
     # C1：所有 skill（global + personal）统一存 "global" bucket，仅靠 minio_prefix 区分 scope。
@@ -97,9 +102,11 @@ async def build_agent(
 
     # 3. 可见 skill sources（global ∪ personal）
     skill_sources = build_agent_skill_sources(db, user_id=user_id)
+    logger.debug("build_agent: skill_sources=%s", skill_sources)
 
     # 4. LLM + 工具
     llm = get_llm(llm_config, streaming=True)
+    logger.info("build_agent: LLM 实例已构造，开始装配 system prompt + tools")
 
     # [L1][L4][前文直注入] section 非 None 时装配动态 system prompt（spec §3.2）
     # user_input 透传给记忆检索（用户当前输入是最强检索信号，spec §5.3 升级）
@@ -118,14 +125,19 @@ async def build_agent(
         system_prompt = SYSTEM_PROMPT  # 向后兼容兜底
 
     # 5. 组装 deepagents agent
+    agent_tools = await create_agent_tools(db, user_id)
+    logger.info("build_agent: 调用 create_deep_agent（tools=%d skills=%d）",
+                len(agent_tools),
+                len(skill_sources) if skill_sources else 0)
     agent = create_deep_agent(
         model=llm,  # I1：不预绑定。deepagents 内部调 bind_tools，预绑定会让 RunnableBinding 无 bind_tools 方法。
         system_prompt=system_prompt,
-        tools=await create_agent_tools(db, user_id),
+        tools=agent_tools,
         skills=skill_sources if skill_sources else None,
         backend=backend,
         store=store,
     )
+    logger.info("build_agent: agent 组装完成")
     return agent
 
 

@@ -1,11 +1,14 @@
 """LLM 抽象层。封装 ChatOpenAI 接入 GLM（OpenAI 兼容协议）。"""
 
+import logging
 from collections.abc import AsyncIterator, Iterator
 
 from langchain_core.messages import BaseMessage
 from langchain_openai import ChatOpenAI
 
 from app.services.llm_config_service import ResolvedChatConfig
+
+logger = logging.getLogger("tiangong.llm")
 
 
 def get_llm(
@@ -28,6 +31,15 @@ def get_llm(
     # 在工厂入口提前拦住，抛清晰中文错误（会冒到 SSE error 事件给前端 toast）。
     if not llm_config.model:
         raise ValueError("LLM 配置缺少 model，无法发起调用，请前往设置补全模型名")
+
+    logger.info(
+        "构造 ChatOpenAI: model=%s base_url=%s streaming=%s stream_usage=%s source=%s",
+        llm_config.model,
+        llm_config.base_url,
+        streaming,
+        stream_usage,
+        llm_config.source,
+    )
     return ChatOpenAI(
         model=llm_config.model,
         base_url=llm_config.base_url,

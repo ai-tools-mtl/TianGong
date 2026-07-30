@@ -257,6 +257,7 @@ def _retrieve_knowledge_for_section(
             for r in results
         ]
     except Exception:
+        db.rollback()
         return None
 
 
