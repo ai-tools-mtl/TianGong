@@ -35,7 +35,7 @@ from deepagents.backends import StoreBackend
 __all__ = ["build_agent"]
 
 
-def build_agent(
+async def build_agent(
     db, *, llm_config: ResolvedChatConfig, user_id,
     section=None, user_input: str | None = None, intent: str | None = None,
 ) -> CompiledStateGraph:
@@ -114,7 +114,7 @@ def build_agent(
     agent = create_deep_agent(
         model=llm,  # I1：不预绑定。deepagents 内部调 bind_tools，预绑定会让 RunnableBinding 无 bind_tools 方法。
         system_prompt=system_prompt,
-        tools=create_agent_tools(db, user_id),
+        tools=await create_agent_tools(db, user_id),
         skills=skill_sources if skill_sources else None,
         backend=backend,
         store=store,

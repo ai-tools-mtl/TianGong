@@ -135,7 +135,7 @@ async def astream_chat(
     # user_input 用于记忆检索（用户当前输入是最强语义信号，如「检查写作风格」→命中偏好记忆）
     # [S2-2] 规则层意图识别：draft/edit/info/guide → 注入对应行为指令（D1，LLM 兜底默认关）
     intent = classify_intent(user_input)
-    agent = build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section),
+    agent = await build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section),
                         section=section, user_input=user_input, intent=intent)
 
     # [L2] 透传历史 + 当前用户输入（spec §3.3.2）
@@ -196,7 +196,7 @@ async def astream_generate(
         (m.content for m in reversed(history) if m.role == "user"), None
     )
     # [S2-2] generate 场景无新输入，意图恒为「代写草稿」——直接传 draft（比让规则层猜更准）
-    agent = build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section),
+    agent = await build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section),
                         section=section, user_input=gen_query, intent="draft")
     # [S4-2] 用 build_generate_instruction 构造含 CoT 分步思考的指令
     instruction = build_generate_instruction(section)

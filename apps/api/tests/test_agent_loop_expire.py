@@ -13,6 +13,7 @@ aborted session 上抛 InternalError。本测试固化这一正确行为（commi
 配置级断言见 test_sessionlocal_config.py::test_sessionlocal_expire_on_commit_is_false。
 本测试的价值是端到端行为覆盖（含 rollback 后访问、写后读），属行为固化而非配置守卫。
 """
+import asyncio
 import uuid
 
 
@@ -65,7 +66,7 @@ def test_save_memory_commit_then_read_section_attrs(db_session, monkeypatch):
     monkeypatch.setattr(ms, "_try_embed", lambda db, user_id, text: None)
     monkeypatch.setattr(ms, "find_similar_memory", lambda db, *, user_id, content: None)
 
-    tools = create_agent_tools(db=db_session, user_id=user_id)
+    tools = asyncio.run(create_agent_tools(db=db_session, user_id=user_id))
     # tools[1] 是 save_memory
     result = tools[1].invoke({"content": "记住我喜欢简洁的写作风格"})
     assert "已保存" in result
@@ -99,7 +100,7 @@ def test_rag_search_rollback_then_read_section_attrs(db_session, monkeypatch):
 
     monkeypatch.setattr(retriever, "retrieve", _boom)
 
-    tools = create_agent_tools(db=db_session, user_id=user_id)
+    tools = asyncio.run(create_agent_tools(db=db_session, user_id=user_id))
     # tools[0] 是 rag_search
     result = tools[0].invoke({"query": "测试"})
     assert result == []  # 异常时返回空列表
