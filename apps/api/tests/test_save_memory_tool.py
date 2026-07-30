@@ -101,3 +101,95 @@ def test_save_memory_default_type_writes_agent_source(db_session, registered_use
     # 默认走 agent source（偏好类），不是 profile
     assert ms.list_memories(db_session, user_id=uid, source="profile") == []
     assert len(ms.list_memories(db_session, user_id=uid, source="agent")) == 1
+
+
+# ===== Task 5：矛盾覆盖纠错（spec §5 NLI 集成）=====
+# 说明：测试库是 SQLite，user_memories.embedding 列是 JSON（无 pgvector 的
+# cosine_distance 算子），真实 find_similar_memory 的 <=> 查询在 SQLite 下
+# 语法不通。故沿用既有测试范式——直接桩 find_similar_memory 返回预置记忆，
+# 让 NLI 判别分支（本 Task 的核心改动）成为唯一被测对象。
+
+def test_save_memory_contradiction_replaces_old(db_session, registered_user, monkeypatch):
+    """NLI 判矛盾 → 删旧写新（矛盾覆盖纠错）。"""
+    from app.ai.tools import create_agent_tools
+    from app.models import UserMemory
+    import uuid as _uuid
+
+    uid = _uuid.UUID(registered_user["id"])
+
+    from app.services import memory_service as ms
+    monkeypatch.setattr(ms, "_try_embed", lambda db, user_id, text: [1.0] * 1024)
+
+    # 预置一条旧记忆
+    ms.create_memory(db_session, user_id=uid, content="偏好简洁风格")
+    db_session.commit()
+    old = db_session.query(UserMemory).filter_by(user_id=uid).one()
+
+    # 命中去重（真实 cosine 算子在 SQLite 不可用 → 直接桩）
+    monkeypatch.setattr(ms, "find_similar_memory", lambda db, *, user_id, content: old)
+
+    # NLI 判矛盾
+    monkeypatch.setattr("app.ai.tools.judge_relation", lambda p, h: "contradiction")
+
+    tools = asyncio.run(create_agent_tools(db_session, user_id=uid))
+    save_mem = next(t for t in tools if t.name == "save_memory")
+    result = save_mem.invoke({"content": "偏好详尽风格"})
+
+    assert "替换" in result or "更新" in result
+    contents = [m.content for m in db_session.query(UserMemory).filter_by(user_id=uid).all()]
+    assert "偏好详尽风格" in contents
+    assert "偏好简洁风格" not in contents  # 旧记忆被删
+
+
+def test_save_memory_entailment_merges(db_session, registered_user, monkeypatch):
+    """NLI 判蕴含 → 走原合并逻辑（v1.0 行为）。"""
+    from app.ai.tools import create_agent_tools
+    from app.models import UserMemory
+    import uuid as _uuid
+
+    uid = _uuid.UUID(registered_user["id"])
+    from app.services import memory_service as ms
+    monkeypatch.setattr(ms, "_try_embed", lambda db, user_id, text: [1.0] * 1024)
+
+    ms.create_memory(db_session, user_id=uid, content="偏好简洁")
+    db_session.commit()
+    old = db_session.query(UserMemory).filter_by(user_id=uid).one()
+
+    monkeypatch.setattr(ms, "find_similar_memory", lambda db, *, user_id, content: old)
+    monkeypatch.setattr("app.ai.tools.judge_relation", lambda p, h: "entailment")
+
+    tools = asyncio.run(create_agent_tools(db_session, user_id=uid))
+    save_mem = next(t for t in tools if t.name == "save_memory")
+    save_mem.invoke({"content": "我喜欢简短"})
+
+    contents = [m.content for m in db_session.query(UserMemory).filter_by(user_id=uid).all()]
+    assert contents == ["我喜欢简短"]  # 合并更新，条数不变
+
+
+def test_save_memory_nli_down_falls_back_to_merge(db_session, registered_user, monkeypatch):
+    """NLI 故障 → 走合并不删（降级安全阀）。"""
+    from app.ai.tools import create_agent_tools
+    from app.models import UserMemory
+    import uuid as _uuid
+
+    uid = _uuid.UUID(registered_user["id"])
+    from app.services import memory_service as ms
+    monkeypatch.setattr(ms, "_try_embed", lambda db, user_id, text: [1.0] * 1024)
+
+    ms.create_memory(db_session, user_id=uid, content="偏好简洁")
+    db_session.commit()
+    old = db_session.query(UserMemory).filter_by(user_id=uid).one()
+
+    monkeypatch.setattr(ms, "find_similar_memory", lambda db, *, user_id, content: old)
+
+    # NLI 抛异常 → judge_relation 内部降级 neutral
+    def _raise(*args, **kwargs):
+        raise Exception("down")
+    monkeypatch.setattr("app.rag.nli.httpx.post", _raise)
+
+    tools = asyncio.run(create_agent_tools(db_session, user_id=uid))
+    save_mem = next(t for t in tools if t.name == "save_memory")
+    save_mem.invoke({"content": "偏好详尽"})
+
+    contents = [m.content for m in db_session.query(UserMemory).filter_by(user_id=uid).all()]
+    assert len(contents) == 1  # 合并未删

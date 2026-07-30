@@ -15,6 +15,8 @@ from typing import Any
 from langchain_core.tools import tool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
+from app.rag.nli import judge_relation
+
 logger = logging.getLogger(__name__)
 
 
@@ -85,7 +87,7 @@ async def create_agent_tools(db: Any, user_id):
         """
         from app.models.user_memory import SOURCE_AGENT, SOURCE_PROFILE
         from app.services.memory_service import (
-            create_memory, find_similar_memory, update_memory,
+            create_memory, delete_memory, find_similar_memory, update_memory,
         )
 
         content = (content or "").strip()
@@ -102,7 +104,15 @@ async def create_agent_tools(db: Any, user_id):
             # 去重：查找高度相似的已有记忆
             similar = find_similar_memory(db, user_id=user_id, content=content)
             if similar is not None:
-                # 合并：相似度 ≥ 阈值，更新已有记忆
+                # 【v1.1】矛盾判别：NLI 判断新旧是否冲突
+                relation = judge_relation(content, similar.content)
+                if relation == "contradiction":
+                    # 矛盾：用户认知更新，新覆盖旧（全自动纠错）
+                    delete_memory(db, memory_id=similar.id, user_id=user_id)
+                    create_memory(db, user_id=user_id, content=content, source=source)
+                    db.commit()
+                    return "已更新（检测到与旧记忆冲突，已替换）"
+                # entailment / neutral / 服务降级：走原合并逻辑
                 update_memory(db, memory_id=similar.id, user_id=user_id, content=content)
                 db.commit()
                 return f"已合并更新已有记忆（原：「{similar.content[:50]}...」）"
