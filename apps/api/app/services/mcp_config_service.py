@@ -4,9 +4,12 @@
 仿 firecrawl_client / mineru_client 模式。service 拥有事务，失败 rollback。
 凭据 masking：to_out 只回 {key: {has_value: bool}}；resolve 返回明文（仅内部用）。
 """
+import asyncio
+import logging
 import uuid
 from typing import Any
 
+from langchain_mcp_adapters.client import MultiServerMCPClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -14,6 +17,9 @@ from app.core.exceptions import ConflictError, NotFoundError
 from app.core.security import decrypt_value, encrypt_value
 from app.models import SystemSetting
 from app.models.mcp_server import McpServer
+from app.schemas.mcp import McpTestResult
+
+logger = logging.getLogger(__name__)
 
 GLOBAL_ENABLED_KEY = "mcp_global_enabled"
 
@@ -207,3 +213,58 @@ def resolve_mcp_servers(db: Session) -> list[dict[str, Any]]:
         }
         for s in rows
     ]
+
+
+# ── 测试连接 ──
+
+def _to_connection(server_cfg: dict[str, Any]) -> dict[str, Any]:
+    """resolve 出的 server 配置 → MultiServerMCPClient 的 connection dict。"""
+    transport = server_cfg["transport"]
+    if transport == "stdio":
+        conn: dict[str, Any] = {
+            "transport": "stdio",
+            "command": server_cfg["command"],
+            "args": server_cfg["args"] or [],
+        }
+        if server_cfg["env"]:
+            conn["env"] = server_cfg["env"]
+        return conn
+    # http / sse
+    conn = {"transport": transport, "url": server_cfg["url"]}
+    if server_cfg["headers"]:
+        conn["headers"] = server_cfg["headers"]
+    return conn
+
+
+async def _get_server_tools(server_cfg: dict[str, Any]) -> list:
+    """对单个 server 起临时 client，拉取工具列表。失败抛异常。"""
+    conn = _to_connection(server_cfg)
+    client = MultiServerMCPClient({server_cfg["name"]: conn}, tool_name_prefix=True)
+    return await client.get_tools()
+
+
+def test_mcp_server(db: Session, *, server_id, timeout: float = 10.0) -> McpTestResult:
+    """测试单个 server 连通性：起临时 client 调 get_tools，返回工具列表。
+
+    临时连接、不持久化、带超时。失败返回 ok=False + error，不抛异常。
+    用 asyncio.run 同步化（本函数在同步 admin 路由里调用，无已存在事件循环）。
+    """
+    server = get_mcp_server(db, server_id=server_id)
+    # 构造一个 resolve 形态的 dict（含明文凭据）
+    cfg = {
+        "id": str(server.id),
+        "name": server.name,
+        "transport": server.transport,
+        "command": server.command,
+        "args": server.args or [],
+        "url": server.url,
+        "headers": _decrypt_dict(server.headers_encrypted),
+        "env": _decrypt_dict(server.env_encrypted),
+    }
+    try:
+        tools = asyncio.run(asyncio.wait_for(_get_server_tools(cfg), timeout=timeout))
+        names = [getattr(t, "name", str(t)) for t in tools]
+        return McpTestResult(ok=True, tool_count=len(names), tool_names=names, error=None)
+    except Exception as e:
+        logger.warning("MCP server %s 测试连接失败: %s", server.name, e)
+        return McpTestResult(ok=False, tool_count=0, tool_names=[], error=str(e)[:300])
