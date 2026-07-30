@@ -226,8 +226,43 @@ def _profile_density_hint(profile_text: str) -> str:
 
 
 
+def _retrieve_knowledge_for_section(
+    db, user_id, section: Section, user_input: str | None = None,
+) -> list[dict] | None:
+    """为当前章节预检索知识库，失败静默返回 None（不阻断 agent 构建）。
+
+    检索 query 由章节标题 + 章节目标 + 用户输入拼接构成。user_input 为空时
+    仅用章节信号检索。top_k=3，单条内容截断到 300 字以控制 system prompt token。
+    """
+    try:
+        from app.rag.retriever import retrieve
+        from app.ai.section_prompts import get_section_prompt
+
+        sp = get_section_prompt(section.key)
+        parts = [section.title, sp.goal]
+        if user_input and user_input.strip():
+            parts.append(user_input.strip()[:200])
+        query = " ".join(parts)
+
+        results = retrieve(db, user_id=user_id, query=query, top_k=3)
+        if not results:
+            return None
+        return [
+            {
+                "content": r.content[:300],
+                "score": round(r.score, 2),
+                "section_key": r.source_section_key,
+                "project_title": r.project_title,
+            }
+            for r in results
+        ]
+    except Exception:
+        return None
+
+
 def build_system_prompt(
-    db, section: Section, user_input: str | None = None, intent: str | None = None
+    db, section: Section, user_input: str | None = None, intent: str | None = None,
+    knowledge_context: list[dict] | None = None,
 ) -> str:
     """装配动态 system prompt（agent loop 路线用，spec §3.1.1）。
 
@@ -269,6 +304,23 @@ def build_system_prompt(
             "一致性要求：① 沿用上文已确立的术语，不要换同义词；"
             "② 本章节若涉及「技术问题」「技术方案」等前文章节，必须显式呼应其表述；"
             "③ 不要与上文的技术方案、技术效果矛盾。"
+        )
+
+    # 知识库预注入层：系统自动检索与当前章节最相关的历史案例，让 agent 从一开始就
+    # 带着参考上下文工作。放在已写章节之后（同属结构性上下文），用户记忆之前。
+    if knowledge_context:
+        parts.append(
+            "# 知识库参考（你历史案例中与本章节最相关的内容，请参考其术语与风格）"
+        )
+        for k in knowledge_context:
+            source = k.get("project_title") or "历史案例"
+            key = f"·{k['section_key']}" if k.get("section_key") else ""
+            score = k.get("score", 0)
+            content = k.get("content", "")
+            parts.append(f"- 《{source}》{key}（相关度 {score}）：{content}")
+        parts.append(
+            "使用规则：参考上述案例的术语体系和写作风格，自然地呼应其表述方式，"
+            "不要逐字抄内容。若与当前项目无关则忽略。"
         )
 
     # 【新增】用户长期记忆层（检索注入，纯检索式策略）
