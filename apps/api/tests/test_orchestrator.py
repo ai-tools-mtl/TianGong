@@ -53,7 +53,7 @@ def _make_fake_build_agent(captured: dict):
             return
             yield  # 让它成为 async generator（永远不会执行到这）
 
-    def _build_agent(db, *, llm_config, user_id, section=None, **kw):
+    async def _build_agent(db, *, llm_config, user_id, section=None, **kw):
         captured["build_args"] = {"section": section, "user_id": user_id, "llm_config": llm_config}
         return _FakeAgent()
 

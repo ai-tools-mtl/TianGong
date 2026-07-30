@@ -11,6 +11,7 @@
 - 装配参数：mock create_deep_agent 验证 build_agent 传入了正确的
   tools/skills/store/backend（结构断言，不依赖 deepagents 实际行为）。
 """
+import asyncio
 import uuid
 
 import pytest
@@ -69,7 +70,7 @@ def test_build_agent_returns_compiled_graph(db_session, monkeypatch):
         source="env",
     )
     user_id = uuid.uuid4()
-    agent = agent_mod.build_agent(db_session, llm_config=config, user_id=user_id)
+    agent = asyncio.run(agent_mod.build_agent(db_session, llm_config=config, user_id=user_id))
     assert agent is not None
     # CompiledStateGraph 有 ainvoke/astream_events
     assert hasattr(agent, "ainvoke")
@@ -89,7 +90,7 @@ def test_build_agent_unsupported_model_raises(db_session):
         source="env",
     )
     with pytest.raises(ToolSupportError):
-        build_agent(db_session, llm_config=config, user_id=uuid.uuid4())
+        asyncio.run(build_agent(db_session, llm_config=config, user_id=uuid.uuid4()))
 
 
 def test_build_agent_empty_model_raises(db_session):
@@ -105,7 +106,7 @@ def test_build_agent_empty_model_raises(db_session):
         source="env",
     )
     with pytest.raises(ToolSupportError):
-        build_agent(db_session, llm_config=config, user_id=uuid.uuid4())
+        asyncio.run(build_agent(db_session, llm_config=config, user_id=uuid.uuid4()))
 
 
 def test_build_agent_assembly_args(db_session, monkeypatch):
@@ -159,7 +160,7 @@ def test_build_agent_assembly_args(db_session, monkeypatch):
         source="env",
     )
     user_id = uuid.uuid4()
-    agent_mod.build_agent(db_session, llm_config=config, user_id=user_id)
+    asyncio.run(agent_mod.build_agent(db_session, llm_config=config, user_id=user_id))
 
     # tools 来自 create_agent_tools 工厂（rag_search + save_memory）
     tool_names = [getattr(t, "name", None) for t in captured["tools"]]
@@ -198,7 +199,7 @@ def test_build_agent_storebackend_namespace_is_valid(db_session, monkeypatch):
         base_url="http://x", api_key="k", model="glm-4.7",
         source="env",
     )
-    agent_mod.build_agent(db_session, llm_config=config, user_id=uuid.uuid4())
+    asyncio.run(agent_mod.build_agent(db_session, llm_config=config, user_id=uuid.uuid4()))
 
     # 直接构造同配置 StoreBackend 验证 namespace callable 返回非空且通过校验。
     from app.skills.storage import MinIOSkillStore
@@ -266,7 +267,7 @@ def test_build_agent_with_section_uses_dynamic_prompt(db_session, monkeypatch):
     monkeypatch.setattr(storage_mod, "get_storage", lambda: _FakeStorage())
 
     config = ResolvedChatConfig(base_url="http://x", api_key="k", model="glm-4.7", source="env")
-    agent_mod.build_agent(db_session, llm_config=config, user_id=uuid.uuid4(), section=section)
+    asyncio.run(agent_mod.build_agent(db_session, llm_config=config, user_id=uuid.uuid4(), section=section))
 
     # 动态 prompt 含项目标题（来自 build_system_prompt）
     assert "凸轮门锁交底书" in captured["system_prompt"]
@@ -296,7 +297,7 @@ def test_build_agent_without_section_falls_back_to_static(db_session, monkeypatc
     monkeypatch.setattr(storage_mod, "get_storage", lambda: _FakeStorage())
 
     config = ResolvedChatConfig(base_url="http://x", api_key="k", model="glm-4.7", source="env")
-    agent_mod.build_agent(db_session, llm_config=config, user_id=uuid.uuid4())  # 不传 section
+    asyncio.run(agent_mod.build_agent(db_session, llm_config=config, user_id=uuid.uuid4()))  # 不传 section
 
     assert captured["system_prompt"] == SYSTEM_PROMPT
 
@@ -324,7 +325,7 @@ def test_build_agent_with_section_prompt_not_equal_static(db_session, monkeypatc
     monkeypatch.setattr(storage_mod, "get_storage", lambda: _FakeStorage())
 
     config = ResolvedChatConfig(base_url="http://x", api_key="k", model="glm-4.7", source="env")
-    agent_mod.build_agent(db_session, llm_config=config, user_id=uuid.uuid4(), section=section)
+    asyncio.run(agent_mod.build_agent(db_session, llm_config=config, user_id=uuid.uuid4(), section=section))
 
     assert captured["system_prompt"] != SYSTEM_PROMPT
 
@@ -353,10 +354,10 @@ def test_build_agent_passes_intent_to_prompt(db_session, monkeypatch):
     monkeypatch.setattr(storage_mod, "get_storage", lambda: _FakeStorage())
 
     config = ResolvedChatConfig(base_url="http://x", api_key="k", model="glm-4.7", source="env")
-    agent_mod.build_agent(
+    asyncio.run(agent_mod.build_agent(
         db_session, llm_config=config, user_id=uuid.uuid4(),
         section=section, intent="draft",
-    )
+    ))
 
     # 代写意图指令的特征词（INTENT_HINTS["draft"]）
     assert "代写" in captured["system_prompt"]

@@ -60,6 +60,9 @@ export const queryKeys = {
     firecrawlConfig: ['admin', 'firecrawl-config'] as const,
     // MinerU 配置（PDF→Markdown 解析）
     mineruConfig: ['admin', 'mineru-config'] as const,
+    // MCP server 配置（stdio/http/sse）
+    mcpServers: ['admin', 'mcp-servers'] as const,
+    mcpEnabled: ['admin', 'mcp-enabled'] as const,
     // G3 rerank 配置（混合检索精排）
     rerankConfig: ['admin', 'rerank-config'] as const,
     llmStats: (days: number) => ['admin', 'llm-stats', days] as const,
@@ -693,6 +696,70 @@ export function useSaveMineruConfig() {
 export function useTestMineruConfig() {
   return useMutation({
     mutationFn: () => api.testMineruConfig(),
+  })
+}
+
+// ── MCP server 配置（admin 全局，stdio/http/sse）──
+export function useMcpServers() {
+  return useQuery({
+    queryKey: queryKeys.admin.mcpServers,
+    queryFn: () => api.listMcpServers(),
+  })
+}
+
+export function useMcpEnabled() {
+  return useQuery({
+    queryKey: queryKeys.admin.mcpEnabled,
+    queryFn: () => api.getMcpEnabled(),
+  })
+}
+
+export function useSaveMcpServer() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: import('@/types/api').McpServerPayload) =>
+      api.createMcpServer(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.admin.mcpServers })
+    },
+  })
+}
+
+export function useUpdateMcpServer() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: Partial<import('@/types/api').McpServerPayload> }) =>
+      api.updateMcpServer(id, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.admin.mcpServers })
+    },
+  })
+}
+
+export function useDeleteMcpServer() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.deleteMcpServer(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.admin.mcpServers })
+    },
+  })
+}
+
+export function useToggleMcpGlobal() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: import('@/types/api').McpGlobalEnabled) =>
+      api.setMcpEnabled(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.admin.mcpEnabled })
+    },
+  })
+}
+
+export function useTestMcpServer() {
+  return useMutation({
+    mutationFn: (id: string) => api.testMcpServer(id),
   })
 }
 

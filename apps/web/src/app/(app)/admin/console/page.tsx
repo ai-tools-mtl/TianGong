@@ -1,6 +1,6 @@
 'use client'
 
-import { BarChart3, FileText, Globe, ScanText, Search, Settings, SlidersHorizontal } from 'lucide-react'
+import { BarChart3, FileText, Globe, Plug, ScanText, Search, Settings, SlidersHorizontal } from 'lucide-react'
 import Link from 'next/link'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
@@ -42,6 +42,12 @@ const CONSOLE_SECTIONS = [
     icon: SlidersHorizontal,
     title: 'Rerank 配置',
     description: '混合检索精排模型配置',
+  },
+  {
+    href: '/admin/console/mcp',
+    icon: Plug,
+    title: 'MCP 配置',
+    description: 'MCP server 工具加载（stdio/http/sse）',
   },
   {
     href: '/admin/console/audit',
