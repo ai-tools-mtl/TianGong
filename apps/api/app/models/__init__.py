@@ -8,6 +8,7 @@ from app.models.knowledge_chunk import KnowledgeChunk
 from app.models.knowledge_file import KnowledgeFile
 from app.models.knowledge_review import KnowledgeReview
 from app.models.llm_call_log import LLMCallLog
+from app.models.mcp_server import McpServer
 from app.models.message import Message
 from app.models.parse_job import ParseJob
 from app.models.project import Project
@@ -37,6 +38,7 @@ __all__ = [
     "UserGlobalLLMGrant",
     "Skill",
     "LLMCallLog",
+    "McpServer",
     "AuditLog",
     "InviteCode",
     "WebIngestionJob",
