@@ -1,12 +1,14 @@
 from fastapi import APIRouter
 
 from app.api import (
-    admin, ai, attachments, auth, export, health, knowledge, memories, projects, review, sections, settings, share, skills, tags, templates, versions,
+    admin, ai, attachments, auth, export, health, init_assistant, knowledge, memories, projects, review, sections, settings, share, skills, tags, templates, versions,
 )
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(auth.router)
 api_router.include_router(projects.router)
+# /projects/{id}/init-* 项目初始化助手（对话式新建，与 projects.router 共用 /projects prefix）
+api_router.include_router(init_assistant.router)
 api_router.include_router(tags.router)
 api_router.include_router(templates.router)
 api_router.include_router(sections.router)
