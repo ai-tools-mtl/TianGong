@@ -1,3 +1,11 @@
+import os
+
+# 测试环境标记：让 main.py 的 startup 预检（embedding 维度 / rerank 连通性）跳过。
+# 这些预检连真实推理微服务，测试环境没有，而每个 client fixture 都会触发 startup，
+# 预检的网络超时会累加成巨大的测试耗时（每个 startup ~5s × 数百测试）。
+# os.environ.setdefault("TIANGONG_TESTING", "1")  # 临时注释，定位 36 失败
+os.environ.setdefault("TIANGONG_TESTING", "1")
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
