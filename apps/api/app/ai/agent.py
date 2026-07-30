@@ -105,8 +105,15 @@ async def build_agent(
     # user_input 透传给记忆检索（用户当前输入是最强检索信号，spec §5.3 升级）
     # intent（S2-2）透传给意图行为指令注入（draft/edit/info/guide）
     if section is not None:
-        from app.ai.context_assembler import build_system_prompt
-        system_prompt = build_system_prompt(db, section, user_input=user_input, intent=intent)
+        from app.ai.context_assembler import _retrieve_knowledge_for_section, build_system_prompt
+        # 预检索知识库：据章节上下文自动检索历史案例，失败静默降级
+        knowledge_context = _retrieve_knowledge_for_section(
+            db, user_id, section, user_input=user_input,
+        )
+        system_prompt = build_system_prompt(
+            db, section, user_input=user_input, intent=intent,
+            knowledge_context=knowledge_context,
+        )
     else:
         system_prompt = SYSTEM_PROMPT  # 向后兼容兜底
 
