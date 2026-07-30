@@ -4,7 +4,6 @@ load → score（Rubric 驱动 + 自一致性）→ aggregate → persist
 """
 
 import json
-import re
 import uuid as uuid_mod
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -109,27 +108,78 @@ def _get_last_review(db: Session, project_id) -> ReviewRecord | None:
 def _score_dimension(
     criterion: dict, sections: dict[str, str], llm_config: ResolvedChatConfig
 ) -> tuple[int, str, str]:
+    """单维度评分。
+
+    [S5] 优先用 with_structured_output(DimensionScore) 强约束输出（替掉脆弱正则）。
+    provider 不支持原生 structured output 时（NotImplementedError/AttributeError，
+    D1 决策兼容国产 provider），fallback 到普通 invoke + _parse_json_response。
+    全部失败退回 (50, 评分失败, 请重试) 兜底。
+    """
     llm = get_llm(llm_config)
     prompt = build_score_prompt(criterion, sections)
+    messages = [
+        SystemMessage(content=SCORE_SYSTEM_PROMPT),
+        HumanMessage(content=prompt),
+    ]
     try:
-        resp = llm.invoke([
-            SystemMessage(content=SCORE_SYSTEM_PROMPT),
-            HumanMessage(content=prompt),
-        ])
-        data = _parse_json_response(resp.content)
+        # 路径 A：结构化输出（首选）。支持 provider 会返回 DimensionScore 实例。
+        from app.ai.schemas.review_schema import DimensionScore
+        try:
+            structured_llm = llm.with_structured_output(DimensionScore)
+            result = structured_llm.invoke(messages)
+            # result 是 DimensionScore 实例（结构化输出）；也可能退化为 dict（兜底）
+            if isinstance(result, DimensionScore):
+                return (result.score, result.evidence, result.suggestion)
+            data = result  # dict 形态
+        except (NotImplementedError, AttributeError):
+            # 路径 B：provider 不支持 structured output，退回文本 + 正则解析
+            resp = llm.invoke(messages)
+            data = _parse_json_response(resp.content)
         return (
             max(0, min(100, int(data.get("score", 50)))),
-            data.get("evidence", ""),
-            data.get("suggestion", ""),
+            str(data.get("evidence", "")),
+            str(data.get("suggestion", "")),
         )
     except Exception:
         return (50, "评分失败", "请重试")
 
 
 def _parse_json_response(text: str) -> dict:
-    m = re.search(r"\{[^{}]*\}", text, re.DOTALL)
-    if m:
-        return json.loads(m.group())
+    """[S5] 从 LLM 文本响应中提取并解析 JSON。
+
+    [S5] 健壮化：旧正则排除花括号，遇到 dict 嵌 dict（如 evidence 含嵌套对象）
+    会在内层 } 处截断，解析失败。改用括号配平算法提取最外层完整 JSON 对象，
+    支持任意深度嵌套。
+    """
+    if not isinstance(text, str):
+        text = str(text)
+    # 找第一个 {，用括号配平找到对应的 }（支持嵌套）
+    start = text.find("{")
+    if start == -1:
+        return json.loads(text)  # 无花括号，直接解析（可能本身是合法 JSON）
+    depth = 0
+    in_str = False
+    escape = False
+    for i in range(start, len(text)):
+        ch = text[i]
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return json.loads(text[start:i + 1])
+    # 未找到配平的 }，尝试整体解析
     return json.loads(text)
 
 
