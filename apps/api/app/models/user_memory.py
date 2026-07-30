@@ -1,7 +1,8 @@
 import uuid
+from datetime import datetime
 
 from pgvector.sqlalchemy import HALFVEC as HalfVec
-from sqlalchemy import ForeignKey, Index, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, IdMixin, TimestampMixin
@@ -39,3 +40,9 @@ class UserMemory(Base, IdMixin, TimestampMixin):
     content: Mapped[str] = mapped_column(Text)
     embedding = mapped_column(HalfVec(EMBEDDING_DIM), nullable=True)
     source: Mapped[str] = mapped_column(String(20), default=SOURCE_AGENT)
+
+    # 【v1.1】热度字段：淘汰算法用
+    hit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    last_hit_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

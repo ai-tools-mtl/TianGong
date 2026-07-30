@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     embedding_model: str = "BAAI/bge-m3"
     embedding_api_key: str = ""
 
+    # 【v1.1】记忆热度/淘汰配置
+    memory_limit: int = 200                 # 单用户记忆上限
+    memory_half_life_days: int = 30         # 热度衰减半衰期（天）
+    memory_grace_days: int = 7              # 新记忆豁免期（天）
+    nli_base_url: str = "http://localhost:7998"  # NLI 矛盾判断服务地址
+
     # Firecrawl (web ingestion;全局 key 存 SystemSetting,env 仅兜底)
     firecrawl_api_key: str = ""
     firecrawl_base_url: str = "https://api.firecrawl.dev"

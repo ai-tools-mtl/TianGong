@@ -211,3 +211,16 @@ def test_find_similar_memory_uses_pgvector_cosine():
     assert "DEDUP_SIMILARITY" in src
     assert "HalfVec(embedding)" not in src, \
         "不要包 HalfVec()（构造器期望 dim 整数，传 list 会 TypeError）；cosine_distance 直接传 list"
+
+
+def test_create_memory_initializes_hot_fields(db_session, registered_user, monkeypatch):
+    """新增记忆的 hit_count=0、last_hit_at=None（v1.1 热度字段初始值）。"""
+    from app.services import memory_service as ms
+
+    uid = uuid.UUID(registered_user["id"])
+    monkeypatch.setattr(ms, "_try_embed", lambda db, user_id, text: None)
+
+    mem = ms.create_memory(db_session, user_id=uid, content="测试热度字段")
+
+    assert mem.hit_count == 0
+    assert mem.last_hit_at is None
