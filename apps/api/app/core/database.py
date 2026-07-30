@@ -19,12 +19,20 @@ SessionLocal = sessionmaker(
 )
 
 
-def is_postgres() -> bool:
+def is_postgres(db=None) -> bool:
     """判断当前 engine 是否为 PostgreSQL（SQLite 测试库返回 False）。
 
     用于 G1 HNSW / G3 tsvector 等 PG-only 特性的方言判断。
+
+    db 可选：传入 Session 时以其 bind（实际 engine）为准——这对 SQLite 内存测试库
+    必要，因测试 session 绑定的是独立内存 SQLite engine，与模块级生产 engine 不同。
+    不传时回退到模块级 engine。
     """
-    return engine.dialect.name == 'postgresql'
+    eng = engine
+    if db is not None:
+        bind = db.get_bind()
+        eng = bind if bind is not None else engine
+    return eng.dialect.name == 'postgresql'
 
 
 def get_db() -> Generator[Session, None, None]:

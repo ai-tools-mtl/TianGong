@@ -332,3 +332,65 @@ def test_enforce_capacity_grace_period_protects_new(db_session, registered_user,
 
     count = db_session.query(UserMemory).filter_by(user_id=uid).count()
     assert count == 3  # 全部豁免，未删任何
+
+
+def test_bump_hit_counts_increments(db_session, registered_user, monkeypatch):
+    """_bump_hit_counts 批量累加 hit_count 并更新 last_hit_at。"""
+    from app.services import memory_service as ms
+    from app.models import UserMemory
+
+    uid = uuid.UUID(registered_user["id"])
+    monkeypatch.setattr(ms, "_try_embed", lambda db, user_id, text: None)
+    m1 = ms.create_memory(db_session, user_id=uid, content="m1")
+    m2 = ms.create_memory(db_session, user_id=uid, content="m2")
+    db_session.commit()
+    assert m1.hit_count == 0
+
+    ms._bump_hit_counts(db_session, [m1.id, m2.id])
+    db_session.commit()
+
+    db_session.refresh(m1)
+    db_session.refresh(m2)
+    assert m1.hit_count == 1
+    assert m2.hit_count == 1
+    assert m1.last_hit_at is not None
+
+
+def test_bump_hit_counts_failure_returns_silently(db_session, registered_user, monkeypatch):
+    """_bump_hit_counts 失败时静默 rollback，不抛异常（尽力而为）。"""
+    from app.services import memory_service as ms
+
+    uid = uuid.UUID(registered_user["id"])
+
+    # 让 execute 抛异常模拟失败
+    def boom(*a, **kw):
+        raise RuntimeError("db down")
+    monkeypatch.setattr(db_session, "execute", boom)
+
+    # 不应抛异常
+    ms._bump_hit_counts(db_session, [uuid.uuid4()])
+
+
+def test_search_memories_reranks_by_hotness(db_session, registered_user, monkeypatch):
+    """热度高的记忆排在向量距离更近但热度低的之前（两阶段重排）。"""
+    from app.services import memory_service as ms
+    from datetime import datetime, timedelta, timezone
+
+    uid = uuid.UUID(registered_user["id"])
+    # 固定向量，让两条记忆向量距离相同（都返回）→ 纯靠热度重排
+    monkeypatch.setattr(ms, "_try_embed", lambda db, user_id, text: [1.0] * 1024)
+    monkeypatch.setattr(ms, "SIMILARITY_THRESHOLD", 0.0)  # 放宽，确保都过阈值
+
+    # 向量距离相同的两条（embedding 相同 → cosine_distance=0）
+    cold = ms.create_memory(db_session, user_id=uid, content="冷")
+    cold.hit_count = 0
+    cold.last_hit_at = datetime(2026, 1, 1, tzinfo=timezone.utc)  # 很久以前
+    hot = ms.create_memory(db_session, user_id=uid, content="热")
+    hot.hit_count = 100
+    hot.last_hit_at = datetime(2026, 7, 29, tzinfo=timezone.utc)  # 近期
+    db_session.commit()
+
+    results = ms.search_memories(db_session, user_id=uid, query="任意")
+    assert len(results) == 2
+    assert results[0].content == "热"  # 高热度排前
+    assert results[1].content == "冷"
