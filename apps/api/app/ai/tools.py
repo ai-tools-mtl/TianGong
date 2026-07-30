@@ -8,13 +8,17 @@ user_id 与 db 由闭包绑定——LLM 无需（也无法）生成这些参数�
 生成 user_id/db_session，但 LLM 根本不知道这些值。闭包工厂在 build_agent
 时用已知 user_id + db 绑定，LLM 只需生成 query/content。
 """
+import logging
 import uuid as _uuid
 from typing import Any
 
 from langchain_core.tools import tool
+from langchain_mcp_adapters.client import MultiServerMCPClient
+
+logger = logging.getLogger(__name__)
 
 
-def create_agent_tools(db: Any, user_id):
+async def create_agent_tools(db: Any, user_id):
     """构造绑定到当前用户的 agent 工具集合。
 
     Args:
@@ -110,4 +114,34 @@ def create_agent_tools(db: Any, user_id):
             db.rollback()
             return "未保存：写入失败，请稍后重试"
 
-    return [rag_search, save_memory]
+    tools = [rag_search, save_memory]
+    # 加载已启用的 MCP server 工具（逐 server try/except，失败跳过不阻塞 agent 构建）
+    try:
+        tools.extend(await load_mcp_tools(db))
+    except Exception as e:
+        logger.warning("MCP 工具整体加载失败，跳过: %s", e)
+    return tools
+
+
+async def load_mcp_tools(db: Any) -> list:
+    """加载已启用的 MCP server 工具列表。
+
+    - 全局开关关闭 / 无 server → 返回空列表。
+    - 逐 server try/except：单个 server 连不上记日志、跳过，不阻塞其余 server。
+    - tool_name_prefix=True：避免多 server 工具重名冲突。
+    """
+    from app.services.mcp_config_service import resolve_mcp_servers, _to_connection
+
+    servers = resolve_mcp_servers(db)
+    if not servers:
+        return []
+    tools: list = []
+    for s in servers:
+        try:
+            conn = _to_connection(s)
+            client = MultiServerMCPClient({s["name"]: conn}, tool_name_prefix=True)
+            tools.extend(await client.get_tools())
+        except Exception as e:
+            logger.warning("MCP server %s 加载失败，跳过: %s", s["name"], e)
+            continue
+    return tools
