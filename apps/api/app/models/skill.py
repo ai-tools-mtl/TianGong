@@ -7,7 +7,7 @@ admin 全局（scope=global, owner_id=NULL）或用户个人（scope=personal）
 """
 import uuid
 
-from sqlalchemy import ForeignKey, Index, String, Text, text
+from sqlalchemy import Boolean, ForeignKey, Index, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, IdMixin, TimestampMixin
@@ -27,6 +27,7 @@ class Skill(Base, IdMixin, TimestampMixin):
     - scope/owner_id 联合表达可见性：global 时 owner_id=NULL，personal 时必填。
     - status=draft 不进 runtime 可见集合（admin/用户编辑中不喂 agent）。
     - minio_prefix 指向 MinIO 中该 skill 的目录前缀（SKILL.md + scripts/ + ...）。
+    - is_builtin 标记内置 skill：由项目根 assets/skills/ 启动时同步，不可在 UI 编辑/删除。
     - 唯一性通过两个 partial index 实现（SQL NULL 视为 distinct，无法用单一复合
       索引覆盖 global 档）：global 对 name 唯一、personal 对 (owner_id, name) 唯一。
     """
@@ -60,3 +61,4 @@ class Skill(Base, IdMixin, TimestampMixin):
     )
     status: Mapped[str] = mapped_column(String(20), default=STATUS_DRAFT)
     minio_prefix: Mapped[str] = mapped_column(String(255))
+    is_builtin: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
