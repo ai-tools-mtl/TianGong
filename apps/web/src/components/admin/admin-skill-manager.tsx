@@ -143,12 +143,19 @@ export function AdminSkillManager() {
                     <span className="truncate font-mono" title={s.name}>
                       {s.name}
                     </span>
-                    <Badge
-                      variant={s.status === 'active' ? 'default' : 'secondary'}
-                      className="shrink-0 text-[10px]"
-                    >
-                      {s.status}
-                    </Badge>
+                    <div className="flex shrink-0 items-center gap-1">
+                      {s.is_builtin && (
+                        <Badge variant="outline" className="text-[10px]">
+                          内置
+                        </Badge>
+                      )}
+                      <Badge
+                        variant={s.status === 'active' ? 'default' : 'secondary'}
+                        className="text-[10px]"
+                      >
+                        {s.status}
+                      </Badge>
+                    </div>
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2">
@@ -159,6 +166,8 @@ export function AdminSkillManager() {
                     <Button
                       size="xs"
                       variant="outline"
+                      disabled={s.is_builtin}
+                      title={s.is_builtin ? '内置技能由文件系统管理，不可编辑' : undefined}
                       onClick={() => setEditing(s)}
                     >
                       编辑
@@ -166,6 +175,8 @@ export function AdminSkillManager() {
                     <Button
                       size="xs"
                       variant="outline"
+                      disabled={s.is_builtin}
+                      title={s.is_builtin ? '内置技能由文件系统管理，不可删除' : undefined}
                       onClick={() => handleDelete(s.id, s.name)}
                     >
                       <Trash2 className="size-3.5" />
