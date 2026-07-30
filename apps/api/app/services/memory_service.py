@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
+from app.core.database import is_postgres
 from app.core.exceptions import NotFoundError, ValidationError
 from app.models import UserMemory
 from app.models.user_memory import SOURCE_AGENT, SOURCE_MANUAL
@@ -175,8 +176,6 @@ def search_memories(
     实现镜像 rag/retriever.py：cosine_distance + HNSW ef_search +
     similarity 阈值过滤。pgvector 仅在 PostgreSQL 生效，SQLite 无法执行该查询。
     """
-    from app.core.database import is_postgres
-
     # query 向量化复用 _try_embed（与写入路径同源，统一降级语义，便于测试）。
     query_vec = _try_embed(db, user_id, query)
     if query_vec is None:
