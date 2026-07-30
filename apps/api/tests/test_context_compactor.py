@@ -83,3 +83,87 @@ def test_should_compress_respects_custom_budget():
     assert should_compress(6, 50, custom) is True   # 条数闸
     assert should_compress(3, 200, custom) is True  # token 闸
     assert should_compress(2, 50, custom) is False  # 太短
+
+
+# ---------- summarize（摘要生成 + 分类降级，spec §5.2）----------
+import pytest
+from unittest.mock import AsyncMock, MagicMock
+
+from app.ai.context_compactor import summarize, SummarizeRuntimeError
+
+
+def _make_messages(contents: list[str], role: str = "user") -> list:
+    """构造简单 Message 替身对象（duck-typed，有 role/content）。"""
+    objs = []
+    for c in contents:
+        m = MagicMock()
+        m.role = role
+        m.content = c
+        objs.append(m)
+    return objs
+
+
+@pytest.mark.asyncio
+async def test_summarize_success():
+    """mock get_llm 返回摘要文本 → summarize 返回该文本。"""
+    msgs = _make_messages(["讨论了技术方案A", "确定了核心模块"])
+    fake_llm = MagicMock()
+    fake_llm.ainvoke = AsyncMock(return_value=MagicMock(content="摘要：技术方案A含核心模块"))
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("app.ai.context_compactor.get_llm", lambda *a, **k: fake_llm)
+        result = await summarize(msgs, _fake_chat_config())
+    assert "技术方案A" in result
+
+
+@pytest.mark.asyncio
+async def test_summarize_empty_response_raises_runtime():
+    """摘要返回空 → SummarizeRuntimeError（视为运行时失败，由上层降级）。"""
+    msgs = _make_messages(["内容"])
+    fake_llm = MagicMock()
+    fake_llm.ainvoke = AsyncMock(return_value=MagicMock(content="   "))
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("app.ai.context_compactor.get_llm", lambda *a, **k: fake_llm)
+        with pytest.raises(SummarizeRuntimeError):
+            await summarize(msgs, _fake_chat_config())
+
+
+@pytest.mark.asyncio
+async def test_summarize_llm_exception_raises_runtime():
+    """LLM 抛超时 → 转 SummarizeRuntimeError（不抛原始异常，统一降级协议）。"""
+    msgs = _make_messages(["内容"])
+    fake_llm = MagicMock()
+    fake_llm.ainvoke = AsyncMock(side_effect=TimeoutError("upstream timeout"))
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("app.ai.context_compactor.get_llm", lambda *a, **k: fake_llm)
+        with pytest.raises(SummarizeRuntimeError):
+            await summarize(msgs, _fake_chat_config())
+
+
+@pytest.mark.asyncio
+async def test_summarize_config_error_raises_value_error():
+    """llm_config.model 为空 → ValueError（配置类，不降级，向上抛）。"""
+    msgs = _make_messages(["内容"])
+    bad_config = MagicMock()
+    bad_config.model = ""
+    with pytest.raises(ValueError):
+        await summarize(msgs, bad_config)
+
+
+@pytest.mark.asyncio
+async def test_summarize_none_config_raises_value_error():
+    """llm_config=None → ValueError。"""
+    msgs = _make_messages(["内容"])
+    with pytest.raises(ValueError):
+        await summarize(msgs, None)
+
+
+def _fake_chat_config():
+    """构造一个最小可用的 ResolvedChatConfig 替身。"""
+    cfg = MagicMock()
+    cfg.model = "glm-4"
+    cfg.base_url = "http://localhost"
+    cfg.api_key = "sk-test"
+    return cfg

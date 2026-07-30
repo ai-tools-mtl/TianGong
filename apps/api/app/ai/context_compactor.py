@@ -7,6 +7,11 @@
 """
 from dataclasses import dataclass
 
+from langchain_core.messages import HumanMessage, SystemMessage
+
+from app.ai.llm_client import get_llm
+from app.services.llm_config_service import ResolvedChatConfig
+
 
 @dataclass(frozen=True)
 class BudgetConfig:
@@ -85,3 +90,57 @@ def should_compress(
     if est_tokens > budget.token_budget:
         return True
     return False
+
+
+class SummarizeRuntimeError(Exception):
+    """摘要运行时失败（超时/限流/网络/返回空）。由 compress_history 捕获后降级。"""
+
+
+SUMMARIZE_PROMPT = """你是对话历史压缩器。把多轮对话压缩成一段高密度摘要，供 AI 撰写助手延续上下文。
+
+必须保留（缺一不可）：
+1. 用户确定的技术问题、技术方案、关键术语（原词不换同义词）
+2. 已达成的结论、用户明确表达的偏好或约束
+3. 待解决/未确定的开放问题
+
+可以省略：寒暄、重复内容、已被后续对话推翻的旧说法。
+
+输出要求：纯文本摘要（不要 Markdown 标题），300 字以内。只输出摘要，不要解释。"""
+
+
+def _format_for_summary(messages: list) -> str:
+    """把消息列表格式化为摘要输入文本。"""
+    lines = []
+    for m in messages:
+        role = m.get("role") if isinstance(m, dict) else getattr(m, "role", "user")
+        content = m.get("content") if isinstance(m, dict) else getattr(m, "content", "")
+        label = "用户" if role == "user" else "助手"
+        lines.append(f"{label}：{content}")
+    return "\n".join(lines)
+
+
+async def summarize(messages: list, llm_config: ResolvedChatConfig | None) -> str:
+    """用用户自己的 chat 配置摘要中段消息。
+
+    分类降级协议（spec §5.2）：
+    - 配置类错误（无 config / model 空）→ 抛 ValueError（该报则报）。
+    - 运行时错误（超时/限流/网络/返回空）→ 抛 SummarizeRuntimeError（由 compress_history 降级）。
+    """
+    if llm_config is None or not getattr(llm_config, "model", None):
+        raise ValueError("LLM 配置缺少 model，无法生成摘要")
+    try:
+        llm = get_llm(llm_config, streaming=False)
+        resp = await llm.ainvoke([
+            SystemMessage(content=SUMMARIZE_PROMPT),
+            HumanMessage(content=_format_for_summary(messages)),
+        ])
+        text = (resp.content or "").strip()
+        if not text:
+            raise SummarizeRuntimeError("摘要返回空")
+        return text
+    except SummarizeRuntimeError:
+        raise
+    except ValueError:
+        raise
+    except Exception as e:
+        raise SummarizeRuntimeError(str(e)) from e
