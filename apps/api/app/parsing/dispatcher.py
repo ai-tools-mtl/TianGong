@@ -35,6 +35,8 @@ def extract_text(filename: str, content: bytes, db=None) -> str:
         text = _docx_to_text(content)
     elif ext == "md":
         text = content.decode("utf-8", errors="replace")
+    elif ext == "txt":
+        text = content.decode("utf-8", errors="replace")
     else:
         raise ValueError(f"不支持的格式: .{ext}")
 
