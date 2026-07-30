@@ -639,6 +639,43 @@ export interface MineruConfigPayload {
   model_version: string | null
 }
 
+// ── MCP server 配置（admin 全局）──
+export interface McpServer {
+  id: string
+  name: string
+  transport: 'stdio' | 'http' | 'sse'
+  command: string | null
+  args: string[] | null
+  url: string | null
+  headers: Record<string, { has_value: boolean }> | null
+  env: Record<string, { has_value: boolean }> | null
+  enabled: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface McpServerPayload {
+  name: string
+  transport: 'stdio' | 'http' | 'sse'
+  command?: string | null
+  args?: string[] | null
+  url?: string | null
+  headers?: Record<string, string> | null
+  env?: Record<string, string> | null
+  enabled?: boolean
+}
+
+export interface McpTestResult {
+  ok: boolean
+  tool_count: number
+  tool_names: string[]
+  error: string | null
+}
+
+export interface McpGlobalEnabled {
+  enabled: boolean
+}
+
 // ── 用户绑定长期记忆 ──
 
 export interface Memory {

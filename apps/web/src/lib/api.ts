@@ -383,6 +383,39 @@ export const api = {
       method: 'POST',
     }),
 
+  // ── MCP server 全局配置（admin）── stdio/http/sse 三种传输
+  listMcpServers: () =>
+    request<import('@/types/api').McpServer[]>('/admin/mcp/servers'),
+
+  createMcpServer: (payload: import('@/types/api').McpServerPayload) =>
+    request<import('@/types/api').McpServer>('/admin/mcp/servers', {
+      method: 'POST', body: JSON.stringify(payload),
+    }),
+
+  getMcpServer: (id: string) =>
+    request<import('@/types/api').McpServer>(`/admin/mcp/servers/${id}`),
+
+  updateMcpServer: (id: string, payload: Partial<import('@/types/api').McpServerPayload>) =>
+    request<import('@/types/api').McpServer>(`/admin/mcp/servers/${id}`, {
+      method: 'PUT', body: JSON.stringify(payload),
+    }),
+
+  deleteMcpServer: (id: string) =>
+    request<{ ok: boolean }>(`/admin/mcp/servers/${id}`, { method: 'DELETE' }),
+
+  getMcpEnabled: () =>
+    request<import('@/types/api').McpGlobalEnabled>('/admin/mcp/enabled'),
+
+  setMcpEnabled: (payload: import('@/types/api').McpGlobalEnabled) =>
+    request<import('@/types/api').McpGlobalEnabled>('/admin/mcp/enabled', {
+      method: 'PUT', body: JSON.stringify(payload),
+    }),
+
+  testMcpServer: (id: string) =>
+    request<import('@/types/api').McpTestResult>(`/admin/mcp/servers/${id}/test`, {
+      method: 'POST',
+    }),
+
   // admin LLM 连接测试 / 模型拉取（embedding 走固定服务，只剩 chat 两端点）
   /** admin 测试全局 chat 连接。字段全可选：留空走当前已存的 chat 配置复检。 */
   testGlobalChat: (data: {
