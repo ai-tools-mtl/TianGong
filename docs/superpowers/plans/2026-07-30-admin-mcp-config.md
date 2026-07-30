@@ -141,7 +141,7 @@ Expected: 在 `apps/api/alembic/versions/` 生成新迁移文件。
 
 - [ ] **Step 2: 校验迁移内容**
 
-打开生成的迁移文件，确认 `down_revision = '4c736cec13b7'`（当前 head），且 `upgrade()` 包含创建 `mcp_servers` 表（含所有字段 + `ix_mcp_servers_name` unique index）。JSON 列应为 `sa.JSON()` 或 `postgresql.JSONB()`。
+打开生成的迁移文件，确认 `down_revision = '9a3f7c2e1b4d'`（当前 head —— 分支已合并 main，含 is_builtin 迁移），且 `upgrade()` 包含创建 `mcp_servers` 表（含所有字段 + `ix_mcp_servers_name` unique index）。JSON 列应为 `sa.JSON()` 或 `postgresql.JSONB()`。
 
 若 autogenerate 把 `args`/`headers_encrypted`/`env_encrypted` 列生成成了普通 `sa.JSON()`，需手动改成双库兼容形式：
 
@@ -156,7 +156,7 @@ json_col = sa.JSON().with_variant(sa.dialects.postgresql.JSONB(), "postgresql")
 - [ ] **Step 3: 跑迁移**
 
 Run: `cd apps/api && uv run alembic upgrade head`
-Expected: 输出 `Running upgrade 4c736cec13b7 -> <hash>, create mcp_servers`，无报错。
+Expected: 输出 `Running upgrade 9a3f7c2e1b4d -> <hash>, create mcp_servers`，无报错。
 
 - [ ] **Step 4: 提交**
 
