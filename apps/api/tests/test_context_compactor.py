@@ -167,3 +167,117 @@ def _fake_chat_config():
     cfg.base_url = "http://localhost"
     cfg.api_key = "sk-test"
     return cfg
+
+
+# ---------- compress_history（压缩主流程，双闸+首尾保留+中段摘要）----------
+from app.ai.context_compactor import compress_history, BudgetConfig
+from unittest.mock import AsyncMock, MagicMock
+
+
+def _make_history(n: int, prefix: str = "msg") -> list:
+    """构造 n 条 Message 替身，role 交替 user/assistant，content 含序号。"""
+    objs = []
+    for i in range(n):
+        m = MagicMock()
+        m.role = "user" if i % 2 == 0 else "assistant"
+        m.content = f"{prefix}-{i}"
+        objs.append(m)
+    return objs
+
+
+@pytest.mark.asyncio
+async def test_compress_history_not_triggered():
+    """12 条、token 低 → 不触发，原样转 dict，snapshot.triggered=False。"""
+    history = _make_history(12)
+    msgs, snap = await compress_history(history, "current", _fake_chat_config())
+    assert snap.triggered is False
+    assert snap.reason == "uncompressed"
+    assert len(msgs) == 12
+    # 原样：content 不变
+    assert msgs[0]["content"] == "msg-0"
+
+
+@pytest.mark.asyncio
+async def test_compress_history_triggered_keeps_head_tail():
+    """35 条（>30）触发 → 首1 + 摘要 + 尾10。"""
+    history = _make_history(35)
+    fake_llm = MagicMock()
+    fake_llm.ainvoke = AsyncMock(return_value=MagicMock(content="这是摘要"))
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("app.ai.context_compactor.get_llm", lambda *a, **k: fake_llm)
+        msgs, snap = await compress_history(history, "current", _fake_chat_config())
+
+    # 结构：首条(head) + 摘要 + 10条(tail) + current = 13
+    assert len(msgs) == 1 + 1 + 10 + 1
+    # 首条保留原文
+    assert msgs[0]["content"] == "msg-0"
+    # 摘要消息 role=user，含前缀
+    assert msgs[1]["role"] == "user"
+    assert "早期对话历史摘要" in msgs[1]["content"]
+    assert "这是摘要" in msgs[1]["content"]
+    # 尾部第一条应是 history[-10]
+    assert msgs[2]["content"] == "msg-25"  # history[25..34] 是尾部10条
+    # 最后一条是 current_input
+    assert msgs[-1]["content"] == "current"
+    # snapshot
+    assert snap.triggered is True
+    assert snap.reason == "messages>30"
+    assert snap.original_count == 35
+    assert snap.middle_count == 24  # 35 - 1(head) - 10(tail)
+    assert snap.fallback is False
+
+
+@pytest.mark.asyncio
+async def test_compress_history_runtime_failure_falls_back():
+    """摘要运行时失败 → 降级硬截断保首尾，fallback=True。"""
+    history = _make_history(35)
+    fake_llm = MagicMock()
+    fake_llm.ainvoke = AsyncMock(side_effect=TimeoutError("timeout"))
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("app.ai.context_compactor.get_llm", lambda *a, **k: fake_llm)
+        msgs, snap = await compress_history(history, "current", _fake_chat_config())
+
+    assert snap.triggered is True
+    assert snap.fallback is True
+    assert snap.reason == "summarize_failed"
+    # 降级结构：首1 + 尾10 + current = 12（无摘要）
+    assert len(msgs) == 1 + 10 + 1
+    assert msgs[0]["content"] == "msg-0"
+    assert msgs[-1]["content"] == "current"
+
+
+@pytest.mark.asyncio
+async def test_compress_history_config_error_propagates():
+    """配置类错误（model 空）→ ValueError 向上抛，不降级。"""
+    history = _make_history(35)
+    bad_config = MagicMock()
+    bad_config.model = ""
+    with pytest.raises(ValueError):
+        await compress_history(history, "current", bad_config)
+
+
+@pytest.mark.asyncio
+async def test_compress_history_empty_history():
+    """空 history → 不抛，原样返回空 + snapshot。"""
+    msgs, snap = await compress_history([], "current", _fake_chat_config())
+    assert snap.triggered is False
+    assert len(msgs) == 0
+
+
+@pytest.mark.asyncio
+async def test_compress_history_token_gate():
+    """5 条但 token 超预算 → token 闸触发。"""
+    history = _make_history(12)
+    # 用极小的 token_budget 强制触发 token 闸
+    tiny_budget = BudgetConfig(max_messages=999, token_budget=10, keep_head=1, keep_tail=2)
+    fake_llm = MagicMock()
+    fake_llm.ainvoke = AsyncMock(return_value=MagicMock(content="摘要"))
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("app.ai.context_compactor.get_llm", lambda *a, **k: fake_llm)
+        msgs, snap = await compress_history(history, "current", _fake_chat_config(), budget=tiny_budget)
+
+    assert snap.triggered is True
+    assert snap.reason == "tokens>24000"

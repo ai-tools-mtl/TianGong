@@ -144,3 +144,90 @@ async def summarize(messages: list, llm_config: ResolvedChatConfig | None) -> st
         raise
     except Exception as e:
         raise SummarizeRuntimeError(str(e)) from e
+
+
+def _msg_to_dict(m) -> dict:
+    """Message 对象或 dict → dict{role, content}。"""
+    if isinstance(m, dict):
+        return {"role": m.get("role", "user"), "content": m.get("content", "")}
+    return {"role": getattr(m, "role", "user"), "content": getattr(m, "content", "")}
+
+
+async def compress_history(
+    history: list,
+    current_input: str,
+    llm_config: ResolvedChatConfig | None,
+    *,
+    scene: str = "chat",
+    budget: BudgetConfig = DEFAULT_BUDGET,
+) -> tuple[list[dict], "Snapshot"]:
+    """压缩对话历史（核心入口）。
+
+    Args:
+        history: 原始消息列表（Message 对象，永不被修改）。
+        current_input: 当前用户输入（始终保留在末尾）。
+        llm_config: 用户的 chat 配置（用于摘要）。
+        scene: 调用场景（"chat"/"generate"/"init"），仅用于日志，不影响逻辑。
+        budget: 预算配置。
+
+    Returns:
+        (compressed_messages, snapshot)。compressed_messages 是 list[dict]，
+        含 {role, content}。未触发时原样转 dict 返回。
+
+    降级协议：摘要运行时失败 → 硬截断保首尾（fallback=True）；配置类错误 → 抛 ValueError。
+    """
+    if not history:
+        return [], Snapshot(triggered=False, reason="uncompressed",
+                            original_count=0, compressed_count=0,
+                            middle_count=0, est_tokens_before=0, est_tokens_after=0)
+
+    est_tokens = estimate_tokens_messages(history) + estimate_tokens(current_input)
+    if not should_compress(len(history), est_tokens, budget):
+        msgs = [_msg_to_dict(m) for m in history]
+        return msgs, Snapshot(triggered=False, reason="uncompressed",
+                              original_count=len(history), compressed_count=len(msgs),
+                              middle_count=0, est_tokens_before=est_tokens,
+                              est_tokens_after=est_tokens)
+
+    # 触发原因：条数优先（与 should_compress 的判定顺序一致）
+    reason = "messages>30" if len(history) > budget.max_messages else "tokens>24000"
+
+    head = history[:budget.keep_head]
+    middle = history[budget.keep_head:-budget.keep_tail]
+    tail = history[-budget.keep_tail:]
+
+    try:
+        summary = await summarize(middle, llm_config)
+    except SummarizeRuntimeError:
+        # 降级①：硬截断保首尾，中段丢弃（spec §5.2）
+        import logging
+        logging.getLogger(__name__).warning(
+            "上下文压缩摘要失败，降级硬截断 (scene=%s, middle=%d)", scene, len(middle)
+        )
+        msgs = [_msg_to_dict(m) for m in head] + [_msg_to_dict(m) for m in tail]
+        msgs.append({"role": "user", "content": current_input})
+        return msgs, Snapshot(
+            triggered=True, reason="summarize_failed",
+            original_count=len(history), compressed_count=len(msgs),
+            middle_count=len(middle), est_tokens_before=est_tokens,
+            est_tokens_after=estimate_tokens_messages(msgs), fallback=True,
+        )
+    # ValueError（配置类）不捕获，向上抛
+
+    compressed: list[dict] = []
+    for m in head:
+        compressed.append(_msg_to_dict(m))
+    compressed.append({
+        "role": "user",
+        "content": f"[早期对话历史摘要，共{len(middle)}条已归档]\n{summary}",
+    })
+    for m in tail:
+        compressed.append(_msg_to_dict(m))
+    compressed.append({"role": "user", "content": current_input})
+
+    return compressed, Snapshot(
+        triggered=True, reason=reason,
+        original_count=len(history), compressed_count=len(compressed),
+        middle_count=len(middle), est_tokens_before=est_tokens,
+        est_tokens_after=estimate_tokens_messages(compressed), fallback=False,
+    )
