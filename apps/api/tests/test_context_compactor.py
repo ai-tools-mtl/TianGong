@@ -1,5 +1,10 @@
 """上下文压缩模块测试（纯逻辑，mock LLM，SQLite 内存库，遵循 GOTCHAS G2）。"""
-from app.ai.context_compactor import BudgetConfig, Snapshot, estimate_tokens
+from app.ai.context_compactor import (
+    BudgetConfig,
+    Snapshot,
+    estimate_tokens,
+    should_compress,
+)
 
 
 def test_budget_config_defaults():
@@ -51,3 +56,30 @@ def test_estimate_tokens_mixed():
     # 混合文本不报错，返回正整数
     t = estimate_tokens("技术方案 technical solution 123")
     assert t > 0
+
+
+def test_should_compress_false_when_history_too_short():
+    # 11 条，keep_head+keep_tail=11，无中段可压
+    assert should_compress(11, 100) is False
+
+
+def test_should_compress_false_under_both_thresholds():
+    # 12 条（>11，有中段），token 不超，条数不超 → 不触发
+    assert should_compress(12, 1000) is False
+
+
+def test_should_compress_true_by_message_count():
+    # 31 条 > max_messages=30 → 条数闸触发
+    assert should_compress(31, 1000) is True
+
+
+def test_should_compress_true_by_tokens():
+    # 12 条，token > budget=24000 → token 闸触发
+    assert should_compress(12, 30000) is True
+
+
+def test_should_compress_respects_custom_budget():
+    custom = BudgetConfig(max_messages=5, token_budget=100, keep_head=1, keep_tail=1)
+    assert should_compress(6, 50, custom) is True   # 条数闸
+    assert should_compress(3, 200, custom) is True  # token 闸
+    assert should_compress(2, 50, custom) is False  # 太短

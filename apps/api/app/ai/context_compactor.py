@@ -69,3 +69,19 @@ def estimate_tokens_messages(messages) -> int:
         content = m.get("content") if isinstance(m, dict) else getattr(m, "content", "")
         total += estimate_tokens(content or "")
     return total
+
+
+def should_compress(
+    history_count: int, est_tokens: int, budget: BudgetConfig = DEFAULT_BUDGET
+) -> bool:
+    """双闸触发判定（OR）：条数 > max_messages 或 token > token_budget 即触发。
+
+    先挡「连首尾都凑不齐」的情况（无中段可压）。
+    """
+    if history_count <= budget.keep_head + budget.keep_tail:
+        return False
+    if history_count > budget.max_messages:
+        return True
+    if est_tokens > budget.token_budget:
+        return True
+    return False
