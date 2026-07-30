@@ -1,8 +1,9 @@
 """用户长期记忆服务：CRUD + embedding 生成 + 语义检索 + 去重。"""
 import uuid as _uuid
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundError, ValidationError
@@ -15,6 +16,33 @@ SIMILARITY_THRESHOLD = 0.5  # 与 rag/retriever.py 一致
 
 # 去重阈值：embedding 余弦相似度 ≥ 此值视为重复，触发合并而非新增
 DEDUP_SIMILARITY = 0.85
+
+# 【v1.1】热度/淘汰参数（从 settings 读，默认值见 config.py）
+from app.core.config import get_settings
+
+_settings = get_settings()
+HALF_LIFE_DAYS = _settings.memory_half_life_days
+MEMORY_LIMIT = _settings.memory_limit
+GRACE_DAYS = _settings.memory_grace_days
+
+
+def _decay(delta_seconds: float) -> float:
+    """指数衰减。Δt=0 返回 1.0；半衰期(HALF_LIFE_DAYS 天)后腰斩到 0.5。"""
+    days = delta_seconds / 86400
+    return 0.5 ** (days / HALF_LIFE_DAYS)
+
+
+def _compute_hot_score(mem, now: datetime) -> float:
+    """实时计算热度分。
+
+    score = (hit_count + 1) × decay(now - last_hit_at)
+    - hit_count+1：避免零乘 + 冷启动公平（新记忆不天生垫底）
+    - last_hit_at IS NULL（新记忆）：Δt=0 → decay=1.0（满分，不被淘汰）
+    """
+    hit = mem.hit_count or 0
+    last = mem.last_hit_at or now  # NULL 视为「刚命中」，得满分衰减
+    delta = (now - last).total_seconds()
+    return (hit + 1) * _decay(delta)
 
 
 def _try_embed(db: Session, user_id, text: str) -> list[float] | None:
@@ -49,7 +77,43 @@ def create_memory(
     )
     db.add(memory)
     db.flush()
+    _enforce_capacity(db, user_id=user_id)   # 【v1.1】写入后即时淘汰
     return memory
+
+
+def _enforce_capacity(db: Session, *, user_id) -> None:
+    """写入后检查容量，超限则淘汰最冷的一条。
+
+    豁免：GRACE_DAYS 天内的新记忆（last_hit_at IS NULL 或距今 < GRACE_DAYS）不参与淘汰，
+    防止刚写入即被删。
+
+    双列近似排序（hit_count ASC, last_hit_at ASC）的单调性与
+    (hit_count+1)×decay(Δt) 一致——热度最低 = 命中数最少 + 最久未触达。
+    只删一条（每次写入最多 +1，删 1 即恢复上限）。
+    全部在豁免期时暂不处理（MVP 200 条规模下概率极低）。
+    """
+    count = db.scalar(
+        select(func.count()).select_from(UserMemory)
+        .where(UserMemory.user_id == user_id)
+    )
+    if count <= MEMORY_LIMIT:
+        return
+
+    grace_cutoff = datetime.now(timezone.utc) - timedelta(days=GRACE_DAYS)
+    coldest = db.scalars(
+        select(UserMemory)
+        .where(
+            (UserMemory.user_id == user_id)
+            & (UserMemory.last_hit_at.isnot(None))
+            & (UserMemory.last_hit_at < grace_cutoff)
+        )
+        .order_by(UserMemory.hit_count.asc(), UserMemory.last_hit_at.asc())
+        .limit(1)
+    ).first()
+
+    if coldest is not None:
+        db.delete(coldest)
+        db.flush()
 
 
 def list_memories(
