@@ -32,6 +32,7 @@
 |------|---------|----------|----------|----------|----------|
 | **会话标题生成** | `conversation_service.py:30` | 草稿会话首条对话完成（`/sections/{id}/chat` 流程，`api/ai.py:254`） | 据首条 user+AI 消息生成 ≤12 字标题 | `resolve_lite_config` → `get_llm().invoke()` | LLM 失败/无配置 → 用户消息前 20 字 |
 | **章节摘要** | `summary_service.py:35` | 确认章节时 | 生成 100-200 字摘要，供跨章节上下文用 | `resolve_lite_config` → `get_llm().invoke()` | LLM 失败/无配置 → 正文前 200 字 |
+| **大纲草稿提取** | `outline_extractor.py:111` `extract_outline` | init 助手每轮对话完成（`/assistant/conversations/{id}/chat` 流程，`api/assistant.py` chat 端点 done 前） | 从对话历史提取 8 章结构化要点（JSON），供右侧文档预览实时刷新 | `resolve_lite_config` → `get_llm().invoke()` | LLM 失败/无配置/JSON 解析失败 → 返回空 dict（预览不更新，不影响对话） |
 
 ## 三、轻量配置的管理端点（不执行任务，仅读写/测试配置）
 

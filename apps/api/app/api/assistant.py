@@ -103,6 +103,7 @@ def get_conversation(
     return {
         **_conv_to_dict(conv),
         "project_id": str(conv.project_id) if conv.project_id else None,
+        "draft_outline": conv.draft_outline,
         "messages": [
             {"id": str(m.id), "role": m.role, "content": m.content,
              "created_at": m.created_at.isoformat() if m.created_at else ""}
@@ -193,12 +194,21 @@ async def chat(
             ai_msg = Message(conversation_id=conv.id, section_id=None, role="assistant", content=full_response)
             db.add(ai_msg)
             db.commit()
+            # 提取 8 章草稿大纲（轻量 LLM，失败返回空 dict，不影响主流程）。
+            # 基于含本次回复的全量历史重算，幂等。写 draft_outline 供右侧预览实时刷新。
+            from app.services.outline_extractor import extract_outline
+            full_history = history + [user_msg, ai_msg]
+            outline = extract_outline(db, full_history, user_id=current_user.id)
+            if outline:
+                conv.draft_outline = outline
+                db.commit()
             # 判定时机标记
             ready = "[READY_TO_CREATE]" in full_response
             yield _sse_event("done", {
                 "message_id": str(ai_msg.id),
                 "conversation_id": str(conv.id),
                 "ready_to_create": ready,
+                "outline": outline,
             })
         except asyncio.CancelledError:
             if full_response:
