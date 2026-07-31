@@ -35,29 +35,74 @@ import type {
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
+// ── 静默刷新：access token 过期(401)时用 refresh token 续期并重试一次 ──
+// access 有效期短(默认 30 分钟)，前端无感续期；refresh 长(默认 30 天)才是「记住登录」窗口。
+// 单例锁：并发请求同时遇 401 时只发一次 /auth/refresh，其余共享其结果，避免刷新风暴。
+let _refreshing: Promise<boolean> | null = null
+
+async function _doRefresh(): Promise<boolean> {
+  // 用裸 fetch（不走 authFetch），避免 refresh 自身 401 递归
+  try {
+    const res = await fetch(`${BASE}/api/v1/auth/refresh`, {
+      method: 'POST',
+      credentials: 'include',
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
+function _redirectToLogin() {
+  if (typeof window === 'undefined') return
+  // 已在 /login 页不再跳（防死循环），由 login 页自己提示
+  if (window.location.pathname.startsWith('/login')) return
+  void import('@/stores/auth').then(({ useAuthStore }) => {
+    useAuthStore.getState().setUser(null)
+    window.location.href = '/login'
+  })
+}
+
+async function _refreshAndRetry(path: string, options: RequestInit): Promise<Response | null> {
+  // refresh/login 自身的 401 不触发刷新（白名单，防自激）
+  if (path.startsWith('/auth/refresh') || path.startsWith('/auth/login')) return null
+  if (!_refreshing) _refreshing = _doRefresh()
+  const ok = await _refreshing
+  _refreshing = null
+  if (!ok) {
+    _redirectToLogin()
+    return null
+  }
+  // 刷新成功，重试原请求一次（仅一次，不二次刷新防死循环）
+  return fetch(`${BASE}/api/v1${path}`, { credentials: 'include', ...options })
+}
+
+/**
+ * 统一 fetch 封装：固定 credentials + 401 静默刷新重试。
+ * 所有走后端的 fetch（JSON / 上传 / SSE 初始请求）都应通过它，确保 access 过期时自动续期。
+ * 返回原始 Response；错误解析仍由各调用方负责。
+ */
+async function authFetch(path: string, options: RequestInit = {}): Promise<Response> {
+  const res = await fetch(`${BASE}/api/v1${path}`, { credentials: 'include', ...options })
+  if (res.status === 401) {
+    const retried = await _refreshAndRetry(path, options)
+    if (retried) return retried
+  }
+  return res
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const res = await fetch(`${BASE}/api/v1${path}`, {
-    credentials: 'include',
+  const res = await authFetch(path, {
     headers: { 'Content-Type': 'application/json', ...options.headers },
     ...options,
   })
 
   if (!res.ok) {
-    // 全局拦截 401：JWT 过期或被踢下线。清登录态 + 硬跳转 /login。
-    // login 接口本身返回 401（密码错）不跳转——已在 /login 页时跳转会死循环，
-    // 由 login 页自己处理错误提示。
-    if (
-      res.status === 401 &&
-      typeof window !== 'undefined' &&
-      !window.location.pathname.startsWith('/login')
-    ) {
-      const { useAuthStore } = await import('@/stores/auth')
-      useAuthStore.getState().setUser(null)
-      window.location.href = '/login'
-    }
+    // 401 走到这里说明刷新也失败（或本就是 login/refresh 的 401）——刷新逻辑已处理跳转，
+    // 这里只负责把错误抛给业务层。login 页 401（密码错）由调用方自行提示。
     let err: ApiError
     try {
       err = (await res.json()) as ApiError
@@ -134,9 +179,8 @@ export const api = {
   uploadTemplate: async (file: File) => {
     const form = new FormData()
     form.append('file', file)
-    const res = await fetch(`${BASE}/api/v1/templates`, {
+    const res = await authFetch('/templates', {
       method: 'POST',
-      credentials: 'include',
       body: form,
     })
     if (!res.ok) {
@@ -163,9 +207,8 @@ export const api = {
   uploadAdminTemplate: async (file: File) => {
     const form = new FormData()
     form.append('file', file)
-    const res = await fetch(`${BASE}/api/v1/admin/content/templates/upload`, {
+    const res = await authFetch('/admin/content/templates/upload', {
       method: 'POST',
-      credentials: 'include',
       body: form,
     })
     if (!res.ok) {
@@ -208,9 +251,8 @@ export const api = {
     conversationId?: string,
     onDone?: (data: { message_id: string; conversation_id?: string; title?: string | null }) => void,
   ) => {
-    const res = await fetch(`${BASE}/api/v1/sections/${sectionId}/chat`, {
+    const res = await authFetch(`/sections/${sectionId}/chat`, {
       method: 'POST',
-      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         message,
@@ -229,9 +271,8 @@ export const api = {
     signal?: AbortSignal,
     source?: string,
   ) => {
-    const res = await fetch(`${BASE}/api/v1/sections/${sectionId}/generate`, {
+    const res = await authFetch(`/sections/${sectionId}/generate`, {
       method: 'POST',
-      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(source ? { source } : {}),
       signal,
@@ -246,13 +287,13 @@ export const api = {
     onToken: (t: string) => void,
     signal?: AbortSignal,
   ) => {
-    const res = await fetch(`${BASE}/api/v1/sections/${sectionId}/rewrite`, {
+    const res = await authFetch(`/sections/${sectionId}/rewrite`, {
       method: 'POST',
-      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data),
       signal,
     })
+    if (!res.ok) throw await _sseHttpError(res)
     return _consumeSSE(res, onToken)
   },
 
@@ -287,9 +328,8 @@ export const api = {
     onDone?: (d: { message_id: string; conversation_id?: string; ready_to_create?: boolean }) => void,
     chatSource?: string,
   ) => {
-    const res = await fetch(`${BASE}/api/v1/assistant/conversations/${convId}/chat`, {
+    const res = await authFetch(`/assistant/conversations/${convId}/chat`, {
       method: 'POST',
-      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message, ...(chatSource ? { chat_source: chatSource } : {}) }),
       signal,
@@ -311,9 +351,8 @@ export const api = {
     signal?: AbortSignal,
     sections?: string[],
   ) => {
-    const res = await fetch(`${BASE}/api/v1/assistant/conversations/${convId}/generate`, {
+    const res = await authFetch(`/assistant/conversations/${convId}/generate`, {
       method: 'POST',
-      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(sections && sections.length ? { sections } : {}),
       signal,
@@ -406,9 +445,8 @@ export const api = {
   uploadAttachment: async (sectionId: string, file: File) => {
     const form = new FormData()
     form.append('file', file)
-    const res = await fetch(`${BASE}/api/v1/sections/${sectionId}/attachments`, {
+    const res = await authFetch(`/sections/${sectionId}/attachments`, {
       method: 'POST',
-      credentials: 'include',
       body: form,
     })
     if (!res.ok) {
@@ -646,8 +684,8 @@ export const api = {
   uploadKnowledgeFile: async (file: File) => {
     const form = new FormData()
     form.append('file', file)
-    const res = await fetch(`${BASE}/api/v1/knowledge/upload`, {
-      method: 'POST', credentials: 'include', body: form,
+    const res = await authFetch('/knowledge/upload', {
+      method: 'POST', body: form,
     })
     if (!res.ok) {
       const err = await res.json().catch(() => ({ message: `HTTP ${res.status}` }))
@@ -659,8 +697,8 @@ export const api = {
   adminUploadGlobal: async (file: File) => {
     const form = new FormData()
     form.append('file', file)
-    const res = await fetch(`${BASE}/api/v1/admin/knowledge/upload`, {
-      method: 'POST', credentials: 'include', body: form,
+    const res = await authFetch('/admin/knowledge/upload', {
+      method: 'POST', body: form,
     })
     if (!res.ok) {
       const err = await res.json().catch(() => ({ message: `HTTP ${res.status}` }))
@@ -830,9 +868,8 @@ export const api = {
   importGlobalSkillZip: async (file: File) => {
     const form = new FormData()
     form.append('file', file)
-    const res = await fetch(`${BASE}/api/v1/admin/skills/import-zip`, {
+    const res = await authFetch('/admin/skills/import-zip', {
       method: 'POST',
-      credentials: 'include',
       body: form,
     })
     if (!res.ok) {
@@ -844,9 +881,8 @@ export const api = {
   importMySkillZip: async (file: File) => {
     const form = new FormData()
     form.append('file', file)
-    const res = await fetch(`${BASE}/api/v1/skills/mine/import-zip`, {
+    const res = await authFetch('/skills/mine/import-zip', {
       method: 'POST',
-      credentials: 'include',
       body: form,
     })
     if (!res.ok) {
