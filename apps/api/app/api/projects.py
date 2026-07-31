@@ -1,4 +1,4 @@
-from fastapi import APIRouter, BackgroundTasks, Body, Depends
+from fastapi import APIRouter, BackgroundTasks, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -29,39 +29,6 @@ def create(payload: ProjectCreate, current_user: User = Depends(get_current_user
         template_id=payload.template_id, metadata=payload.metadata,
     )
     return _to_out(p)
-
-
-@router.post("/from-chat", status_code=201)
-def create_from_chat(
-    payload: dict = Body(...),
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """对话式新建项目：从用户描述建项目 + 8 空章节。
-
-    提炼标题（描述前 30 字，用户进项目后可改），description 存入 metadata.init_description
-    供初始化助手作为首轮上下文。返回 project_id + 首个 section_id（对话挂载点）。
-
-    详见 docs/superpowers/plans/2026-07-30-init-assistant.md。
-    """
-    description = (payload.get("description") or "").strip()
-    if not description:
-        raise ValidationError("description 不能为空")
-    # 标题：描述前 30 字（去换行），用户后续可在项目内修改
-    title = " ".join(description[:30].split()) or "新项目"
-    p = project_service.create_project(
-        db, user=current_user, title=title,
-        metadata={"init_description": description},
-    )
-    # 首个 section 作为初始化对话挂载点
-    first_section = db.scalar(
-        select(Section).where(Section.project_id == p.id).order_by(Section.order).limit(1)
-    )
-    return {
-        "project_id": str(p.id),
-        "section_id": str(first_section.id) if first_section else None,
-        "title": p.title,
-    }
 
 
 @router.get("", response_model=list[ProjectOut])
