@@ -130,6 +130,43 @@ def test_test_mcp_server_empty_error_message_falls_back_to_type(db_session, monk
     assert "_EmptyMsgError" in result.error
 
 
+def test_test_mcp_server_stdio_crash_returns_real_stderr(db_session):
+    """stdio server 启动崩溃（如依赖 ImportError）→ 返回真实 stderr，而非 Connection closed/超时。
+
+    用一个 guaranteed-to-crash 的命令（python 主动 raise）模拟启动失败。
+    pre-flight 应捕获 stderr 里的 'boom-on-startup' 字样。
+    """
+    import sys
+    from app.services import mcp_config_service as svc
+
+    svc.create_mcp_server(
+        db_session, name="crashy", transport="stdio",
+        command=sys.executable, args=["-c", "raise RuntimeError('boom-on-startup')"],
+        enabled=True,
+    )
+    server = svc.list_mcp_servers(db_session)[0]
+    result = svc.test_mcp_server(db_session, server_id=server.id)
+    assert result.ok is False
+    # pre-flight 捕获到真实报错（含 boom-on-startup），而不是空 / Connection closed / 超时
+    assert result.error
+    assert "boom-on-startup" in result.error
+
+
+def test_test_mcp_server_stdio_command_not_found(db_session):
+    """stdio 命令不存在 → 明确报「命令不存在」，不卡超时。"""
+    from app.services import mcp_config_service as svc
+
+    svc.create_mcp_server(
+        db_session, name="ghost", transport="stdio",
+        command="this-command-does-not-exist-xyz", args=[],
+        enabled=True,
+    )
+    server = svc.list_mcp_servers(db_session)[0]
+    result = svc.test_mcp_server(db_session, server_id=server.id)
+    assert result.ok is False
+    assert "命令不存在" in result.error
+
+
 import pytest
 
 from app.core.exceptions import ValidationError

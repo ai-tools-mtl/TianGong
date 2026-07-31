@@ -243,10 +243,58 @@ async def _get_server_tools(server_cfg: dict[str, Any]) -> list:
     return await client.get_tools()
 
 
-def test_mcp_server(db: Session, *, server_id, timeout: float = 10.0) -> McpTestResult:
+def _preflight_stdio(server_cfg: dict[str, Any], wait: float = 5.0) -> str | None:
+    """stdio server 启动健康检查：短暂运行命令，捕获启动崩溃的 stderr。
+
+    MCP stdio server 正常启动后会阻塞在 stdin 等待（不退出）；若命令本身有问题
+    （如依赖 ImportError、命令找不到、参数错），进程会立即非 0 退出。MCP adapter
+    把这种崩溃抽象成 'Connection closed'（且把 stderr 吃掉），用户看到的只是超时。
+
+    本函数在真正握手前，独立跑一下命令：
+    - 进程在 wait 秒内退出（非 0）→ 返回捕获的 stderr 尾部（含真实报错，如 traceback）
+    - 进程仍存活（健康启动）→ 返回 None（终止该预检进程，交给正式握手）
+    """
+    import os
+    import subprocess
+    import time
+
+    cmd = [server_cfg["command"], *(server_cfg.get("args") or [])]
+    env = {**os.environ, **server_cfg.get("env", {})}
+    try:
+        proc = subprocess.Popen(
+            cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True, env=env,
+        )
+    except FileNotFoundError:
+        return f"命令不存在：{server_cfg['command']}"
+    except Exception as e:
+        return f"启动命令失败：{type(e).__name__}: {e}"
+
+    deadline = time.time() + wait
+    while time.time() < deadline:
+        rc = proc.poll()
+        if rc is not None:  # 进程已退出
+            stderr = proc.stderr.read() if proc.stderr else ""
+            # 取最后几行（通常是 traceback 末尾的真正报错）
+            tail = stderr.strip().splitlines()[-6:] if stderr else []
+            return "启动崩溃（exit %s）：%s" % (rc, "\n".join(tail)) if tail else f"启动崩溃（exit {rc}）"
+        time.sleep(0.2)
+    # 仍存活 = 健康启动，终止预检进程
+    proc.terminate()
+    try:
+        proc.wait(timeout=2)
+    except Exception:
+        proc.kill()
+    return None
+
+
+def test_mcp_server(db: Session, *, server_id, timeout: float | None = None) -> McpTestResult:
     """测试单个 server 连通性：起临时 client 调 get_tools，返回工具列表。
 
     临时连接、不持久化、带超时。失败返回 ok=False + error，不抛异常。
+    - stdio：先做 pre-flight 捕获启动崩溃的真实报错（避免被 adapter 吞成超时），
+      超时默认 30s（uvx/npx 冷启动慢）。
+    - http/sse：超时默认 15s。
     用 asyncio.run 同步化（本函数在同步 admin 路由里调用，无已存在事件循环）。
     """
     server = get_mcp_server(db, server_id=server_id)
@@ -261,6 +309,17 @@ def test_mcp_server(db: Session, *, server_id, timeout: float = 10.0) -> McpTest
         "headers": _decrypt_dict(server.headers_encrypted),
         "env": _decrypt_dict(server.env_encrypted),
     }
+    is_stdio = cfg["transport"] == "stdio"
+    if timeout is None:
+        timeout = 30.0 if is_stdio else 15.0
+
+    # stdio 先预检：捕获启动崩溃（如依赖版本不符的 ImportError）的真实 stderr
+    if is_stdio:
+        crash = _preflight_stdio(cfg)
+        if crash:
+            logger.warning("MCP server %s 启动崩溃: %s", server.name, crash)
+            return McpTestResult(ok=False, tool_count=0, tool_names=[], error=crash[:500])
+
     try:
         tools = asyncio.run(asyncio.wait_for(_get_server_tools(cfg), timeout=timeout))
         names = [getattr(t, "name", str(t)) for t in tools]
@@ -268,10 +327,9 @@ def test_mcp_server(db: Session, *, server_id, timeout: float = 10.0) -> McpTest
     except Exception as e:
         # str(e) 常为空（如 asyncio 超时、Windows stdio 启动失败、被包装的底层异常），
         # 拼 type + repr 保留可诊断信息；超时单独给明确文案。
-        import asyncio as _aio
         msg = str(e).strip()
         if not msg:
-            if isinstance(e, (_aio.TimeoutError, _aio.CancelledError)):
+            if isinstance(e, (asyncio.TimeoutError, asyncio.CancelledError)):
                 msg = f"连接超时（{timeout}s 内未完成）"
             else:
                 msg = f"{type(e).__name__}: {e!r}"
