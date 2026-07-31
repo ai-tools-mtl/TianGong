@@ -91,8 +91,14 @@ export function InitAssistant() {
     }
   }, [listLoading, conversations, currentId, createConv])
 
-  // 切换会话：加载历史消息
+  // 切换会话：用服务端历史初始化本地 messages。只在会话 id 真正变化时跑一次——
+  // 用 lastLoadedIdRef 守卫，确保对话进行中（current 因重拉/refetch 引用变化但 id 不变）
+  // 不会用服务端快照覆盖本地流式渲染的 messages（那是「丢对话」的根因）。
+  const lastLoadedIdRef = useRef<string | null>(null)
   useEffect(() => {
+    const id = current?.id ?? null
+    if (id === lastLoadedIdRef.current) return // 同一会话，不重复初始化（防覆盖）
+    lastLoadedIdRef.current = id
     if (current) {
       setMessages(current.messages.map((m: { id: string; role: string; content: string; created_at: string }) => ({
         role: m.role as 'user' | 'assistant',
@@ -104,6 +110,12 @@ export function InitAssistant() {
       setChapters([])
       // 恢复该会话已有的草稿大纲（后端每轮提取后写 draft_outline）
       setOutline((current as { draft_outline?: Record<string, { title: string; content: string }> | null }).draft_outline ?? null)
+    } else {
+      // 会话被删除/清空：清掉残留的本地状态，避免显示已删会话的内容
+      setMessages([])
+      setCreatedProjectId(null)
+      setOutline(null)
+      setChapters([])
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current?.id])
@@ -149,8 +161,10 @@ export function InitAssistant() {
         ac.signal,
         (done) => {
           // 后端在首轮生成总结性标题后回传 title。失效列表缓存使左侧显示新名称。
+          // exact:true 仅失效列表 query，不连带失效 ['assistant','conversations',id]
+          // （单会话详情是子 key，前缀匹配会误伤它 → 触发重拉 → 覆盖本地流式 messages，丢对话）。
           if (done.title) {
-            qc.invalidateQueries({ queryKey: queryKeys.assistant.conversations })
+            qc.invalidateQueries({ queryKey: queryKeys.assistant.conversations, exact: true })
           }
           // 后端提取的 8 章草稿大纲回传 → 刷新右侧预览
           if (done.outline) setOutline(done.outline)
@@ -201,7 +215,8 @@ export function InitAssistant() {
             setChapters((prev) => prev.map((c) => c.key === d.key ? { ...c, status: d.status as 'ok' | 'failed', error: d.error } : c))
           },
           onAllDone: () => {
-            qc.invalidateQueries({ queryKey: queryKeys.assistant.conversations })
+            // exact:true 同上——落地后会话从列表消失，但不重拉/覆盖单会话详情。
+            qc.invalidateQueries({ queryKey: queryKeys.assistant.conversations, exact: true })
             if (!isRetry && failedKeys.size === 0) toast.success('项目初稿已生成')
             else if (failedKeys.size > 0) toast.warning('部分章节失败，可重试')
           },

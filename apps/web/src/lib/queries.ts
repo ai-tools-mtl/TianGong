@@ -1126,7 +1126,8 @@ export function useCreateAssistantConversation() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (title?: string) => api.createAssistantConversation(title),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.assistant.conversations }),
+    // exact:true：仅失效列表，不连带失效单会话详情（子 key），避免重拉覆盖本地流式状态。
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.assistant.conversations, exact: true }),
   })
 }
 
@@ -1134,6 +1135,6 @@ export function useDeleteAssistantConversation() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => api.deleteAssistantConversation(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.assistant.conversations }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.assistant.conversations, exact: true }),
   })
 }
