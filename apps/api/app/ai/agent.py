@@ -111,6 +111,23 @@ async def build_agent(
         system_prompt = SYSTEM_PROMPT  # 向后兼容兜底
 
     # 5. 组装 deepagents agent
+    #
+    # [Task 9 / 设计 §9 V1 限制] deepagents 0.6.12 的 create_deep_agent 会无条件自动
+    # 注入一个 SummarizationMiddleware（库内置黑盒压缩，create_summarization_middleware）。
+    # 该中间件没有 per-call 的 excluded_middleware / disable_default_middleware 形参
+    # （create_deep_agent 的形参已核实：model/tools/system_prompt/middleware/subagents/
+    # skills/memory/permissions/backend/interrupt_on/response_format/state_schema/context_schema/
+    # checkpointer/store/debug/name/cache —— 无任何排除开关）。
+    # 唯一的排除路径是 beta 全局注册表 register_harness_profile(key, HarnessProfile(
+    # excluded_middleware={"SummarizationMiddleware"}))，但它是进程级全局状态 + beta API，
+    # 且 profile 未匹配时只打 WARNING 不报错（静默失败风险），故 V1 不采用。
+    #
+    # 采纳的兜底策略（与天工 compress_history 并存）：
+    # orchestrator 的 compress_history 已在 build_agent 之前把历史预压缩成更短版本，
+    # 库 SummarizationMiddleware 看到的是已压缩的较短历史，其 ~170k token 阈值几乎不会
+    # 再触发——相当于一个极少生效的后备保险，而非活跃的第二套压缩。
+    # 唯一代价：库的黑盒行为作为后备保留，可观测性略差；对正确性无损害。
+    # （路径 B 的 §9 V1 明确接受此并存。）
     agent = create_deep_agent(
         model=llm,  # I1：不预绑定。deepagents 内部调 bind_tools，预绑定会让 RunnableBinding 无 bind_tools 方法。
         system_prompt=system_prompt,
