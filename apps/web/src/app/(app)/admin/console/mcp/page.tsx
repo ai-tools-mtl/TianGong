@@ -2,95 +2,57 @@
 
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { Plus, Trash2, Pencil, FlaskConical } from 'lucide-react'
+import { Trash2, FlaskConical, Upload } from 'lucide-react'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from '@/components/ui/table'
-import { useMcpServers, useMcpEnabled, useToggleMcpGlobal,
-  useSaveMcpServer, useUpdateMcpServer, useDeleteMcpServer, useTestMcpServer } from '@/lib/queries'
+import {
+  useMcpServers, useMcpEnabled, useToggleMcpGlobal,
+  useUpdateMcpServer, useDeleteMcpServer, useTestMcpServer, useImportMcpServers,
+} from '@/lib/queries'
 import type { McpServer } from '@/types/api'
 
-type Transport = 'stdio' | 'http' | 'sse'
-
-interface FormState {
-  name: string
-  transport: Transport
-  command: string
-  argsText: string  // 每行一个参数
-  url: string
-  headers: Record<string, string>
-  env: Record<string, string>
-  enabled: boolean
-}
-
-const EMPTY_FORM: FormState = {
-  name: '', transport: 'stdio', command: '', argsText: '', url: '',
-  headers: {}, env: {}, enabled: true,
-}
+const SAMPLE_PLACEHOLDER = `{
+  "mcpServers": {
+    "server-name": {
+      "command": "npx",
+      "args": ["-y", "..."]
+    }
+  }
+}`
 
 export default function McpConfigPage() {
   const { data: servers, isLoading } = useMcpServers()
   const { data: enabledData } = useMcpEnabled()
   const toggleGlobal = useToggleMcpGlobal()
-  const save = useSaveMcpServer()
   const update = useUpdateMcpServer()
   const remove = useDeleteMcpServer()
   const test = useTestMcpServer()
+  const importMcp = useImportMcpServers()
 
-  const [dialogOpen, setDialogOpen] = useState(false)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [form, setForm] = useState<FormState>(EMPTY_FORM)
+  const [jsonText, setJsonText] = useState('')
 
-  function openCreate() {
-    setForm(EMPTY_FORM)
-    setEditingId(null)
-    setDialogOpen(true)
-  }
-
-  function openEdit(s: McpServer) {
-    setForm({
-      name: s.name,
-      transport: s.transport,
-      command: s.command ?? '',
-      argsText: (s.args ?? []).join('\n'),
-      url: s.url ?? '',
-      headers: {},
-      env: {},
-      enabled: s.enabled,
+  function handleImport() {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(jsonText)
+    } catch {
+      toast.error('JSON 格式错误，请检查')
+      return
+    }
+    importMcp.mutate(parsed as object, {
+      onSuccess: (res) => {
+        toast.success(`已导入 ${res.length} 个 server`)
+        setJsonText('')
+      },
+      onError: (err: { message?: string }) =>
+        toast.error(err?.message ?? '导入失败'),
     })
-    setEditingId(s.id)
-    setDialogOpen(true)
-  }
-
-  function handleSubmit() {
-    const args = form.argsText.split('\n').map((x) => x.trim()).filter(Boolean)
-    const payload = {
-      name: form.name,
-      transport: form.transport,
-      command: form.transport === 'stdio' ? form.command || null : null,
-      args: form.transport === 'stdio' ? args : null,
-      url: form.transport !== 'stdio' ? form.url || null : null,
-      headers: form.transport !== 'stdio' && Object.keys(form.headers).length ? form.headers : null,
-      env: form.transport === 'stdio' && Object.keys(form.env).length ? form.env : null,
-      enabled: form.enabled,
-    }
-    const onSuccess = () => {
-      toast.success(editingId ? '已更新' : '已创建')
-      setDialogOpen(false)
-    }
-    const onError = (err: { message?: string }) => toast.error(err?.message ?? '操作失败')
-    if (editingId) {
-      update.mutate({ id: editingId, payload }, { onSuccess, onError })
-    } else {
-      save.mutate(payload, { onSuccess, onError })
-    }
   }
 
   function handleToggleGlobal(next: boolean) {
@@ -136,13 +98,31 @@ export default function McpConfigPage() {
 
   return (
     <PageShell>
-      <PageHeader title="MCP 配置" description="配置 MCP server，agent 生成时自动加载其工具">
-        <Button onClick={openCreate}>
-          <Plus className="mr-1 h-4 w-4" /> 添加 Server
+      <PageHeader title="MCP 配置" description="粘贴 MCP 配置 JSON，agent 生成时自动加载其工具">
+        <Button onClick={handleImport} disabled={importMcp.isPending || !jsonText.trim()}>
+          <Upload className="mr-1 h-4 w-4" />
+          {importMcp.isPending ? '导入中...' : '导入'}
         </Button>
       </PageHeader>
 
       <div className="space-y-4 py-6">
+        {/* JSON 导入区 */}
+        <div
+          className="rounded-2xl border border-black/[0.07] bg-card p-4 dark:border-white/10"
+          style={{ boxShadow: 'var(--shadow-card)' }}
+        >
+          <div className="mb-2 text-sm font-medium">粘贴 MCP 配置 JSON</div>
+          <div className="mb-2 text-xs text-muted-foreground">
+            支持标准格式（含 mcpServers 包裹）或裸 server 字典。同名 server 会导致整体导入失败。
+          </div>
+          <textarea
+            className="flex min-h-[200px] w-full rounded-md border border-input bg-transparent px-3 py-2 font-mono text-sm"
+            value={jsonText}
+            onChange={(e) => setJsonText(e.target.value)}
+            placeholder={SAMPLE_PLACEHOLDER}
+          />
+        </div>
+
         {/* 全局开关 */}
         <div
           className="flex items-center justify-between rounded-2xl border border-black/[0.07] bg-card px-5 py-3.5 dark:border-white/10"
@@ -195,9 +175,6 @@ export default function McpConfigPage() {
                       <Button variant="ghost" size="sm" onClick={() => handleTest(s)} disabled={test.isPending}>
                         <FlaskConical className="h-4 w-4" />
                       </Button>
-                      <Button variant="ghost" size="sm" onClick={() => openEdit(s)}>
-                        <Pencil className="h-4 w-4" />
-                      </Button>
                       <Button variant="ghost" size="sm" onClick={() => handleDelete(s)}>
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -208,7 +185,7 @@ export default function McpConfigPage() {
               {(servers ?? []).length === 0 && (
                 <TableRow>
                   <TableCell colSpan={5} className="py-8 text-center text-sm text-muted-foreground">
-                    暂无 MCP server，点击右上角添加
+                    暂无 MCP server，粘贴 JSON 后点导入
                   </TableCell>
                 </TableRow>
               )}
@@ -216,140 +193,6 @@ export default function McpConfigPage() {
           </Table>
         </div>
       </div>
-
-      {/* 添加/编辑 Dialog */}
-      {dialogOpen && (
-        <McpServerDialog
-          form={form}
-          setForm={setForm}
-          editing={!!editingId}
-          onClose={() => setDialogOpen(false)}
-          onSubmit={handleSubmit}
-          submitting={save.isPending || update.isPending}
-        />
-      )}
     </PageShell>
-  )
-}
-
-// ── 表单 Dialog（手写，shadcn Dialog CLI 不可用）──
-function McpServerDialog(props: {
-  form: FormState
-  setForm: (f: FormState) => void
-  editing: boolean
-  onClose: () => void
-  onSubmit: () => void
-  submitting: boolean
-}) {
-  const { form, setForm, editing, onClose, onSubmit, submitting } = props
-  const isStdio = form.transport === 'stdio'
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
-      <div
-        className="w-full max-w-lg rounded-2xl border border-black/[0.07] bg-card p-6 dark:border-white/10"
-        style={{ boxShadow: 'var(--shadow-card)' }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <h2 className="mb-4 text-lg font-semibold">{editing ? '编辑 Server' : '添加 Server'}</h2>
-        <div className="space-y-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="mcp-name">名称</Label>
-            <Input id="mcp-name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="web-search" />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="mcp-transport">传输方式</Label>
-            <select
-              id="mcp-transport"
-              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm"
-              value={form.transport}
-              onChange={(e) => setForm({ ...form, transport: e.target.value as Transport })}
-            >
-              <option value="stdio">stdio（本地命令）</option>
-              <option value="http">http（远程）</option>
-              <option value="sse">sse（远程流式）</option>
-            </select>
-          </div>
-
-          {isStdio ? (
-            <>
-              <div className="space-y-1.5">
-                <Label htmlFor="mcp-command">命令</Label>
-                <Input id="mcp-command" value={form.command} onChange={(e) => setForm({ ...form, command: e.target.value })} placeholder="npx" />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="mcp-args">参数（每行一个）</Label>
-                <textarea
-                  id="mcp-args"
-                  className="flex min-h-[80px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
-                  value={form.argsText}
-                  onChange={(e) => setForm({ ...form, argsText: e.target.value })}
-                  placeholder={'-y\n@modelcontextprotocol/server-filesystem\n.'}
-                />
-              </div>
-              <KVEditor label="环境变量 (env)" kv={form.env} onChange={(env) => setForm({ ...form, env })} />
-            </>
-          ) : (
-            <>
-              <div className="space-y-1.5">
-                <Label htmlFor="mcp-url">URL</Label>
-                <Input id="mcp-url" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} placeholder="https://example.com/sse" />
-              </div>
-              <KVEditor label="请求头 (headers)" kv={form.headers} onChange={(headers) => setForm({ ...form, headers })} />
-            </>
-          )}
-
-          <div className="flex items-center gap-2">
-            <Switch checked={form.enabled} onCheckedChange={(v) => setForm({ ...form, enabled: v })} />
-            <Label>启用</Label>
-          </div>
-        </div>
-
-        <div className="mt-6 flex justify-end gap-2">
-          <Button variant="outline" onClick={onClose}>取消</Button>
-          <Button onClick={onSubmit} disabled={submitting || !form.name}>
-            {submitting ? '保存中...' : '保存'}
-          </Button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ── 键值对动态编辑器（headers / env 通用）──
-function KVEditor(props: { label: string; kv: Record<string, string>; onChange: (kv: Record<string, string>) => void }) {
-  const { label, kv, onChange } = props
-  const keys = Object.keys(kv)
-  return (
-    <div className="space-y-1.5">
-      <Label>{label}</Label>
-      {keys.map((k) => (
-        <div key={k} className="flex gap-2">
-          <Input
-            className="flex-1"
-            value={k}
-            onChange={(e) => {
-              const newKv = { ...kv }
-              const val = newKv[k]; delete newKv[k]; newKv[e.target.value] = val
-              onChange(newKv)
-            }}
-            placeholder="key"
-          />
-          <Input
-            className="flex-1"
-            type="password"
-            value={kv[k]}
-            onChange={(e) => onChange({ ...kv, [k]: e.target.value })}
-            placeholder="value（留空则不变）"
-          />
-          <Button variant="ghost" size="sm" onClick={() => { const n = { ...kv }; delete n[k]; onChange(n) }}>
-            <Trash2 className="h-4 w-4" />
-          </Button>
-        </div>
-      ))}
-      <Button variant="outline" size="sm" onClick={() => onChange({ ...kv, '': '' })}>
-        <Plus className="mr-1 h-4 w-4" /> 添加
-      </Button>
-    </div>
   )
 }

@@ -523,6 +523,11 @@ export const api = {
       method: 'POST',
     }),
 
+  importMcpServers: (json: object) =>
+    request<import('@/types/api').McpServer[]>('/admin/mcp/servers/import', {
+      method: 'POST', body: JSON.stringify(json),
+    }),
+
   // admin LLM 连接测试 / 模型拉取（embedding 走固定服务，只剩 chat 两端点）
   /** admin 测试全局 chat 连接。字段全可选：留空走当前已存的 chat 配置复检。 */
   testGlobalChat: (data: {
