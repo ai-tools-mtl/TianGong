@@ -13,7 +13,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import ConflictError, NotFoundError
+from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.security import decrypt_value, encrypt_value
 from app.models import SystemSetting
 from app.models.mcp_server import McpServer
@@ -268,3 +268,65 @@ def test_mcp_server(db: Session, *, server_id, timeout: float = 10.0) -> McpTest
     except Exception as e:
         logger.warning("MCP server %s 测试连接失败: %s", server.name, e)
         return McpTestResult(ok=False, tool_count=0, tool_names=[], error=str(e)[:300])
+
+
+# ── JSON 导入解析 ──
+
+def parse_mcp_json(raw: dict) -> list[dict[str, Any]]:
+    """解析 MCP 配置 JSON → 标准 server 配置列表。
+
+    支持两种外层格式：
+    - {"mcpServers": {name: {...}}}  标准格式（有 "mcpServers" 键）
+    - {name: {...}}                  裸 server 字典（省略包裹）
+
+    自动识别每个 server 的形态：
+    - 有 command → transport=stdio（读 command/args/env）
+    - 有 url     → transport=http/sse（看显式 transport 字段，否则 http；读 url/headers）
+
+    未知字段忽略。每个 server 单独校验，失败抛 ValidationError 指明 name。
+    返回 [{name, transport, command, args, url, headers, env}, ...]。
+    """
+    if "mcpServers" in raw and isinstance(raw["mcpServers"], dict):
+        servers_dict = raw["mcpServers"]
+    else:
+        servers_dict = raw
+
+    result: list[dict[str, Any]] = []
+    for name, cfg in servers_dict.items():
+        if not isinstance(cfg, dict):
+            raise ValidationError(f"server '{name}' 配置必须是对象")
+
+        has_command = "command" in cfg
+        has_url = "url" in cfg
+
+        if has_command:
+            command = cfg.get("command")
+            if not isinstance(command, str):
+                raise ValidationError(f"server '{name}' 的 command 必须是字符串")
+            args = cfg.get("args", [])
+            if not isinstance(args, list):
+                raise ValidationError(f"server '{name}' 的 args 必须是数组")
+            env = cfg.get("env")
+            if env is not None and not isinstance(env, dict):
+                raise ValidationError(f"server '{name}' 的 env 必须是对象")
+            result.append({
+                "name": name, "transport": "stdio",
+                "command": command, "args": args,
+                "url": None, "headers": None, "env": env,
+            })
+        elif has_url:
+            url = cfg.get("url")
+            if not isinstance(url, str):
+                raise ValidationError(f"server '{name}' 的 url 必须是字符串")
+            transport = "sse" if cfg.get("transport") == "sse" else "http"
+            headers = cfg.get("headers")
+            if headers is not None and not isinstance(headers, dict):
+                raise ValidationError(f"server '{name}' 的 headers 必须是对象")
+            result.append({
+                "name": name, "transport": transport,
+                "command": None, "args": None,
+                "url": url, "headers": headers, "env": None,
+            })
+        else:
+            raise ValidationError(f"server '{name}' 缺少 command 或 url")
+    return result
