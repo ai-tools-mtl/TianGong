@@ -325,7 +325,7 @@ export const api = {
     message: string,
     onToken: (t: string) => void,
     signal?: AbortSignal,
-    onDone?: (d: { message_id: string; conversation_id?: string; ready_to_create?: boolean }) => void,
+    onDone?: (d: { message_id: string; conversation_id?: string; ready_to_create?: boolean; title?: string }) => void,
     chatSource?: string,
   ) => {
     const res = await authFetch(`/assistant/conversations/${convId}/chat`, {

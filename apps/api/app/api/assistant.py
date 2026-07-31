@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.deps import get_current_user
 from app.models import Conversation, KIND_INIT, Message, User
+from app.services import conversation_service
 
 router = APIRouter(prefix="/assistant", tags=["assistant"])
 
@@ -193,12 +194,22 @@ async def chat(
             ai_msg = Message(conversation_id=conv.id, section_id=None, role="assistant", content=full_response)
             db.add(ai_msg)
             db.commit()
+            # 首轮对话：用 LLM 总结生成简短标题（走轻量模型，降级用户消息前缀）。
+            # 仅在无历史消息时生成，避免每轮覆盖标题。new_title 通过 done 事件回传前端。
+            new_title = None
+            if not history:
+                new_title = conversation_service.summarize_conversation_title(
+                    db, conv, payload.message, full_response, user_id=current_user.id
+                )
+                conv.title = new_title
+                db.commit()
             # 判定时机标记
             ready = "[READY_TO_CREATE]" in full_response
             yield _sse_event("done", {
                 "message_id": str(ai_msg.id),
                 "conversation_id": str(conv.id),
                 "ready_to_create": ready,
+                "title": new_title,
             })
         except asyncio.CancelledError:
             if full_response:

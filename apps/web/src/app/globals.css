@@ -431,9 +431,53 @@
   }
 }
 
+/*
+ * 对话气泡入场（init 助手）：从下方淡入 + 轻微缩放，spring 缓动。
+ * 挂在每条新消息气泡上；消息列表用 key={i}，新消息追加才触发，流式更新 content 不会重放。
+ */
+@keyframes bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.bubble-in {
+  animation: bubble-in 420ms var(--ease-spring);
+}
+
+/*
+ * 三点呼吸（init 助手等待 AI 首 token 时的打字指示）。
+ * 单点 0.75s 一循环；三个点靠 inline delay 错峰（0 / 0.15s / 0.3s）。
+ */
+@keyframes typing-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.7);
+  }
+  30% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .bubble-menu {
     animation: none;
     transition: opacity 150ms;
+  }
+  /* 关闭位移/缩放，仅保留 opacity 淡入（gentler, not none）*/
+  .bubble-in {
+    animation: none;
+    transition: opacity 200ms ease;
+  }
+  .typing-dot {
+    animation: none !important;
+    opacity: 0.6;
   }
 }

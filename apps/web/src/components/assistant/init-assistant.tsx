@@ -23,6 +23,21 @@ import { cn } from '@/lib/utils'
 const READY_MARKER = '[READY_TO_CREATE]'
 const GUIDE = '描述你的发明想法，我帮你理清思路并生成交底书初稿。'
 
+/** 三点呼吸：等待 AI 首 token 时的打字指示（init 助手）。三点半靠 delay 错峰。 */
+function TypingDots() {
+  return (
+    <div className="flex items-center gap-1 py-0.5" aria-label="正在思考">
+      {[0, 0.15, 0.3].map((d) => (
+        <span
+          key={d}
+          className="typing-dot size-1.5 rounded-full bg-muted-foreground"
+          style={{ animation: `typing-dot 0.75s ${d}s ease-in-out infinite` }}
+        />
+      ))}
+    </div>
+  )
+}
+
 interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
@@ -53,12 +68,20 @@ export function InitAssistant() {
   const [chapters, setChapters] = useState<ChapterProgress[]>([])
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  // 自动建会话只跑一次的守卫：避免 React StrictMode（dev 下 effect 双触发）与
+  // React Query invalidate 期间的瞬时空态重复建出大量「新对话」。
+  const autoCreatedRef = useRef(false)
 
   // 首次加载：若无会话则建一个；有则选第一个
   useEffect(() => {
     if (!listLoading && conversations) {
       if (conversations.length === 0) {
-        createConv.mutate(undefined, { onSuccess: (c) => setCurrentId(c.id) })
+        // 列表为空才建，且只建一次（autoCreatedRef 守卫）。删除最后一个会话后不再自动建，
+        // 避免删除即重生、以及 StrictMode 双触发重复建会话。
+        if (!autoCreatedRef.current) {
+          autoCreatedRef.current = true
+          createConv.mutate(undefined, { onSuccess: (c) => setCurrentId(c.id) })
+        }
       } else if (!currentId) {
         setCurrentId(conversations[0].id)
       }
@@ -120,6 +143,10 @@ export function InitAssistant() {
         },
         ac.signal,
         (done) => {
+          // 后端在首轮生成总结性标题后回传 title。失效列表缓存使左侧显示新名称。
+          if (done.title) {
+            qc.invalidateQueries({ queryKey: queryKeys.assistant.conversations })
+          }
           if (done.ready_to_create) {
             setMessages((prev) => {
               const next = [...prev]
@@ -206,32 +233,47 @@ export function InitAssistant() {
           <div className="mx-auto max-w-3xl space-y-4 px-4 py-6">
             {messages.length === 0 && !showChapterProgress && (
               <div className="mt-20 text-center">
-                <Sparkles className="mx-auto mb-3 size-8 text-primary" />
-                <p className="text-lg font-medium">{GUIDE}</p>
+                <div className="mx-auto mb-4 flex size-14 items-center justify-center rounded-full bg-muted">
+                  <Sparkles className="size-7 text-primary" />
+                </div>
+                <p className="text-lg font-medium tracking-tight">{GUIDE}</p>
                 <p className="mt-1 text-sm text-muted-foreground">在下方输入框开始描述</p>
               </div>
             )}
-            {messages.map((m, i) => (
-              <div key={i} className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
-                <div className={cn(
-                  'max-w-[85%] rounded-lg px-3 py-2 text-[13px] leading-relaxed',
-                  m.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted',
-                )}>
-                  {m.role === 'assistant' ? (
-                    <div className="prose prose-sm max-w-none dark:prose-invert">
-                      <ReactMarkdown>{m.content.replace(READY_MARKER, '').trim() || '…'}</ReactMarkdown>
-                    </div>
-                  ) : (
-                    <span className="whitespace-pre-wrap">{m.content}</span>
-                  )}
+            {messages.map((m, i) => {
+              // 等待态：发送中、最后一条 assistant 消息、尚无 token → 显示三点呼吸
+              const isWaiting =
+                sending &&
+                i === messages.length - 1 &&
+                m.role === 'assistant' &&
+                !m.content
+              return (
+                <div key={i} className={cn('flex bubble-in', m.role === 'user' ? 'justify-end' : 'justify-start')}>
+                  <div
+                    className={cn(
+                      'max-w-[85%] rounded-2xl px-3.5 py-2.5 text-[13px] leading-relaxed',
+                      m.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-muted',
+                    )}
+                    style={{ boxShadow: 'var(--shadow-card)' }}
+                  >
+                    {isWaiting ? (
+                      <TypingDots />
+                    ) : m.role === 'assistant' ? (
+                      <div className="prose prose-sm max-w-none dark:prose-invert">
+                        <ReactMarkdown>{m.content.replace(READY_MARKER, '').trim()}</ReactMarkdown>
+                      </div>
+                    ) : (
+                      <span className="whitespace-pre-wrap">{m.content}</span>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
 
             {/* 创建扳机：agent 标记 ready 时 */}
             {showReadyButton && (
               <div className="flex justify-center">
-                <Button onClick={() => handleGenerate(false)} className="gap-1.5">
+                <Button onClick={() => handleGenerate(false)} className="apple-lift gap-1.5" style={{ boxShadow: 'var(--shadow-cta)' }}>
                   <Sparkles className="size-3.5" /> 信息已理清，创建项目
                 </Button>
               </div>
