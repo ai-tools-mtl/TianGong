@@ -1,0 +1,24 @@
+[project]
+name = "tiangong-nli"
+version = "0.1.0"
+description = "TianGong NLI microservice - 矛盾判断(sentence-transformers CrossEncoder)"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.10.0",
+    "sentence-transformers>=3.0.0",
+    # torch 通过 [[tool.uv.index]] 的 CPU 索引安装，避免拉 CUDA(~2GB)
+    "torch>=2.2.0",
+]
+
+[tool.uv]
+# torch CPU 索引：仅装 CPU 版（~200MB），不装 CUDA（~2GB+）。
+# NLI 是 CPU 推理，无需 GPU。
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
