@@ -106,3 +106,56 @@ async def test_astream_chat_short_history_not_compressed(monkeypatch):
 
     contents = [m.get("content", "") for m in captured_messages]
     assert not any("早期对话历史摘要" in c for c in contents), "短历史不应被压缩"
+
+
+# ── 项目初始化助手（init_orchestrator）接入压缩 ──
+from app.ai.init_orchestrator import astream_init_chat  # noqa: E402
+
+
+@pytest.mark.asyncio
+async def test_astream_init_chat_compresses_long_history(monkeypatch):
+    """init 助手 35 条历史触发压缩。"""
+    history = _make_history(35)
+    cfg = MagicMock(); cfg.model = "glm-4"; cfg.base_url = "x"; cfg.api_key = "y"
+
+    captured_messages = []
+
+    async def fake_astream_llm(messages, *, llm_config, usage_sink=None):
+        captured_messages.extend(messages)
+        yield "tok"
+
+    monkeypatch.setattr("app.ai.init_orchestrator.astream_llm", fake_astream_llm)
+    # ALSO mock get_llm used by compress_history→summarize (long history triggers summarize)
+    fake_llm = MagicMock()
+    fake_llm.ainvoke = AsyncMock(return_value=MagicMock(content="技术方案摘要内容"))
+    monkeypatch.setattr("app.ai.context_compactor.get_llm", lambda *a, **k: fake_llm)
+
+    tokens = []
+    async for t in astream_init_chat(history, "当前问题", llm_config=cfg):
+        tokens.append(t)
+
+    assert tokens == ["tok"]
+    contents = [getattr(m, "content", "") for m in captured_messages]
+    assert any("早期对话历史摘要" in c for c in contents), "init 长历史应被压缩"
+
+
+@pytest.mark.asyncio
+async def test_astream_init_chat_short_history_not_compressed(monkeypatch):
+    """init 助手 5 条历史不触发压缩。"""
+    history = _make_history(5)
+    cfg = MagicMock(); cfg.model = "glm-4"; cfg.base_url = "x"; cfg.api_key = "y"
+
+    captured_messages = []
+
+    async def fake_astream_llm(messages, *, llm_config, usage_sink=None):
+        captured_messages.extend(messages)
+        if False:
+            yield ""
+
+    monkeypatch.setattr("app.ai.init_orchestrator.astream_llm", fake_astream_llm)
+
+    async for _ in astream_init_chat(history, "当前问题", llm_config=cfg):
+        pass
+
+    contents = [getattr(m, "content", "") for m in captured_messages]
+    assert not any("早期对话历史摘要" in c for c in contents)

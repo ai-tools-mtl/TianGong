@@ -49,15 +49,35 @@ INIT_SYSTEM_PROMPT = """你是「天工」项目初始化助手。用户想新�
 """
 
 
-def _build_init_chat_messages(history: list[Message], user_input: str) -> list:
-    """装配 init chat 的消息列表：INIT_SYSTEM_PROMPT + 历史 + 当前输入。"""
+async def _build_init_chat_messages(
+    history: list[Message], user_input: str, llm_config
+) -> list:
+    """装配 init chat 消息：INIT_SYSTEM_PROMPT + 压缩后历史。
+
+    历史先经 compress_history 压缩（压缩 spec），再转 LangChain 消息类型。
+    """
+    from app.ai.context_compactor import compress_history
+
+    compressed, snapshot = await compress_history(
+        history, user_input, llm_config, scene="init"
+    )
+    if snapshot.triggered:
+        import logging
+        logging.getLogger(__name__).info(
+            "上下文压缩触发 (init chat): reason=%s %d→%d条",
+            snapshot.reason, snapshot.original_count, snapshot.compressed_count,
+        )
+    # compress_history 契约：触发/降级路径已在末尾 append current_input；
+    # 未触发路径只返回历史 dict，不含 current_input —— 这里补一次。
+    if not snapshot.triggered:
+        compressed.append({"role": "user", "content": user_input})
+
     messages: list = [SystemMessage(content=INIT_SYSTEM_PROMPT)]
-    for msg in history:
-        if msg.role == "user":
-            messages.append(HumanMessage(content=msg.content))
+    for m in compressed:
+        if m["role"] == "user":
+            messages.append(HumanMessage(content=m["content"]))
         else:
-            messages.append(AIMessage(content=msg.content))
-    messages.append(HumanMessage(content=user_input))
+            messages.append(AIMessage(content=m["content"]))
     return messages
 
 
@@ -69,28 +89,42 @@ async def astream_init_chat(
 
     阶段 A 走裸 astream_llm（无工具调用）。复用对话历史。
     """
-    messages = _build_init_chat_messages(history, user_input)
+    messages = await _build_init_chat_messages(history, user_input, llm_config)
     async for token in astream_llm(messages, llm_config=llm_config, usage_sink=usage_sink):
         yield token
 
 
-def _build_section_generate_messages(
-    section: Section, history: list[Message],
+async def _build_section_generate_messages(
+    section: Section, history: list[Message], llm_config,
 ) -> list:
-    """装配单章生成消息：INIT_SYSTEM_PROMPT + 对话历史 + 本章生成指令。
+    """装配单章生成消息：INIT_SYSTEM_PROMPT + 压缩历史 + 本章生成指令。
 
     与 orchestrator.astream_generate 的区别：后者走 build_agent（章节策略进 system prompt），
     本函数走裸 astream_llm，故把章节策略揉进生成指令（user message）里。
     复用 build_generate_instruction（含 CoT 分步引导 + 章节 output_format/criteria）。
     """
+    from app.ai.context_compactor import compress_history
+
+    instruction = build_generate_instruction(section)
+    compressed, snapshot = await compress_history(
+        history, instruction, llm_config, scene="init_generate"
+    )
+    if snapshot.triggered:
+        import logging
+        logging.getLogger(__name__).info(
+            "上下文压缩触发 (init generate, section=%s): reason=%s %d→%d条",
+            section.key, snapshot.reason, snapshot.original_count, snapshot.compressed_count,
+        )
+    # 同 _build_init_chat_messages：未触发路径补 instruction。
+    if not snapshot.triggered:
+        compressed.append({"role": "user", "content": instruction})
+
     messages: list = [SystemMessage(content=INIT_SYSTEM_PROMPT)]
-    for msg in history:
-        if msg.role == "user":
-            messages.append(HumanMessage(content=msg.content))
+    for m in compressed:
+        if m["role"] == "user":
+            messages.append(HumanMessage(content=m["content"]))
         else:
-            messages.append(AIMessage(content=msg.content))
-    # 复用 orchestrator 的 CoT 生成指令（已含章节 goal/format/criteria + 分步思考）
-    messages.append(HumanMessage(content=build_generate_instruction(section)))
+            messages.append(AIMessage(content=m["content"]))
     return messages
 
 
@@ -136,7 +170,7 @@ async def astream_init_generate(
         full_md = ""
         chapter_error = None
         try:
-            messages = _build_section_generate_messages(section, history)
+            messages = await _build_section_generate_messages(section, history, llm_config)
             async for token in astream_llm(messages, llm_config=llm_config, usage_sink=usage_sink):
                 full_md += token
                 yield ("token", token)
