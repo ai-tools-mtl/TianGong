@@ -4,7 +4,7 @@ import uuid
 from sqlalchemy import ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.base import Base, IdMixin, TimestampMixin
+from app.models.base import Base, IdMixin, JSONType, TimestampMixin
 
 
 class ConversationStatus(str, enum.Enum):
@@ -48,3 +48,7 @@ class Conversation(Base, IdMixin, TimestampMixin):
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    # init 助手「右侧文档实时预览」的草稿大纲：每轮对话后由轻量 LLM 提取的结构化要点。
+    # 结构 {key: {"title": str, "content": str}}，content 为 Markdown（预览专用，非正式 section）。
+    # 草稿态——不提前建项目，按扳机落地后才转为正式 section；落地后此字段保留作历史查看。
+    draft_outline: Mapped[dict | None] = mapped_column(JSONType, nullable=True)

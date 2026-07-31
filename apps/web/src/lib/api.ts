@@ -319,13 +319,19 @@ export const api = {
   deleteAssistantConversation: (id: string) =>
     request<void>(`/assistant/conversations/${id}`, { method: 'DELETE' }),
 
-  /** init 助手对话（SSE）。done 事件额外带 ready_to_create。 */
+  /** init 助手对话（SSE）。done 事件额外带 ready_to_create + outline。 */
   streamAssistantChat: async (
     convId: string,
     message: string,
     onToken: (t: string) => void,
     signal?: AbortSignal,
-    onDone?: (d: { message_id: string; conversation_id?: string; ready_to_create?: boolean; title?: string }) => void,
+    onDone?: (d: {
+      message_id: string
+      conversation_id?: string
+      ready_to_create?: boolean
+      title?: string
+      outline?: Record<string, { title: string; content: string }>
+    }) => void,
     chatSource?: string,
   ) => {
     const res = await authFetch(`/assistant/conversations/${convId}/chat`, {

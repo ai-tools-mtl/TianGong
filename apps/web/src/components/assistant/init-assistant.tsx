@@ -8,6 +8,7 @@ import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
 
 import { AssistantConversationList } from '@/components/assistant/assistant-conversation-list'
+import { OutlinePreview } from '@/components/assistant/outline-preview'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { api } from '@/lib/api'
@@ -66,6 +67,8 @@ export function InitAssistant() {
   const [generating, setGenerating] = useState(false)
   const [createdProjectId, setCreatedProjectId] = useState<string | null>(null)
   const [chapters, setChapters] = useState<ChapterProgress[]>([])
+  // 右侧文档预览大纲：done 回调从后端 outline 更新；切会话从 draft_outline 恢复。
+  const [outline, setOutline] = useState<Record<string, { title: string; content: string }> | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   // 自动建会话只跑一次的守卫：避免 React StrictMode（dev 下 effect 双触发）与
@@ -99,6 +102,8 @@ export function InitAssistant() {
       setCreatedProjectId(current.project_id)
       setGenerating(false)
       setChapters([])
+      // 恢复该会话已有的草稿大纲（后端每轮提取后写 draft_outline）
+      setOutline((current as { draft_outline?: Record<string, { title: string; content: string }> | null }).draft_outline ?? null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current?.id])
@@ -147,6 +152,8 @@ export function InitAssistant() {
           if (done.title) {
             qc.invalidateQueries({ queryKey: queryKeys.assistant.conversations })
           }
+          // 后端提取的 8 章草稿大纲回传 → 刷新右侧预览
+          if (done.outline) setOutline(done.outline)
           if (done.ready_to_create) {
             setMessages((prev) => {
               const next = [...prev]
@@ -340,6 +347,10 @@ export function InitAssistant() {
             </Button>
           </div>
         </div>
+      </div>
+      {/* 右侧文档实时预览：每轮对话后由轻量 LLM 提取 8 章草稿，实时刷新。桌面端常驻。 */}
+      <div className="hidden lg:block">
+        <OutlinePreview outline={outline} extracting={sending} />
       </div>
     </div>
   )
