@@ -36,6 +36,18 @@ class GlobalLLMSettings(BaseModel):
     chat_config: GlobalScopeConfigBody | None = None
 
 
+class LiteConfigBody(BaseModel):
+    """轻量任务模型配置 body（独立于 chat 全局配置，承接会话标题/章节摘要）。"""
+    base_url: str | None = None
+    api_key: str | None = None
+    model: str | None = Field(default=None, min_length=1)
+
+
+class LiteSettings(BaseModel):
+    """admin 设置轻量任务模型配置。无 enabled 开关（未配即回退 chat 全局/用户配置）。"""
+    lite_config: LiteConfigBody | None = None
+
+
 class GlobalScopeTestRequest(BaseModel):
     """admin 测试全局 chat（支持传值或用已存值复检）。"""
     base_url: str | None = None
@@ -208,6 +220,78 @@ def test_global_chat(
 
 @router.post("/admin/llm-config/chat/models")
 def list_global_chat_models(
+    payload: ListModelsRequest,
+    admin: User = Depends(require_admin),
+):
+    return llm_config_service.list_provider_models(base_url=payload.base_url, api_key=payload.api_key, provider_template_id=payload.provider_template_id)
+
+
+# ── 轻量任务模型配置（独立第三套；承接会话标题/章节摘要等轻量任务）──
+# 与上方全局 chat 配置同构：未配即回退 chat，无 enabled 开关。
+
+@router.get("/admin/lite-config")
+def get_lite_llm(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    return llm_config_service.get_lite_settings(db)
+
+
+@router.put("/admin/lite-config")
+def set_lite_llm(
+    payload: LiteSettings,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    if payload.lite_config:
+        c = payload.lite_config
+        llm_config_service.set_lite_settings(
+            db, base_url=c.base_url, api_key=c.api_key, model=c.model,
+        )
+    # 审计（不含 api_key 明文）
+    admin_service._audit(
+        db,
+        actor=admin,
+        action="set_lite_config",
+        target_type="system_setting",
+        target_id="llm_lite_config",
+        detail={
+            "lite_base_url": payload.lite_config.base_url if payload.lite_config else None,
+            "lite_model": payload.lite_config.model if payload.lite_config else None,
+        },
+    )
+    return llm_config_service.get_lite_settings(db)
+
+
+def _resolve_lite_test_values(payload, db):
+    """两模式：传值 → 用传入值；不传 → 用已存的 llm_lite_config 复检。"""
+    base_url = payload.base_url
+    api_key = payload.api_key
+    model = payload.model
+    if not (base_url and api_key and model):
+        cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == "llm_lite_config"))
+        stored = cfg.value if cfg else {}
+        base_url = base_url or stored.get("base_url", "")
+        model = model or stored.get("model", "")
+        enc = stored.get("api_key_encrypted")
+        api_key = api_key or (decrypt_value(enc) if enc else "")
+    return base_url, api_key, model
+
+
+@router.post("/admin/lite-config/test")
+def test_lite_llm(
+    payload: GlobalScopeTestRequest,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    base_url, api_key, model = _resolve_lite_test_values(payload, db)
+    if not (base_url and api_key and model):
+        return {"ok": False, "chat": {"ok": False, "latency_ms": None, "sample": None, "error": "轻量任务模型配置未设置完整"}, "embedding": None, "error": "轻量任务模型配置未设置完整（缺 base_url / api_key / model）"}
+    return llm_config_service.test_llm_connection(base_url=base_url, api_key=api_key, model=model, scope="chat")
+
+
+@router.post("/admin/lite-config/models")
+def list_lite_models(
     payload: ListModelsRequest,
     admin: User = Depends(require_admin),
 ):
