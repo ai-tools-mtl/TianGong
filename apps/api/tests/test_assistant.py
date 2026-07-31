@@ -91,16 +91,41 @@ def test_ownership_other_user_404(client, registered_user, db_session):
 
 # ── chat（mock）──────────────────────────────────────────────────────
 
+def _fake_astream_init_chat(yield_tokens):
+    """构造 mock astream_init_chat（新签名：db, user_id, history, user_input, ...）。
+
+    新契约 yield (kind, payload) 元组。这里把 yield_tokens 字符串列表包成 token 事件。
+    """
+    async def _f(db, user_id, history, user_input, **kwargs):
+        for t in yield_tokens:
+            yield ("token", t)
+    return _f
+
+
+def _full_outline():
+    """构造核心 5 维都填满的 outline（让 compute_coverage 算出 ready=True）。"""
+    return {
+        k: {"title": k, "content": f"{k} 的内容"} for k in
+        ["name", "field", "background", "problem", "solution", "effect"]
+    }
+
+
 def test_chat_emits_token_done_and_ready_flag(client, registered_user, db_session, monkeypatch):
-    """chat SSE：token/done + ready_to_create 由 [READY_TO_CREATE] 标记判定。"""
+    """chat SSE：token/done/tool + ready_to_create 由维度覆盖率判定（不再扫标记字符串）。"""
     _make_user_with_config(client, registered_user, db_session)
     conv = client.post("/api/v1/assistant/conversations").json()
 
-    async def fake_astream_init_chat(history, user_input, **kwargs):
-        yield "信息够了，可以创建了"
-        yield "\n[READY_TO_CREATE]"
-
-    monkeypatch.setattr("app.api.assistant.astream_init_chat", fake_astream_init_chat)
+    # mock agent loop（新签名 yield 元组）
+    monkeypatch.setattr(
+        "app.api.assistant.astream_init_chat",
+        _fake_astream_init_chat(["信息够了，可以创建了"]),
+    )
+    # mock outline 提取返回核心 5 维填满 → coverage.ready=True
+    # extract_outline 是闭包内局部 import，patch 源模块
+    monkeypatch.setattr(
+        "app.services.outline_extractor.extract_outline",
+        lambda db, messages, user_id: _full_outline(),
+    )
 
     res = client.post(f"/api/v1/assistant/conversations/{conv['id']}/chat", json={"message": "我想做XX"})
     assert res.status_code == 200
@@ -111,7 +136,10 @@ def test_chat_emits_token_done_and_ready_flag(client, registered_user, db_sessio
 
     import json as _json
     done_line = [l for l in body.split("\n") if l.startswith("data: ") and "ready_to_create" in l][-1]
-    assert _json.loads(done_line[6:])["ready_to_create"] is True
+    done_data = _json.loads(done_line[6:])
+    assert done_data["ready_to_create"] is True
+    assert done_data["coverage"]["ready"] is True
+    assert "outline" in done_data
 
     # 消息落库（section_id=NULL）
     db_session.expire_all()
@@ -120,20 +148,54 @@ def test_chat_emits_token_done_and_ready_flag(client, registered_user, db_sessio
     assert all(m.section_id is None for m in msgs)
 
 
-def test_chat_ready_false_without_marker(client, registered_user, db_session, monkeypatch):
-    """无标记时 ready_to_create=false。"""
+def test_chat_ready_false_when_core_dimensions_missing(client, registered_user, db_session, monkeypatch):
+    """核心维度未填满时 ready_to_create=false（覆盖率驱动，非标记字符串）。"""
     _make_user_with_config(client, registered_user, db_session)
     conv = client.post("/api/v1/assistant/conversations").json()
 
-    async def fake_astream_init_chat(history, user_input, **kwargs):
-        yield "还需要补充技术领域"
-
-    monkeypatch.setattr("app.api.assistant.astream_init_chat", fake_astream_init_chat)
+    monkeypatch.setattr(
+        "app.api.assistant.astream_init_chat",
+        _fake_astream_init_chat(["还需要补充技术领域"]),
+    )
+    # mock outline 只填了 2 个核心维度（field + background）→ coverage.ready=False
+    monkeypatch.setattr(
+        "app.services.outline_extractor.extract_outline",
+        lambda db, messages, user_id: {
+            "field": {"title": "技术领域", "content": "新能源"},
+            "background": {"title": "背景技术", "content": "现有技术效率低"},
+        },
+    )
 
     res = client.post(f"/api/v1/assistant/conversations/{conv['id']}/chat", json={"message": "hi"})
     import json as _json
     done_line = [l for l in res.text.split("\n") if l.startswith("data: ") and "ready_to_create" in l][-1]
-    assert _json.loads(done_line[6:])["ready_to_create"] is False
+    done_data = _json.loads(done_line[6:])
+    assert done_data["ready_to_create"] is False
+    assert done_data["coverage"]["ready"] is False
+    # 缺失维度应包含未填的核心维度
+    assert "problem" in done_data["coverage"]["missing"]
+
+
+def test_chat_propagates_tool_events(client, registered_user, db_session, monkeypatch):
+    """agent loop 主路径透传 tool_call/tool_result SSE 事件。"""
+    _make_user_with_config(client, registered_user, db_session)
+    conv = client.post("/api/v1/assistant/conversations").json()
+
+    async def fake_with_tools(db, user_id, history, user_input, **kwargs):
+        yield ("token", "我记一下")
+        yield ("tool_call", {"name": "save_memory", "args": {"content": "用户做新能源"}})
+        yield ("tool_result", {"name": "save_memory", "result": "已保存"})
+        yield ("token", "你的领域")
+
+    monkeypatch.setattr("app.api.assistant.astream_init_chat", fake_with_tools)
+    monkeypatch.setattr("app.services.outline_extractor.extract_outline", lambda db, messages, user_id: {})
+
+    res = client.post(f"/api/v1/assistant/conversations/{conv['id']}/chat", json={"message": "我做新能源的"})
+    body = res.text
+    assert "event: tool_call" in body
+    assert "save_memory" in body
+    assert "event: tool_result" in body
+    assert "已保存" in body
 
 
 # ── generate（mock）──────────────────────────────────────────────────

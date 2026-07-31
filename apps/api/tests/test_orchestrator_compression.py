@@ -114,7 +114,8 @@ from app.ai.init_orchestrator import astream_init_chat  # noqa: E402
 
 @pytest.mark.asyncio
 async def test_astream_init_chat_compresses_long_history(monkeypatch):
-    """init 助手 35 条历史触发压缩。"""
+    """init 助手 35 条历史触发压缩（测降级路径，与主路径共用 compress_history）。"""
+    from app.ai.init_orchestrator import _astream_init_chat_fallback
     history = _make_history(35)
     cfg = MagicMock(); cfg.model = "glm-4"; cfg.base_url = "x"; cfg.api_key = "y"
 
@@ -130,9 +131,11 @@ async def test_astream_init_chat_compresses_long_history(monkeypatch):
     fake_llm.ainvoke = AsyncMock(return_value=MagicMock(content="技术方案摘要内容"))
     monkeypatch.setattr("app.ai.context_compactor.get_llm", lambda *a, **k: fake_llm)
 
+    # 降级路径 yield ("token", str) 元组
     tokens = []
-    async for t in astream_init_chat(history, "当前问题", llm_config=cfg):
-        tokens.append(t)
+    async for kind, payload in _astream_init_chat_fallback(history, "当前问题", llm_config=cfg):
+        if kind == "token":
+            tokens.append(payload)
 
     assert tokens == ["tok"]
     contents = [getattr(m, "content", "") for m in captured_messages]
@@ -141,7 +144,8 @@ async def test_astream_init_chat_compresses_long_history(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_astream_init_chat_short_history_not_compressed(monkeypatch):
-    """init 助手 5 条历史不触发压缩。"""
+    """init 助手 5 条历史不触发压缩（测降级路径）。"""
+    from app.ai.init_orchestrator import _astream_init_chat_fallback
     history = _make_history(5)
     cfg = MagicMock(); cfg.model = "glm-4"; cfg.base_url = "x"; cfg.api_key = "y"
 
@@ -154,7 +158,7 @@ async def test_astream_init_chat_short_history_not_compressed(monkeypatch):
 
     monkeypatch.setattr("app.ai.init_orchestrator.astream_llm", fake_astream_llm)
 
-    async for _ in astream_init_chat(history, "当前问题", llm_config=cfg):
+    async for _ in _astream_init_chat_fallback(history, "当前问题", llm_config=cfg):
         pass
 
     contents = [getattr(m, "content", "") for m in captured_messages]

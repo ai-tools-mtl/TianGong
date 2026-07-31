@@ -2,14 +2,17 @@
 
 定位（详见 docs/superpowers/specs/2026-07-31-chatgpt-style-init-assistant-design.md）：
 - ChatGPT 式独立对话页的助手，对话在项目创建前进行（顶层 init 会话，kind='init'）。
-- agent 判断信息充分后用 [READY_TO_CREATE] 标记，用户按扳机 → 本模块建项目 + 填 8 章。
+- ready 判断由系统侧基于维度覆盖率算（brief_dimensions.compute_coverage），不再靠 LLM
+  自吐 [READY_TO_CREATE] 标记。用户按扳机 → 本模块建项目 + 填 8 章。
 
 与 orchestrator.py 的区别：
 - orchestrator 是 section 粒度（单章对话/生成），强依赖 build_system_prompt 的章节策略。
 - init_orchestrator 是项目粒度：对话不绑定单 section（用 INIT_SYSTEM_PROMPT），
   generate 时一次性循环 8 章（用 astream_llm 纯生成，不走 agent loop）。
 
-init chat 走裸 astream_llm（无工具调用）。
+init chat 走 agent loop（build_init_agent → create_deep_agent，带 save_memory 工具），
+与普通助手 astream_chat 同构（事件遍历 + tool_call/tool_result SSE 透传）。
+模型不支持工具时降级回裸 astream_llm（见 astream_init_chat 的 try/except 分支）。
 """
 from collections.abc import AsyncIterator
 
@@ -19,6 +22,10 @@ from app.ai.llm_client import astream_llm
 from app.ai.orchestrator import build_generate_instruction
 from app.models import Message, Section
 from app.services.llm_config_service import ResolvedChatConfig
+from app.services.seed_service import DEFAULT_STRUCTURE
+
+# 8 章 key → title（与 seed_service.DEFAULT_STRUCTURE 同源，brief 摘要用）
+_OUTLINE_TITLES = [(s["key"], s["title"]) for s in DEFAULT_STRUCTURE]
 
 # ── 项目初始化助手 system prompt（裁剪自 context_assembler.SYSTEM_PROMPT）──
 # 不绑定单 section；目标是引导用户把想法说清楚，为生成 8 章做准备。
@@ -26,22 +33,29 @@ from app.services.llm_config_service import ResolvedChatConfig
 # patent-effect-contrast）——让助手引导用户时即遵守这些规范。
 INIT_SYSTEM_PROMPT = """你是「天工」项目初始化助手。用户想新建一个专利交底书项目，但通常只有一个模糊的技术想法。你的任务是通过对话，帮用户把想法理清楚，为后续一键生成 8 章初稿做准备。
 
-对话目标——逐步引导用户说清以下几方面（不必一次问全，每轮聚焦一个方向，结合用户已说的内容追问）：
+对话目标——逐步引导用户说清以下 5 个核心方面（不必一次问全，每轮聚焦一个方向，结合用户已说的内容追问）：
 1. 技术领域：这个发明属于什么领域？解决哪类问题？
-2. 要解决的技术问题：现有技术有什么不足？本发明针对哪个具体问题？
-3. 技术方案的大致轮廓：核心做法是什么？有哪些关键步骤/模块/组件？
-4. 关键特征与效果：相比现有方案，新在哪、好在哪？
+2. 现有技术及其缺点：目前怎么做？具体哪里不行？（这是关键——没有缺点，技术问题和有益效果都失去锚点）
+3. 要解决的技术问题：本发明针对现有技术的哪个/哪些具体不足？每个问题应对准一个缺点。
+4. 技术方案的大致轮廓：核心做法是什么？有哪些关键步骤/模块/组件？每个关键部分解决哪个子问题？
+5. 关键特征与效果：相比现有方案，新在哪、好在哪？每个效果对应解决哪个缺点。
 
-规则：
+引导规则：
 1. 用专业但通俗的中文，避免生硬法律术语
 2. 引导用户补充真实技术细节，不要替用户编造数据或效果
-3. 信息不足时主动追问；信息已较完整时，按下方规则 6 输出时机标记
+3. 信息不足时主动追问；每轮聚焦一个方向，不要一次问全 5 个方面
 4. 保持客观，不夸大技术效果
 5. 回复简洁，每轮对话聚焦引导，不要长篇大论
-6. 当你判断已经收集到足够信息（技术领域、要解决的问题、技术方案的大致轮廓、关键特征都基本清楚），
-   在回复的【最末尾】单独输出一行标记 `[READY_TO_CREATE]`（必须是这个精确字符串，独占一行）。
-   前端会据此提示用户「可以创建项目了」。没收集够时不要输出这个标记。
-   输出标记前照常把当轮该说的话说完（如总结你理解的需求、确认要点），标记只追加在最末尾。
+6. 重点挖「现有技术缺点」——用户常直接跳到自己的方案，要引导他们先讲清现有技术是什么、哪里不足
+7. 谈到效果时，主动追问依据：有没有实测数据？对比基线是什么？
+   明确告诉用户「没有实测数据没关系，可以说复杂度对比或数据量差异，但请别凭空给绝对数值」。
+   （生成期禁止臆测如「约 10μs」这类绝对值，所以引导时就要把依据类型问清楚）
+8. 帮用户把「缺点、技术问题、有益效果」对应起来——例如「您说的这个效果，是针对哪个现有技术缺点的？」
+
+可用工具：
+- save_memory：当用户透露跨项目稳定的画像信息（职业/专业水平/领域，如「我是做新能源的」「我是专利代理人」）
+  或明确表达长期偏好（「以后都用这种写法」）时调用，用 memory_type="profile" 保存画像、默认保存偏好。
+  临时性信息（如「我现在在写电池专利」）不要保存。
 
 写作规范（生成内容时也要遵守，此处作为对话引导的标尺）：
 - 去 AI 味：禁用「更为关键的是」「换言之」「值得注意的是」等套话转折词；避免超长句和三连排比
@@ -58,6 +72,9 @@ async def _build_init_chat_messages(
 
     历史先经 compress_history 压缩（压缩 spec），再转 LangChain 消息类型。
     meta_sink 非空时写入压缩 snapshot，供调用方记入 LLMCallLog.context_meta。
+
+    仅降级路径（裸 astream_llm）使用此函数；agent loop 主路径直接用 compress_history
+    的 dict 输出喂给 agent.astream_events。
     """
     from loguru import logger
     from app.ai.context_compactor import compress_history
@@ -86,32 +103,161 @@ async def _build_init_chat_messages(
     return messages
 
 
-async def astream_init_chat(
+async def _astream_init_chat_agent(
+    db, user_id, history: list[Message], user_input: str,
+    *, llm_config: ResolvedChatConfig, meta_sink: dict | None = None,
+) -> AsyncIterator[tuple[str, dict | str]]:
+    """init chat 的 agent loop 主路径（带工具：save_memory / rag_search / MCP）。
+
+    与 orchestrator.astream_chat 同构：build_agent(system_prompt_override=INIT_SYSTEM_PROMPT)
+    → compress_history → agent.astream_events 事件遍历，yield (kind, payload) 元组。
+    init 特殊性：无 section，用 INIT_SYSTEM_PROMPT；user_id 直接是会话归属用户。
+
+    usage_sink 不在此路径填充（agent loop 多步调用，与普通助手 astream_chat 一致，落 NULL）。
+    """
+    from loguru import logger
+
+    from app.ai.agent import build_agent
+    from app.ai.context_compactor import compress_history
+
+    logger.info("astream_init_chat: 构建 init agent（model=%s）", llm_config.model)
+    agent = await build_agent(
+        db, llm_config=llm_config, user_id=user_id,
+        system_prompt_override=INIT_SYSTEM_PROMPT,
+    )
+    logger.info("astream_init_chat: init agent 构建完成，开始 agent loop")
+
+    # 历史压缩（与 astream_chat 同构）+ 观测透传
+    compressed, snapshot = await compress_history(
+        history, user_input, llm_config, scene="init"
+    )
+    if snapshot.triggered:
+        logger.info(
+            "上下文压缩触发 (init chat): reason={} {}→{}条",
+            snapshot.reason, snapshot.original_count, snapshot.compressed_count,
+        )
+    if meta_sink is not None:
+        meta_sink["context_meta"] = snapshot.to_dict()
+    if not snapshot.triggered:
+        compressed.append({"role": "user", "content": user_input})
+
+    async for event in agent.astream_events({"messages": compressed}, version="v2"):
+        evt = event["event"]
+        if evt == "on_chat_model_stream":
+            chunk = event["data"].get("chunk")
+            if chunk and chunk.content:
+                yield ("token", chunk.content)
+        elif evt == "on_tool_start":
+            yield ("tool_call", {
+                "name": event.get("name", ""),
+                "args": event.get("data", {}).get("input", {}),
+            })
+        elif evt == "on_tool_end":
+            result = event.get("data", {}).get("output")
+            result_str = str(result)[:500] if result is not None else ""
+            yield ("tool_result", {
+                "name": event.get("name", ""),
+                "result": result_str,
+            })
+
+
+async def _astream_init_chat_fallback(
     history: list[Message], user_input: str,
     *, llm_config: ResolvedChatConfig, usage_sink: dict | None = None,
     meta_sink: dict | None = None,
-) -> AsyncIterator[str]:
-    """项目初始化对话：流式回复用户，逐 token yield 文本。
+) -> AsyncIterator[tuple[str, str]]:
+    """init chat 降级路径：裸 astream_llm（无工具）。
 
-    阶段 A 走裸 astream_llm（无工具调用）。复用对话历史。
-    meta_sink 透传给 _build_init_chat_messages 写入压缩 snapshot（spec §5.1）。
+    模型不支持 tool calling（check_tool_support 抛 ToolSupportError）时走此路径——
+    宁可丢工具能力也不阻断对话。ready 判断仍由 coverage 算（不依赖工具）。
+    yield ("token", str) 元组，与主路径的 token 事件结构对齐（仅无 tool 事件）。
     """
     messages = await _build_init_chat_messages(
         history, user_input, llm_config, meta_sink=meta_sink
     )
     async for token in astream_llm(messages, llm_config=llm_config, usage_sink=usage_sink):
-        yield token
+        yield ("token", token)
+
+
+async def astream_init_chat(
+    db, user_id, history: list[Message], user_input: str,
+    *, llm_config: ResolvedChatConfig, usage_sink: dict | None = None,
+    meta_sink: dict | None = None,
+) -> AsyncIterator[tuple[str, dict | str]]:
+    """项目初始化对话：流式回复用户，yield (kind, payload) 元组。
+
+    主路径走 agent loop（带 save_memory / rag_search / MCP 工具）；模型不支持工具时
+    自动降级到裸 astream_llm（只丢工具能力，不阻断对话）。
+
+    yield:
+      - ("token", str)：文本 token
+      - ("tool_call", {"name", "args"})：agent 发起工具调用（仅主路径）
+      - ("tool_result", {"name", "result"})：工具返回（仅主路径）
+
+    meta_sink 透传给压缩观测（spec §5.1）。usage_sink 仅降级路径填充
+    （agent loop 路径与普通助手一致落 NULL）。
+    """
+    from loguru import logger
+
+    from app.ai.tool_support import ToolSupportError
+
+    try:
+        # 主路径：agent loop（check_tool_support 在 build_agent 内首道闸）
+        async for item in _astream_init_chat_agent(
+            db, user_id, history, user_input, llm_config=llm_config, meta_sink=meta_sink
+        ):
+            yield item
+    except ToolSupportError as e:
+        # 降级：模型不支持工具 → 回退裸 LLM
+        logger.warning("init chat 模型不支持工具，降级裸 LLM: %s", e)
+        async for item in _astream_init_chat_fallback(
+            history, user_input, llm_config=llm_config,
+            usage_sink=usage_sink, meta_sink=meta_sink,
+        ):
+            yield item
+
+
+def _format_brief_summary(outline: dict | None) -> str | None:
+    """把 draft_outline 格式化成给生成阶段看的 brief 摘要。
+
+    注入到生成消息，让每章生成时对齐已确认维度（而非只靠压缩历史猜），
+    信噪比更高。effect 章额外带上 evidence_type 提示，避免生成时臆测绝对数值
+    （借鉴 patent-disclosure-pro/references/effect-writing.md）。
+
+    返回 None 表示 outline 为空/无实质内容，调用方据此决定是否注入。
+    """
+    if not outline:
+        return None
+    lines = []
+    has_content = False
+    for key, title in _OUTLINE_TITLES:
+        entry = outline.get(key) or {}
+        content = (entry.get("content") or "").strip()
+        if not content:
+            continue
+        has_content = True
+        evidence = entry.get("evidence_type")
+        if key == "effect" and evidence:
+            lines.append(f"【{title}】（依据类型：{evidence}）\n{content}")
+        else:
+            lines.append(f"【{title}】\n{content}")
+    if not has_content:
+        return None
+    return "以下是初始化对话中已确认的项目要点（brief），生成本章时请对齐这些信息：\n\n" + "\n\n".join(lines)
 
 
 async def _build_section_generate_messages(
     section: Section, history: list[Message], llm_config,
-    *, meta_sink: dict | None = None,
+    *, meta_sink: dict | None = None, outline: dict | None = None,
 ) -> list:
-    """装配单章生成消息：INIT_SYSTEM_PROMPT + 压缩历史 + 本章生成指令。
+    """装配单章生成消息：INIT_SYSTEM_PROMPT + brief 摘要 + 压缩历史 + 本章生成指令。
 
     与 orchestrator.astream_generate 的区别：后者走 build_agent（章节策略进 system prompt），
     本函数走裸 astream_llm，故把章节策略揉进生成指令（user message）里。
     复用 build_generate_instruction（含 CoT 分步引导 + 章节 output_format/criteria）。
+
+    outline（draft_outline）注入成 brief 摘要（SystemMessage），让生成对齐已确认维度——
+    这是 generate 链路消费 brief 的核心注入点。
     meta_sink 非空时写入压缩 snapshot，供调用方记入 LLMCallLog.context_meta。
     """
     from loguru import logger
@@ -133,6 +279,10 @@ async def _build_section_generate_messages(
         compressed.append({"role": "user", "content": instruction})
 
     messages: list = [SystemMessage(content=INIT_SYSTEM_PROMPT)]
+    # brief 摘要注入（generate 链路消费 draft_outline 的核心点）
+    brief = _format_brief_summary(outline)
+    if brief:
+        messages.append(SystemMessage(content=brief))
     for m in compressed:
         if m["role"] == "user":
             messages.append(HumanMessage(content=m["content"]))
@@ -180,7 +330,8 @@ async def astream_init_generate(
 
     yield ("project_created", {"project_id": str(project.id)})
 
-    # 3. 循环生成各章节初稿
+    # 3. 循环生成各章节初稿（brief 来自 conversation.draft_outline，注入对齐已确认维度）
+    outline = getattr(conversation, "draft_outline", None) or None
     stmt = select(Section).where(Section.project_id == project.id)
     if sections:
         stmt = stmt.where(Section.key.in_(sections))
@@ -196,7 +347,7 @@ async def astream_init_generate(
         chapter_error = None
         try:
             messages = await _build_section_generate_messages(
-                section, history, llm_config, meta_sink=meta_sink
+                section, history, llm_config, meta_sink=meta_sink, outline=outline
             )
             async for token in astream_llm(messages, llm_config=llm_config, usage_sink=usage_sink):
                 full_md += token

@@ -42,6 +42,7 @@ __all__ = ["build_agent"]
 async def build_agent(
     db, *, llm_config: ResolvedChatConfig, user_id,
     section=None, user_input: str | None = None, intent: str | None = None,
+    system_prompt_override: str | None = None,
 ) -> CompiledStateGraph:
     """构造 deepagents agent（路线 B 的装配入口）。
 
@@ -72,6 +73,9 @@ async def build_agent(
         section: 当前要撰写/对话的 Section。非 None 时调 build_system_prompt 装配
             动态 system prompt（含项目标题、已写章节、章节策略）。None 时用
             静态 SYSTEM_PROMPT 兜底（向后兼容，本 spec 范围内 chat/generate 都会传 section）。
+        system_prompt_override: 覆盖 system prompt（init 助手用 INIT_SYSTEM_PROMPT）。
+            非空时跳过 section 装配逻辑直接用它——供 init 场景（无 section、用专用 prompt）
+            复用全部装配逻辑。普通 chat/generate 不传此参数。
 
     Returns:
         CompiledStateGraph：具备 ainvoke / astream_events。
@@ -111,7 +115,11 @@ async def build_agent(
     # [L1][L4][前文直注入] section 非 None 时装配动态 system prompt（spec §3.2）
     # user_input 透传给记忆检索（用户当前输入是最强检索信号，spec §5.3 升级）
     # intent（S2-2）透传给意图行为指令注入（draft/edit/info/guide）
-    if section is not None:
+    # init 场景：传 system_prompt_override（INIT_SYSTEM_PROMPT）跳过 section 装配——
+    # init 无 section、用专用 prompt，但仍复用 skill/tools/check_tool_support 装配。
+    if system_prompt_override is not None:
+        system_prompt = system_prompt_override
+    elif section is not None:
         from app.ai.context_assembler import _retrieve_knowledge_for_section, build_system_prompt
         # 预检索知识库：据章节上下文自动检索历史案例，失败静默降级
         knowledge_context = _retrieve_knowledge_for_section(
