@@ -1,17 +1,15 @@
-"""项目初始化助手编排：对话引导 + 批量生成 8 章初稿。
+"""项目初始化助手编排：对话引导 + 扳机落地建项目并生成 8 章初稿。
 
-定位（详见 docs/superpowers/plans/2026-07-30-init-assistant.md）：
-- 助手只用于「项目冷启动」，不是项目内常驻统筹 agent。
-- 对话挂在项目首个 section 下（复用 Conversation/Message，零 schema 改动）。
-- 对话结束后后端批量生成 8 章初稿并回填（后端编排，非 LLM tool-call 自写）。
+定位（详见 docs/superpowers/specs/2026-07-31-chatgpt-style-init-assistant-design.md）：
+- ChatGPT 式独立对话页的助手，对话在项目创建前进行（顶层 init 会话，kind='init'）。
+- agent 判断信息充分后用 [READY_TO_CREATE] 标记，用户按扳机 → 本模块建项目 + 填 8 章。
 
 与 orchestrator.py 的区别：
 - orchestrator 是 section 粒度（单章对话/生成），强依赖 build_system_prompt 的章节策略。
 - init_orchestrator 是项目粒度：对话不绑定单 section（用 INIT_SYSTEM_PROMPT），
-  生成时一次性循环 8 章（用 astream_llm 纯生成，不走 agent loop）。
+  generate 时一次性循环 8 章（用 astream_llm 纯生成，不走 agent loop）。
 
-阶段 A 简化：init chat 走裸 astream_llm（无工具调用）。rag_search/save_memory 工具
-增强留到阶段 B（需 agent loop，届时给 build_agent 传首个 section 作占位）。
+init chat 走裸 astream_llm（无工具调用）。
 """
 from collections.abc import AsyncIterator
 
@@ -19,8 +17,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.ai.llm_client import astream_llm
 from app.ai.orchestrator import build_generate_instruction
-from app.ai.section_prompts import get_section_prompt
-from app.models import Message, Project, Section
+from app.models import Message, Section
 from app.services.llm_config_service import ResolvedChatConfig
 
 # ── 项目初始化助手 system prompt（裁剪自 context_assembler.SYSTEM_PROMPT）──
@@ -99,33 +96,44 @@ def _build_section_generate_messages(
 
 
 async def astream_init_generate(
-    db, project: Project, history: list[Message],
+    db, conversation, history: list[Message], user,
     *, llm_config: ResolvedChatConfig,
     sections: list[str] | None = None,
     usage_sink: dict | None = None,
 ) -> AsyncIterator[tuple[str, dict | str]]:
-    """批量生成项目各章节初稿，流式产出进度与 token。
+    """扳机落地：为 init 会话建项目 + 填充各章节初稿，流式产出进度与 token。
 
-    对项目的 sections 循环（可按 key 过滤，默认全部），每章：
-    - 装配消息（对话历史 + 本章生成指令）
-    - astream_llm 生成 Markdown
-    - 回写 section.content（markdown_to_tiptap）+ status: empty→drafting
-    - 流式产出 ("chapter_start", {...}) / ("token", str) / ("chapter_done", {...})
+    接收顶层 init 会话（conversation）+ 用户（user），内部：
+    1. create_project 建项目 + 8 空章节
+    2. 把 conversation.project_id 填上（标记已落地）
+    3. 对项目 sections 循环生成初稿（复用 _build_section_generate_messages + astream_llm）
+    4. 回写 section.content + status: empty→drafting
 
-    yield 元组（与 astream_chat/generate 风格一致，供 SSE 层消费）：
-      - ("chapter_start", {"index": int, "total": int, "title": str, "key": str})
-      - ("token", str)  # 当前章节的生成 token
-      - ("chapter_done", {"index": int, "title": str, "key": str, "status": "ok"|"failed", "error": str|None})
+    yield 元组：
+      - ("project_created", {"project_id": str})  # 项目建好后即发，前端可提前拿 id
+      - ("chapter_start", {"index", "total", "title", "key"})
+      - ("token", str)
+      - ("chapter_done", {"index", "title", "key", "status", "error"})
       - ("all_done", {"project_id": str})
 
     单章失败不中断整体（标记 failed，继续下一章）——避免一章挂掉导致整批回滚。
-    token 用量累加进 usage_sink（多章调用，prompt/completion 分别累加）。
     """
     from sqlalchemy import select
 
     from app.ai.markdown_to_tiptap import markdown_to_tiptap
+    from app.services.project_service import create_project
 
-    # 取项目的 section，按 order 排序；可按 key 过滤
+    # 1. 建项目 + 8 空章节（标题从会话标题提炼）
+    title = (conversation.title or "新项目").strip() or "新项目"
+    project = create_project(db, user=user, title=title[:60])
+
+    # 2. 标记会话已落地（project_id 填上 → 列表不再显示）
+    conversation.project_id = project.id
+    db.commit()
+
+    yield ("project_created", {"project_id": str(project.id)})
+
+    # 3. 循环生成各章节初稿
     stmt = select(Section).where(Section.project_id == project.id)
     if sections:
         stmt = stmt.where(Section.key.in_(sections))
@@ -162,3 +170,4 @@ async def astream_init_generate(
             })
 
     yield ("all_done", {"project_id": str(project.id)})
+
