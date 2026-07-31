@@ -13,6 +13,8 @@ interface OutlinePreviewProps {
   outline: Record<string, OutlineChapter> | null | undefined
   /** 是否正在等待提取（对话发送后、done 前）。用于展示「梳理中」态。 */
   extracting?: boolean
+  /** 面板宽度（px）。由父组件拖拽手柄控制，默认 320。 */
+  width?: number
 }
 
 // 8 章 key + 顺序（与后端 seed_service.DEFAULT_STRUCTURE 一致，单一来源对齐）
@@ -27,13 +29,13 @@ const CHAPTERS: { key: string; title: string }[] = [
   { key: 'embodiment', title: '具体实施方式' },
 ]
 
-export function OutlinePreview({ outline, extracting }: OutlinePreviewProps) {
+export function OutlinePreview({ outline, extracting, width = 320 }: OutlinePreviewProps) {
   const filledCount = CHAPTERS.filter((c) => outline?.[c.key]?.content?.trim()).length
 
   return (
     <div
-      className="flex h-full w-80 shrink-0 flex-col bg-background"
-      style={{ borderLeft: '1px solid var(--hairline)' }}
+      className="flex h-full shrink-0 flex-col bg-background"
+      style={{ width: `${width}px`, borderLeft: '1px solid var(--hairline)' }}
     >
       {/* 头部：标题 + 填充进度 */}
       <div className="flex items-center justify-between px-4 py-3" style={{ borderBottom: '1px solid var(--hairline)' }}>

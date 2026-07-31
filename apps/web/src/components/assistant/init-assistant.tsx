@@ -3,7 +3,7 @@
 import { Loader2, RotateCcw, Sparkles } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
-import { useEffect, useRef, useState } from 'react'
+import { type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
 
@@ -39,6 +39,46 @@ function TypingDots() {
   )
 }
 
+/**
+ * 拖拽调整右侧预览宽度的手柄。挂在预览面板左缘。
+ * 用 Pointer Events + setPointerCapture 实现，拖拽中鼠标移出手柄也不丢事件。
+ * 向左拖（dx 负）→ 面板变宽；clamp 在 [minW, maxW]。
+ */
+const PREVIEW_MIN_W = 240
+const PREVIEW_MAX_W = 520
+
+function ResizeHandle({ onResize }: { onResize: (dx: number) => void }) {
+  function handlePointerDown(e: ReactPointerEvent<HTMLDivElement>) {
+    e.preventDefault()
+    const target = e.currentTarget
+    target.setPointerCapture(e.pointerId)
+    let lastX = e.clientX
+    function move(ev: PointerEvent) {
+      onResize(lastX - ev.clientX) // 向左拖 dx>0 → 变宽
+      lastX = ev.clientX
+    }
+    function up(ev: PointerEvent) {
+      target.releasePointerCapture(ev.pointerId)
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="拖动调整预览宽度"
+      onPointerDown={handlePointerDown}
+      className="absolute -left-[3px] top-0 z-10 h-full w-[6px] cursor-col-resize group/handle"
+    >
+      {/* 实际可见的握把条：默认极淡，hover/拖拽时显形 */}
+      <span className="absolute left-1/2 top-1/2 h-8 w-[2px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-muted-foreground/20 transition-colors group-hover/handle:bg-primary/50" />
+    </div>
+  )
+}
+
 interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
@@ -69,6 +109,8 @@ export function InitAssistant() {
   const [chapters, setChapters] = useState<ChapterProgress[]>([])
   // 右侧文档预览大纲：done 回调从后端 outline 更新；切会话从 draft_outline 恢复。
   const [outline, setOutline] = useState<Record<string, { title: string; content: string }> | null>(null)
+  // 右侧预览面板宽度（px），可拖拽手柄调整。clamp 在 [240, 520]。
+  const [previewWidth, setPreviewWidth] = useState(320)
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   // 自动建会话只跑一次的守卫：避免 React StrictMode（dev 下 effect 双触发）与
@@ -363,9 +405,13 @@ export function InitAssistant() {
           </div>
         </div>
       </div>
-      {/* 右侧文档实时预览：每轮对话后由轻量 LLM 提取 8 章草稿，实时刷新。桌面端常驻。 */}
-      <div className="hidden lg:block">
-        <OutlinePreview outline={outline} extracting={sending} />
+      {/* 右侧文档实时预览：每轮对话后由轻量 LLM 提取 8 章草稿，实时刷新。桌面端常驻。
+          外层 relative 给拖拽手柄（absolute 定位）做参照。 */}
+      <div className="relative hidden lg:block">
+        <ResizeHandle
+          onResize={(dx) => setPreviewWidth((w) => Math.min(PREVIEW_MAX_W, Math.max(PREVIEW_MIN_W, w + dx)))}
+        />
+        <OutlinePreview outline={outline} extracting={sending} width={previewWidth} />
       </div>
     </div>
   )
