@@ -5,7 +5,7 @@
 职责：输入 (history, current_input, llm_config, budget) → 输出 (compressed_messages, snapshot)。
 在「装配 messages 喂给 LLM 前」调用，取数层（_get_section_with_history）不动。
 """
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -38,6 +38,10 @@ class Snapshot:
     est_tokens_before: int
     est_tokens_after: int
     fallback: bool = False
+
+    def to_dict(self) -> dict:
+        """序列化为可入 JSON 列的 dict（供 LLMCallLog.context_meta 持久化）。"""
+        return asdict(self)
 
 
 def estimate_tokens(text: str) -> int:
@@ -124,7 +128,12 @@ async def summarize(messages: list, llm_config: ResolvedChatConfig | None) -> st
 
     分类降级协议（spec §5.2）：
     - 配置类错误（无 config / model 空）→ 抛 ValueError（该报则报）。
-    - 运行时错误（超时/限流/网络/返回空）→ 抛 SummarizeRuntimeError（由 compress_history 降级）。
+    - 运行时错误（超时/限流/网络/返回空，以及 LLM 调用过程中任何意外异常）
+      → 抛 SummarizeRuntimeError（由 compress_history 降级，不炸主流程）。
+
+    注意：配置检查在 try 之前显式抛 ValueError；try 内部只重新抛 SummarizeRuntimeError，
+    其余异常（含 LLM 调用偶发的 ValueError）一律转 SummarizeRuntimeError 走降级——
+    避免「try 内部偶发的 ValueError 被误判为配置错误」而绕过降级炸主流程。
     """
     if llm_config is None or not getattr(llm_config, "model", None):
         raise ValueError("LLM 配置缺少 model，无法生成摘要")
@@ -139,8 +148,6 @@ async def summarize(messages: list, llm_config: ResolvedChatConfig | None) -> st
             raise SummarizeRuntimeError("摘要返回空")
         return text
     except SummarizeRuntimeError:
-        raise
-    except ValueError:
         raise
     except Exception as e:
         raise SummarizeRuntimeError(str(e)) from e
@@ -190,7 +197,8 @@ async def compress_history(
                               est_tokens_after=est_tokens)
 
     # 触发原因：条数优先（与 should_compress 的判定顺序一致）
-    reason = "messages>30" if len(history) > budget.max_messages else "tokens>24000"
+    # 触发原因标签：用实际 budget 值拼，避免自定义 budget 时标签失真（如 max_messages=999）。
+    reason = f"messages>{budget.max_messages}" if len(history) > budget.max_messages else f"tokens>{budget.token_budget}"
 
     head = history[:budget.keep_head]
     middle = history[budget.keep_head:-budget.keep_tail]

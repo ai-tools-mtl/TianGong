@@ -50,11 +50,13 @@ INIT_SYSTEM_PROMPT = """你是「天工」项目初始化助手。用户想新�
 
 
 async def _build_init_chat_messages(
-    history: list[Message], user_input: str, llm_config
+    history: list[Message], user_input: str, llm_config,
+    *, meta_sink: dict | None = None,
 ) -> list:
     """装配 init chat 消息：INIT_SYSTEM_PROMPT + 压缩后历史。
 
     历史先经 compress_history 压缩（压缩 spec），再转 LangChain 消息类型。
+    meta_sink 非空时写入压缩 snapshot，供调用方记入 LLMCallLog.context_meta。
     """
     from app.ai.context_compactor import compress_history
 
@@ -67,6 +69,8 @@ async def _build_init_chat_messages(
             "上下文压缩触发 (init chat): reason=%s %d→%d条",
             snapshot.reason, snapshot.original_count, snapshot.compressed_count,
         )
+    if meta_sink is not None:
+        meta_sink["context_meta"] = snapshot.to_dict()
     # compress_history 契约：触发/降级路径已在末尾 append current_input；
     # 未触发路径只返回历史 dict，不含 current_input —— 这里补一次。
     if not snapshot.triggered:
@@ -84,24 +88,30 @@ async def _build_init_chat_messages(
 async def astream_init_chat(
     history: list[Message], user_input: str,
     *, llm_config: ResolvedChatConfig, usage_sink: dict | None = None,
+    meta_sink: dict | None = None,
 ) -> AsyncIterator[str]:
     """项目初始化对话：流式回复用户，逐 token yield 文本。
 
     阶段 A 走裸 astream_llm（无工具调用）。复用对话历史。
+    meta_sink 透传给 _build_init_chat_messages 写入压缩 snapshot（spec §5.1）。
     """
-    messages = await _build_init_chat_messages(history, user_input, llm_config)
+    messages = await _build_init_chat_messages(
+        history, user_input, llm_config, meta_sink=meta_sink
+    )
     async for token in astream_llm(messages, llm_config=llm_config, usage_sink=usage_sink):
         yield token
 
 
 async def _build_section_generate_messages(
     section: Section, history: list[Message], llm_config,
+    *, meta_sink: dict | None = None,
 ) -> list:
     """装配单章生成消息：INIT_SYSTEM_PROMPT + 压缩历史 + 本章生成指令。
 
     与 orchestrator.astream_generate 的区别：后者走 build_agent（章节策略进 system prompt），
     本函数走裸 astream_llm，故把章节策略揉进生成指令（user message）里。
     复用 build_generate_instruction（含 CoT 分步引导 + 章节 output_format/criteria）。
+    meta_sink 非空时写入压缩 snapshot，供调用方记入 LLMCallLog.context_meta。
     """
     from app.ai.context_compactor import compress_history
 
@@ -115,6 +125,8 @@ async def _build_section_generate_messages(
             "上下文压缩触发 (init generate, section=%s): reason=%s %d→%d条",
             section.key, snapshot.reason, snapshot.original_count, snapshot.compressed_count,
         )
+    if meta_sink is not None:
+        meta_sink["context_meta"] = snapshot.to_dict()
     # 同 _build_init_chat_messages：未触发路径补 instruction。
     if not snapshot.triggered:
         compressed.append({"role": "user", "content": instruction})
@@ -133,6 +145,7 @@ async def astream_init_generate(
     *, llm_config: ResolvedChatConfig,
     sections: list[str] | None = None,
     usage_sink: dict | None = None,
+    meta_sink: dict | None = None,
 ) -> AsyncIterator[tuple[str, dict | str]]:
     """批量生成项目各章节初稿，流式产出进度与 token。
 
@@ -170,7 +183,9 @@ async def astream_init_generate(
         full_md = ""
         chapter_error = None
         try:
-            messages = await _build_section_generate_messages(section, history, llm_config)
+            messages = await _build_section_generate_messages(
+                section, history, llm_config, meta_sink=meta_sink
+            )
             async for token in astream_llm(messages, llm_config=llm_config, usage_sink=usage_sink):
                 full_md += token
                 yield ("token", token)

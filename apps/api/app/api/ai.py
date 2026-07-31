@@ -208,6 +208,7 @@ async def chat(
     async def generate():
         full_response = ""
         usage = {}  # 断链 C3：astream_llm 把最后一块 usage_metadata 写入此 holder
+        meta = {}   # 压缩 spec §5.1：astream_chat 把 snapshot 写入此 holder，供 _log_llm_call 记 context_meta
         start = time.monotonic()
         status = "success"
         err = None
@@ -223,7 +224,7 @@ async def chat(
         try:
             async for kind, data in _yield_with_heartbeat_tuple(
                 astream_chat(db, section, history, payload.message,
-                             llm_config=llm_config, usage_sink=usage)
+                             llm_config=llm_config, usage_sink=usage, meta_sink=meta)
             ):
                 if kind == "heartbeat":
                     yield _sse_event("heartbeat", {})
@@ -291,6 +292,7 @@ async def chat(
                 tokens=usage or None,
                 duration_ms=int((time.monotonic() - start) * 1000),
                 error=err,
+                context_meta=meta.get("context_meta"),
             )
 
     return StreamingResponse(generate(), media_type="text/event-stream")
@@ -315,6 +317,7 @@ async def generate_draft(
     async def generate():
         full_md = ""
         usage = {}  # 断链 C3：astream_llm 把最后一块 usage_metadata 写入此 holder
+        meta = {}   # 压缩 spec §5.1：astream_generate 把 snapshot 写入此 holder
         start = time.monotonic()
         status = "success"
         err = None
@@ -329,7 +332,7 @@ async def generate_draft(
             return
         try:
             async for kind, data in _yield_with_heartbeat_tuple(
-                astream_generate(db, section, history, llm_config=llm_config, usage_sink=usage)
+                astream_generate(db, section, history, llm_config=llm_config, usage_sink=usage, meta_sink=meta)
             ):
                 if kind == "heartbeat":
                     yield _sse_event("heartbeat", {})
@@ -385,6 +388,7 @@ async def generate_draft(
                 tokens=usage or None,
                 duration_ms=int((time.monotonic() - start) * 1000),
                 error=err,
+                context_meta=meta.get("context_meta"),
             )
 
     return StreamingResponse(generate(), media_type="text/event-stream")

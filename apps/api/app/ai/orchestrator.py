@@ -112,6 +112,7 @@ def build_generate_instruction(section: Section) -> str:
 async def astream_chat(
     db, section: Section, history: list[Message], user_input: str,
     *, llm_config: ResolvedChatConfig, usage_sink: dict | None = None,
+    meta_sink: dict | None = None,
 ) -> AsyncIterator[tuple[str, dict | str]]:
     """异步引导对话：委托 deepagents agent loop（路线 B）。
 
@@ -152,6 +153,9 @@ async def astream_chat(
             section.id, snapshot.reason, snapshot.original_count,
             snapshot.compressed_count, snapshot.fallback,
         )
+    # 压缩观测透传：把 snapshot 写入 meta_sink，供 SSE 层记入 LLMCallLog.context_meta（spec §5.1）。
+    if meta_sink is not None:
+        meta_sink["context_meta"] = snapshot.to_dict()
     # compress_history 的契约：触发/降级路径已在末尾 append current_input；
     # 未触发路径只返回历史 dict，不含 current_input —— 这里补一次，保证末尾恒为当前输入。
     messages = compressed
@@ -185,6 +189,7 @@ async def astream_chat(
 async def astream_generate(
     db, section: Section, history: list[Message],
     *, llm_config: ResolvedChatConfig, usage_sink: dict | None = None,
+    meta_sink: dict | None = None,
 ) -> AsyncIterator[tuple[str, dict | str]]:
     """异步生成草稿：委托 deepagents agent loop（路线 B）。
 
@@ -228,6 +233,9 @@ async def astream_generate(
             "上下文压缩触发 (generate, section=%s): reason=%s %d→%d条",
             section.id, snapshot.reason, snapshot.original_count, snapshot.compressed_count,
         )
+    # 压缩观测透传：把 snapshot 写入 meta_sink，供 SSE 层记入 LLMCallLog.context_meta（spec §5.1）。
+    if meta_sink is not None:
+        meta_sink["context_meta"] = snapshot.to_dict()
     # compress_history 的契约：触发/降级路径已在末尾 append instruction；
     # 未触发路径只返回历史 dict，不含 instruction —— 这里补一次，保证末尾恒为 generate 指令。
     messages = compressed

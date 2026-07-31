@@ -143,6 +143,21 @@ async def test_summarize_llm_exception_raises_runtime():
 
 
 @pytest.mark.asyncio
+async def test_summarize_runtime_value_error_degrades_not_propagates():
+    """I1：try 内部偶发的 ValueError（如 LLM 响应解析）应走降级（SummarizeRuntimeError），
+    而非被当成配置类错误向上抛炸主流程。只有 try 之前的显式 model 检查才抛 ValueError。"""
+    msgs = _make_messages(["内容"])
+    fake_llm = MagicMock()
+    # 模拟 LLM 调用过程中偶发的 ValueError（非配置问题）
+    fake_llm.ainvoke = AsyncMock(side_effect=ValueError("malformed chunk"))
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr("app.ai.context_compactor.get_llm", lambda *a, **k: fake_llm)
+        with pytest.raises(SummarizeRuntimeError):
+            await summarize(msgs, _fake_chat_config())
+
+
+@pytest.mark.asyncio
 async def test_summarize_config_error_raises_value_error():
     """llm_config.model 为空 → ValueError（配置类，不降级，向上抛）。"""
     msgs = _make_messages(["内容"])
@@ -280,4 +295,20 @@ async def test_compress_history_token_gate():
         msgs, snap = await compress_history(history, "current", _fake_chat_config(), budget=tiny_budget)
 
     assert snap.triggered is True
-    assert snap.reason == "tokens>24000"
+    assert snap.reason == "tokens>10"  # 用 tiny_budget 的 token_budget=10 拼标签（I2：不再硬编码）
+
+
+def test_snapshot_to_dict_serializable():
+    """Snapshot.to_dict() 返回可入 JSON 列的 dict（供 LLMCallLog.context_meta，C1）。"""
+    s = Snapshot(
+        triggered=True, reason="messages>30",
+        original_count=35, compressed_count=12, middle_count=24,
+        est_tokens_before=1000, est_tokens_after=400, fallback=False,
+    )
+    d = s.to_dict()
+    assert d["triggered"] is True
+    assert d["reason"] == "messages>30"
+    assert d["fallback"] is False
+    # 全部值都是 JSON 可序列化的基本类型
+    import json
+    json.dumps(d)

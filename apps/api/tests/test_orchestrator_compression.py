@@ -159,3 +159,39 @@ async def test_astream_init_chat_short_history_not_compressed(monkeypatch):
 
     contents = [getattr(m, "content", "") for m in captured_messages]
     assert not any("早期对话历史摘要" in c for c in contents)
+
+
+@pytest.mark.asyncio
+async def test_astream_chat_writes_meta_sink(monkeypatch):
+    """C1：长历史触发压缩时，meta_sink 应被写入 snapshot.to_dict()（供 _log_llm_call 记 context_meta）。"""
+    section = _make_section()
+    history = _make_history(35)
+    cfg = MagicMock(); cfg.model = "glm-4"; cfg.base_url = "x"; cfg.api_key = "y"
+
+    class FakeAgent:
+        async def astream_events(self, payload, version=None):
+            yield {"event": "on_chat_model_stream", "data": {"chunk": MagicMock(content="hi")}}
+
+    async def fake_build_agent(*a, **kw):
+        return FakeAgent()
+
+    monkeypatch.setattr("app.ai.agent.build_agent", fake_build_agent)
+    monkeypatch.setattr("app.ai.intent.classify_intent", lambda x: "info")
+    monkeypatch.setattr("app.ai.orchestrator._section_owner", lambda db, s: None)
+    fake_llm = MagicMock()
+    fake_llm.ainvoke = AsyncMock(return_value=MagicMock(content="摘要内容"))
+    monkeypatch.setattr("app.ai.context_compactor.get_llm", lambda *a, **k: fake_llm)
+
+    meta_sink = {}
+    async for _ in astream_chat(
+        None, section, history, "当前问题", llm_config=cfg, meta_sink=meta_sink
+    ):
+        pass
+
+    # meta_sink 应被写入 context_meta，含完整 snapshot 字段
+    assert "context_meta" in meta_sink
+    cm = meta_sink["context_meta"]
+    assert cm["triggered"] is True
+    assert cm["original_count"] == 35
+    assert cm["reason"] == "messages>30"
+    assert cm["fallback"] is False
