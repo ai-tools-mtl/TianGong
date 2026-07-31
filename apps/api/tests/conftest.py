@@ -129,6 +129,8 @@ def engine():
         sa.Column("content", sa.Text),
         sa.Column("embedding", sa.JSON),
         sa.Column("source", sa.String(20), default="agent"),
+        sa.Column("hit_count", sa.Integer, default=0),           # 【v1.1】
+        sa.Column("last_hit_at", sa.DateTime(timezone=True)),     # 【v1.1】
         sa.Column("created_at", sa.DateTime(timezone=True)),
         sa.Column("updated_at", sa.DateTime(timezone=True)),
     )

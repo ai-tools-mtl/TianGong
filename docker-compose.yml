@@ -121,7 +121,7 @@ services:
       - "7998:7998"
     volumes:
       # 本地预下载的模型目录(只读挂载,避免容器误改)。
-      # 默认 ./models/bge-reranker-v2-m3;worktree 等场景用 RERANK_MODEL_DIR 覆盖为绝对路径。
+      # 默认 ./models/bge-reranker-v2-m3;worktree 场景用 RERANK_MODEL_DIR 覆盖为绝对路径。
       - ${RERANK_MODEL_DIR:-./models/bge-reranker-v2-m3}:/data/models/bge-reranker-v2-m3:ro
       - rerankdata:/data/.cache
     healthcheck:
@@ -130,6 +130,46 @@ services:
       timeout: 5s
       retries: 10
       start_period: 120s
+    restart: unless-stopped
+
+  # NLI 矛盾判断小模型(复用 Infinity 镜像,换模型目录与端口)。
+  # 判断新旧记忆是否矛盾,供 save_memory 矛盾覆盖用(spec §5)。
+  # 模型从本地目录加载(避免联网下载 ~700MB):默认 ./models/nli-deberta-v3-base。
+  # 路径可通过 NLI_MODEL_DIR 覆盖(如 worktree 场景指向主仓库绝对路径),与 embedding 一致。
+  # 模型需自行下载(huggingface-cli download cross-encoder/nli-deberta-v3-base),models/ 已 gitignore。
+  # 国内有网速问题可用镜像:HF_ENDPOINT=https://hf-mirror.com huggingface-cli download ...
+  #
+  # NLI 是软依赖:服务挂掉时 judge_relation 降级 neutral 走合并不删,记忆功能仍正常。
+  # 故 api 服务**不** depends_on nli(与 embedding 不同,embedding 是硬依赖)。
+  # 端口规划:7997 embedding / 7998 rerank / 7999 NLI(rerank 先占用 7998,NLI 让步到 7999)。
+  nli:
+    image: michaelf34/infinity:latest-cpu
+    container_name: tiangong-nli
+    # 镜像 entrypoint 已是 infinity_emb,command 从子命令 v2 开始(同 embedding)。
+    command: >
+      v2
+      --engine torch
+      --model-id /data/models/nli-deberta-v3-base
+      --port 7999
+    environment:
+      # 同 embedding:HF_HOME 管 tokenizer 等小文件缓存,权重随挂载目录就位,不联网
+      HF_HOME: /data/.cache
+      DO_NOT_TRACK: "1"
+    ports:
+      - "7999:7999"
+    volumes:
+      # 本地预下载的 NLI 模型目录(只读挂载);worktree 场景用 NLI_MODEL_DIR 覆盖为绝对路径。
+      - ${NLI_MODEL_DIR:-./models/nli-deberta-v3-base}:/data/models/nli-deberta-v3-base:ro
+      # 持久化 HF 缓存(tokenizer 等运行时产物)
+      - nlidata:/data/.cache
+    healthcheck:
+      # Infinity 镜像无 curl,用 python urllib(同 embedding 的 healthcheck 写法)。
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:7999/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      # NLI 模型较小(~700MB),CPU 加载约 20-40 秒
+      start_period: 60s
     restart: unless-stopped
 
   # ---- 以下为全栈部署服务,仅在 --profile full 时启动 ----
@@ -173,6 +213,10 @@ services:
       RERANK_BASE_URL: ${RERANK_BASE_URL:-http://rerank:7998}
       RERANK_MODEL: ${RERANK_MODEL:-BAAI/bge-reranker-v2-m3}
       RERANK_API_KEY: ${RERANK_API_KEY:-}
+      # 【v1.1】NLI 矛盾判断服务(本 compose 的 nli 服务)。
+      # 容器间用服务名 nli:7999;本地开发用 localhost:7999(在 apps/api/.env 配)。
+      # 软依赖:故障时 judge_relation 降级 neutral 走合并,故 api 不 depends_on nli。
+      NLI_BASE_URL: ${NLI_BASE_URL:-http://nli:7999}
       # 首个 admin 账号(entrypoint 跑 init_db 时读取,已存在则跳过)
       INIT_ADMIN_USERNAME: ${INIT_ADMIN_USERNAME:-admin}
       INIT_ADMIN_PASSWORD: ${INIT_ADMIN_PASSWORD}
@@ -225,3 +269,4 @@ volumes:
   miniodata:
   embdata:
   rerankdata:
+  nlidata:

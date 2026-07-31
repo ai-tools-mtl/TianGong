@@ -49,6 +49,13 @@ class Settings(BaseSettings):
     rerank_model: str = "BAAI/bge-reranker-v2-m3"
     rerank_api_key: str = ""  # 本地服务通常不校验 key，留空
 
+    # 【v1.1】记忆热度/淘汰配置
+    # 注意端口规划：7997 embedding / 7998 rerank / 7999 NLI（避免与 rerank 冲突）。
+    memory_limit: int = 200                       # 单用户记忆上限
+    memory_half_life_days: int = 30               # 热度衰减半衰期（天）
+    memory_grace_days: int = 7                    # 新记忆豁免期（天）
+    nli_base_url: str = "http://localhost:7999"   # NLI 矛盾判断服务地址
+
     # Firecrawl (web ingestion;全局 key 存 SystemSetting,env 仅兜底)
     firecrawl_api_key: str = ""
     firecrawl_base_url: str = "https://api.firecrawl.dev"

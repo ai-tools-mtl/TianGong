@@ -102,3 +102,108 @@ def test_test_mcp_server_failure(db_session, monkeypatch):
     assert result.ok is False
     assert result.error is not None
     assert "refused" in result.error
+
+
+import pytest
+
+from app.core.exceptions import ValidationError
+
+
+def test_parse_json_standard_format():
+    """标准 {"mcpServers": {...}} 格式 → 正确解析。"""
+    from app.services import mcp_config_service as svc
+    raw = {
+        "mcpServers": {
+            "feishu": {"command": "npx", "args": ["-y", "pkg"]},
+        }
+    }
+    parsed = svc.parse_mcp_json(raw)
+    assert len(parsed) == 1
+    s = parsed[0]
+    assert s["name"] == "feishu"
+    assert s["transport"] == "stdio"
+    assert s["command"] == "npx"
+    assert s["args"] == ["-y", "pkg"]
+
+
+def test_parse_json_bare_dict_format():
+    """裸字典格式（省略 mcpServers 包裹）→ 正确解析。"""
+    from app.services import mcp_config_service as svc
+    raw = {
+        "feishu": {"command": "cmd", "args": ["/c", "npx"]},
+    }
+    parsed = svc.parse_mcp_json(raw)
+    assert len(parsed) == 1
+    assert parsed[0]["name"] == "feishu"
+    assert parsed[0]["command"] == "cmd"
+
+
+def test_parse_json_stdio_with_env():
+    """stdio 形态读 env。"""
+    from app.services import mcp_config_service as svc
+    parsed = svc.parse_mcp_json({"mcpServers": {
+        "s": {"command": "npx", "args": [], "env": {"API_KEY": "x"}},
+    }})
+    assert parsed[0]["env"] == {"API_KEY": "x"}
+    assert parsed[0]["transport"] == "stdio"
+
+
+def test_parse_json_http_default_transport():
+    """有 url → 默认 transport=http，读 headers。"""
+    from app.services import mcp_config_service as svc
+    parsed = svc.parse_mcp_json({"mcpServers": {
+        "w": {"url": "https://x/mcp", "headers": {"Authorization": "Bearer t"}},
+    }})
+    assert parsed[0]["transport"] == "http"
+    assert parsed[0]["url"] == "https://x/mcp"
+    assert parsed[0]["headers"] == {"Authorization": "Bearer t"}
+
+
+def test_parse_json_sse_explicit_transport():
+    """显式 transport: sse → transport=sse。"""
+    from app.services import mcp_config_service as svc
+    parsed = svc.parse_mcp_json({"mcpServers": {
+        "w": {"transport": "sse", "url": "https://x/sse"},
+    }})
+    assert parsed[0]["transport"] == "sse"
+
+
+def test_parse_json_missing_command_and_url():
+    """既无 command 又无 url → ValidationError，信息含 name。"""
+    from app.services import mcp_config_service as svc
+    with pytest.raises(ValidationError) as ei:
+        svc.parse_mcp_json({"mcpServers": {"bad": {"foo": "bar"}}})
+    assert "bad" in str(ei.value)
+
+
+def test_parse_json_args_not_list():
+    """args 非 list → ValidationError。"""
+    from app.services import mcp_config_service as svc
+    with pytest.raises(ValidationError):
+        svc.parse_mcp_json({"mcpServers": {"s": {"command": "npx", "args": "not-a-list"}}})
+
+
+def test_parse_json_value_not_dict():
+    """server value 非 dict → ValidationError。"""
+    from app.services import mcp_config_service as svc
+    with pytest.raises(ValidationError) as ei:
+        svc.parse_mcp_json({"mcpServers": {"s": "just-a-string"}})
+    assert "s" in str(ei.value)
+
+
+def test_parse_json_ignores_unknown_fields():
+    """未知字段（type/disabled 等）忽略。"""
+    from app.services import mcp_config_service as svc
+    parsed = svc.parse_mcp_json({"mcpServers": {
+        "s": {"command": "npx", "args": [], "type": "stdio", "disabled": False},
+    }})
+    assert parsed[0]["command"] == "npx"
+    assert "type" not in parsed[0]
+    assert "disabled" not in parsed[0]
+
+
+def test_parse_json_empty():
+    """空 mcpServers → 返回空列表（不报错）。"""
+    from app.services import mcp_config_service as svc
+    assert svc.parse_mcp_json({"mcpServers": {}}) == []
+    assert svc.parse_mcp_json({}) == []
