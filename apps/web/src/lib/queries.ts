@@ -75,6 +75,11 @@ export const queryKeys = {
     // G4 分块可视化干预：某文件的 chunks 列表。id=null 时无效（hook 会 enabled:false）
     fileChunks: (id: string | null) => ['admin', 'fileChunks', id] as const,
   },
+  // 初始化助手顶层会话（ChatGPT 式对话页）
+  assistant: {
+    conversations: ['assistant', 'conversations'] as const,
+    conversation: (id: string) => ['assistant', 'conversations', id] as const,
+  },
 }
 
 // ── 项目 ──
@@ -1098,5 +1103,37 @@ export function useDeleteMemory() {
   return useMutation({
     mutationFn: (id: string) => api.deleteMemory(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['memories'] }),
+  })
+}
+
+// ── 初始化助手顶层会话（ChatGPT 式对话页）──
+export function useAssistantConversations() {
+  return useQuery({
+    queryKey: queryKeys.assistant.conversations,
+    queryFn: () => api.listAssistantConversations(),
+  })
+}
+
+export function useAssistantConversation(id: string | null) {
+  return useQuery({
+    queryKey: id ? queryKeys.assistant.conversation(id) : ['assistant', 'conversations', 'none'],
+    queryFn: () => api.getAssistantConversation(id!),
+    enabled: !!id,
+  })
+}
+
+export function useCreateAssistantConversation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (title?: string) => api.createAssistantConversation(title),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.assistant.conversations }),
+  })
+}
+
+export function useDeleteAssistantConversation() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.deleteAssistantConversation(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.assistant.conversations }),
   })
 }

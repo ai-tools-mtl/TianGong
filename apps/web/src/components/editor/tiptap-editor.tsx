@@ -4,6 +4,7 @@ import { useEditor, EditorContent } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import Image from '@tiptap/extension-image'
+import { TableKit } from '@tiptap/extension-table'
 import { forwardRef, useImperativeHandle } from 'react'
 
 import { SelectionBubbleMenu } from './selection-bubble-menu'
@@ -36,6 +37,7 @@ export const TiptapEditor = forwardRef<TiptapEditorRef, TiptapEditorProps>(
         StarterKit,
         Placeholder.configure({ placeholder: '在此撰写内容...' }),
         Image,
+        TableKit,
       ],
       content: content || undefined,
       editable,

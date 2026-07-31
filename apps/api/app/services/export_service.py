@@ -106,6 +106,25 @@ def _tiptap_to_markdown(doc_json: dict) -> str:
                 for child in node.get("content", []):
                     walk(child)
                 parts.append("\n")
+            elif ntype == "table":
+                # 收集所有行数据再统一输出为 GFM 表格
+                rows_data = _collect_table_rows(node)
+                if rows_data:
+                    col_count = max(len(r) for r in rows_data)
+                    parts.append("\n")
+                    for row_idx, row in enumerate(rows_data):
+                        padded = row + [""] * (col_count - len(row))
+                        parts.append("| " + " | ".join(padded) + " |\n")
+                        # 首行（表头）后插入分隔行
+                        if row_idx == 0:
+                            parts.append("|" + "|".join(["---"] * col_count) + "|\n")
+                    parts.append("\n")
+            elif ntype in ("tableHeader", "tableCell"):
+                for child in node.get("content", []):
+                    walk(child)
+            elif ntype == "tableRow":
+                # 由 table 节点统一处理，此处跳过以避免重复输出
+                pass
             else:
                 for child in node.get("content", []):
                     walk(child)
@@ -115,6 +134,42 @@ def _tiptap_to_markdown(doc_json: dict) -> str:
 
     walk(doc_json)
     return "".join(parts).strip()
+
+
+def _collect_table_rows(table_node: dict) -> list[list[str]]:
+    """从 Tiptap table 节点提取二维文本数组，供 _tiptap_to_markdown 使用。"""
+    rows: list[list[str]] = []
+    for row in table_node.get("content", []):
+        if row.get("type") != "tableRow":
+            continue
+        cells: list[str] = []
+        for cell in row.get("content", []):
+            cell_text = _extract_node_text(cell)
+            cells.append(cell_text)
+        rows.append(cells)
+    return rows
+
+
+def _extract_node_text(node: dict) -> str:
+    """递归提取节点内所有 text 节点的文本（保留加粗 ** 标记）。"""
+    parts: list[str] = []
+
+    def _walk(n: Any) -> None:
+        if isinstance(n, dict):
+            if n.get("type") == "text":
+                t = n.get("text", "")
+                if any(m.get("type") == "bold" for m in n.get("marks", [])):
+                    t = f"**{t}**"
+                parts.append(t)
+            else:
+                for child in n.get("content", []):
+                    _walk(child)
+        elif isinstance(n, list):
+            for item in n:
+                _walk(item)
+
+    _walk(node)
+    return "".join(parts)
 
 
 def _render_tiptap_to_docx(doc: Document, doc_json: dict, db: Session) -> None:
@@ -150,6 +205,22 @@ def _render_tiptap_to_docx(doc: Document, doc_json: dict, db: Session) -> None:
                     if item.get("type") == "listItem":
                         texts = [_get_text(c) for c in item.get("content", [])]
                         doc.add_paragraph("".join(texts), style=style)
+            elif ntype == "table":
+                rows_data = _collect_table_rows(node)
+                if rows_data:
+                    col_count = max(len(r) for r in rows_data)
+                    table = doc.add_table(rows=len(rows_data), cols=col_count)
+                    table.style = "Table Grid"
+                    for i, row_data in enumerate(rows_data):
+                        for j, cell_text in enumerate(row_data):
+                            if j < col_count:
+                                cell = table.cell(i, j)
+                                cell.text = cell_text
+                                # 首行（表头）加粗
+                                if i == 0:
+                                    for paragraph in cell.paragraphs:
+                                        for run in paragraph.runs:
+                                            run.bold = True
             else:
                 for child in node.get("content", []):
                     walk(child)

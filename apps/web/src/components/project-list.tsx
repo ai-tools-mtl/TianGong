@@ -1,10 +1,10 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { Search } from 'lucide-react'
+import Link from 'next/link'
+import { Search, Sparkles } from 'lucide-react'
 
 import { CreateProjectDialog } from '@/components/create-project-dialog'
-import { InitAssistantDialog } from '@/components/init-assistant-dialog'
 import { PageHeader, PageShell } from '@/components/page-shell'
 import { ProjectCard } from '@/components/project-card'
 import { Badge } from '@/components/ui/badge'
@@ -55,7 +55,9 @@ export function ProjectList() {
     <PageShell>
       <PageHeader title="我的项目" description="管理你的专利交底书">
         <div className="flex gap-2">
-          <InitAssistantDialog />
+          <Button variant="outline" asChild className="gap-1.5">
+            <Link href="/new"><Sparkles className="size-3.5" /> AI 对话新建</Link>
+          </Button>
           <CreateProjectDialog />
         </div>
       </PageHeader>
