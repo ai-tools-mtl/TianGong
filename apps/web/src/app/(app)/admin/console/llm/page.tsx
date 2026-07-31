@@ -107,10 +107,10 @@ export default function AdminLLMPage() {
             style={{ boxShadow: 'var(--shadow-card)' }}
           >
             <LLMConfigEditPanel
+              showName={false}
               initial={
                 chatCfg
                   ? {
-                      name: '全局 Chat Key',
                       base_url: chatCfg.base_url,
                       api_key_masked: chatCfg.api_key_masked,
                       model: chatCfg.model,
@@ -154,16 +154,16 @@ export default function AdminLLMPage() {
             style={{ boxShadow: 'var(--shadow-card)' }}
           >
             <LLMConfigEditPanel
+              showName={false}
               initial={
                 liteCfg
                   ? {
-                      name: '轻量任务模型',
                       base_url: liteCfg.base_url,
                       api_key_masked: liteCfg.api_key_masked,
                       model: liteCfg.model,
                       provider_template_id: 'zhipu',
                     }
-                  : { name: '轻量任务模型', provider_template_id: 'zhipu' }
+                  : { provider_template_id: 'zhipu' }
               }
               saveLabel="保存轻量任务模型"
               onCancel={() => toast.info('轻量配置无需取消（常驻）')}

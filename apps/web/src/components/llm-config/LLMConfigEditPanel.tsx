@@ -34,10 +34,13 @@ export interface LLMConfigEditPanelProps {
   }) => Promise<void>
   onCancel: () => void
   saveLabel?: string
+  /** 是否显示「名称」字段。默认 true（用户自定义多配置场景必需做标识）。
+   *  admin 全局/轻量配置为单条常驻，后端不存 name，传 false 隐藏。 */
+  showName?: boolean
 }
 
 export function LLMConfigEditPanel({
-  initial, onSave, onCancel, saveLabel = '保存',
+  initial, onSave, onCancel, saveLabel = '保存', showName = true,
 }: LLMConfigEditPanelProps) {
   const [name, setName] = useState(initial?.name ?? '')
   const [baseUrl, setBaseUrl] = useState(initial?.base_url ?? '')
@@ -99,8 +102,8 @@ export function LLMConfigEditPanel({
   }
 
   async function handleSave() {
-    if (!name.trim() || !baseUrl.trim() || !model.trim()) {
-      toast.error('名称、Base URL、对话模型不能为空')
+    if ((showName && !name.trim()) || !baseUrl.trim() || !model.trim()) {
+      toast.error(showName ? '名称、Base URL、对话模型不能为空' : 'Base URL、对话模型不能为空')
       return
     }
     // 新增模式 apiKey 必填
@@ -133,17 +136,24 @@ export function LLMConfigEditPanel({
         <TemplateSection selectedId={selectedTplId} onPick={pickTemplate} />
       </div>
 
-      {/* 名称 + base_url */}
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-        <div className="space-y-1.5">
-          <Label className="text-[12px]">名称</Label>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="如：公司主 Key" />
+      {/* 名称（可选）+ base_url。名称仅用户多配置场景需要（showName），admin 单条配置隐藏。 */}
+      {showName ? (
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label className="text-[12px]">名称</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="如：公司主 Key" />
+          </div>
+          <div className="space-y-1.5">
+            <Label className="text-[12px]">API Base URL</Label>
+            <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://..." />
+          </div>
         </div>
+      ) : (
         <div className="space-y-1.5">
           <Label className="text-[12px]">API Base URL</Label>
           <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://..." />
         </div>
-      </div>
+      )}
 
       {/* api_key */}
       <div className="space-y-1.5">
