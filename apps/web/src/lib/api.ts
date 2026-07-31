@@ -256,64 +256,66 @@ export const api = {
     return _consumeSSE(res, onToken)
   },
 
-  // ── 项目初始化助手（对话式新建）──
-  /** 从描述建项目 + 8 空章节，返回 project_id（首轮对话前调用）。 */
-  createProjectFromChat: (description: string) =>
-    request<{ project_id: string; section_id: string | null; title: string }>(
-      '/projects/from-chat',
-      { method: 'POST', body: JSON.stringify({ description }) },
+  // ── 项目初始化助手（ChatGPT 式独立对话页）──
+  listAssistantConversations: () =>
+    request<{ id: string; title: string; status: string; created_at: string; updated_at: string }[]>(
+      '/assistant/conversations',
     ),
 
-  /** 初始化对话（SSE）。事件同 chat：token / done / heartbeat / error。 */
-  streamInitChat: async (
-    projectId: string,
+  createAssistantConversation: (title?: string) =>
+    request<{ id: string; title: string; status: string; created_at: string; updated_at: string }>(
+      '/assistant/conversations',
+      { method: 'POST', body: JSON.stringify({ title: title ?? null }) },
+    ),
+
+  getAssistantConversation: (id: string) =>
+    request<{
+      id: string; title: string; status: string; created_at: string; updated_at: string
+      project_id: string | null
+      messages: { id: string; role: string; content: string; created_at: string }[]
+    }>(`/assistant/conversations/${id}`),
+
+  deleteAssistantConversation: (id: string) =>
+    request<void>(`/assistant/conversations/${id}`, { method: 'DELETE' }),
+
+  /** init 助手对话（SSE）。done 事件额外带 ready_to_create。 */
+  streamAssistantChat: async (
+    convId: string,
     message: string,
     onToken: (t: string) => void,
     signal?: AbortSignal,
-    conversationId?: string,
-    onDone?: (data: { message_id: string; conversation_id?: string }) => void,
+    onDone?: (d: { message_id: string; conversation_id?: string; ready_to_create?: boolean }) => void,
+    chatSource?: string,
   ) => {
-    const res = await fetch(`${BASE}/api/v1/projects/${projectId}/init-chat`, {
+    const res = await fetch(`${BASE}/api/v1/assistant/conversations/${convId}/chat`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message,
-        conversation_id: conversationId ?? null,
-      }),
+      body: JSON.stringify({ message, ...(chatSource ? { chat_source: chatSource } : {}) }),
       signal,
     })
     if (!res.ok) throw await _sseHttpError(res)
-    return _consumeSSE(res, onToken, onDone)
+    return _consumeSSE(res, onToken, onDone as never)
   },
 
-  /**
-   * 批量生成各章节初稿（SSE）。事件比 chat 多 chapter_start / chapter_done：
-   * - chapter_start {index, total, title, key}：开始生成某章
-   * - token {text}：当前章节的生成 token（实时累加显示）
-   * - chapter_done {index, title, status, error}：某章完成（status: ok|failed）
-   * - done {project_id}：全部完成
-   */
-  streamInitGenerate: async (
-    projectId: string,
+  /** 扳机落地：建项目+填章（SSE，多事件：project_created/chapter_start/token/chapter_done/done）。 */
+  streamAssistantGenerate: async (
+    convId: string,
     handlers: {
+      onProjectCreated?: (d: { project_id: string }) => void
       onChapterStart?: (d: { index: number; total: number; title: string; key: string }) => void
       onToken?: (t: string) => void
       onChapterDone?: (d: { index: number; title: string; key: string; status: string; error: string | null }) => void
       onAllDone?: (d: { project_id: string }) => void
     },
     signal?: AbortSignal,
-    conversationId?: string,
     sections?: string[],
   ) => {
-    const res = await fetch(`${BASE}/api/v1/projects/${projectId}/init-generate`, {
+    const res = await fetch(`${BASE}/api/v1/assistant/conversations/${convId}/generate`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        conversation_id: conversationId ?? null,
-        ...(sections && sections.length ? { sections } : {}),
-      }),
+      body: JSON.stringify(sections && sections.length ? { sections } : {}),
       signal,
     })
     if (!res.ok) throw await _sseHttpError(res)
@@ -337,28 +339,15 @@ export const api = {
         }
         if (!dataLine) continue
         let data: Record<string, unknown> = {}
-        try {
-          data = JSON.parse(dataLine)
-        } catch {
-          continue
-        }
+        try { data = JSON.parse(dataLine) } catch { continue }
         if (eventType === 'error') {
-          throw {
-            code: (data.code as string) || 'llm_error',
-            message: (data.message as string) || 'AI 服务错误',
-          } as ApiError
+          throw { code: (data.code as string) || 'llm_error', message: (data.message as string) || 'AI 服务错误' } as ApiError
         }
-        if (eventType === 'chapter_start') {
-          handlers.onChapterStart?.(data as { index: number; total: number; title: string; key: string })
-        } else if (eventType === 'token') {
-          const text = data.text as string | undefined
-          if (text) handlers.onToken?.(text)
-        } else if (eventType === 'chapter_done') {
-          handlers.onChapterDone?.(data as { index: number; title: string; key: string; status: string; error: string | null })
-        } else if (eventType === 'done') {
-          handlers.onAllDone?.(data as { project_id: string })
-        }
-        // heartbeat：忽略
+        if (eventType === 'project_created') handlers.onProjectCreated?.(data as { project_id: string })
+        else if (eventType === 'chapter_start') handlers.onChapterStart?.(data as { index: number; total: number; title: string; key: string })
+        else if (eventType === 'token') { const t = data.text as string | undefined; if (t) handlers.onToken?.(t) }
+        else if (eventType === 'chapter_done') handlers.onChapterDone?.(data as { index: number; title: string; key: string; status: string; error: string | null })
+        else if (eventType === 'done') handlers.onAllDone?.(data as { project_id: string })
       }
     }
   },
