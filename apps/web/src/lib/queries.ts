@@ -57,6 +57,8 @@ export const queryKeys = {
     userDetail: (id: string) => ['admin', 'users', id] as const,
     // Console 域（refactor/admin-ia-phase2 切片 2）
     llmConfig: ['admin', 'llm-config'] as const,
+    // 轻量任务模型配置（会话标题/章节摘要，默认 GLM-4.7-Flash）
+    liteConfig: ['admin', 'lite-config'] as const,
     firecrawlConfig: ['admin', 'firecrawl-config'] as const,
     // MinerU 配置（PDF→Markdown 解析）
     mineruConfig: ['admin', 'mineru-config'] as const,
@@ -624,6 +626,7 @@ export function useRevokeInvite() {
 import type {
   AuditLogPage,
   GlobalLLMSettings,
+  LiteSettings,
   LLMStats,
 } from '@/types/api'
 
@@ -648,6 +651,48 @@ export function useSaveGlobalLLM() {
       // 保存会写审计日志（admin_service._audit action=set_global_llm）
       qc.invalidateQueries({ queryKey: ['admin', 'audit-logs'] })
     },
+  })
+}
+
+// ── 轻量任务模型配置（会话标题/章节摘要，默认 GLM-4.7-Flash；未配回退 chat）──
+
+/** 读取轻量任务模型配置（GET /admin/lite-config）。configured=false 表示当前回退 chat。 */
+export function useLiteConfig() {
+  return useQuery<LiteSettings>({
+    queryKey: queryKeys.admin.liteConfig,
+    queryFn: () => api.getLiteConfig(),
+  })
+}
+
+/** 保存轻量任务模型配置（PUT /admin/lite-config）。失效配置缓存 + 审计。 */
+export function useSaveLiteConfig() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: { lite_config?: { base_url?: string; api_key?: string; model?: string } }) =>
+      api.setLiteConfig(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.admin.liteConfig })
+      qc.invalidateQueries({ queryKey: ['admin', 'audit-logs'] })
+    },
+  })
+}
+
+/** admin 测试轻量任务模型连接（POST /admin/lite-config/test）。留空走已存配置复检。 */
+export function useTestLiteChat() {
+  return useMutation({
+    mutationFn: (data: { base_url?: string; api_key?: string; model?: string }) =>
+      api.testLiteChat(data),
+  })
+}
+
+/** admin 拉取轻量配置可用模型列表（POST /admin/lite-config/models）。 */
+export function useListLiteModels() {
+  return useMutation({
+    mutationFn: (data: {
+      base_url: string
+      api_key: string
+      provider_template_id?: string | null
+    }) => api.listLiteModels(data),
   })
 }
 

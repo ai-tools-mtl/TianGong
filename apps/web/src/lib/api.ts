@@ -545,6 +545,33 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  // ── 轻量任务模型配置（独立第三套；承接会话标题/章节摘要，默认 GLM-4.7-Flash）──
+  /** GET /admin/lite-config 读取轻量任务模型配置（configured=false 表示当前回退 chat）。 */
+  getLiteConfig: () =>
+    request<import('@/types/api').LiteSettings>(`/admin/lite-config`),
+  /**
+   * 保存轻量任务模型配置（PUT /admin/lite-config）。
+   * api_key 留空 = 不改（保留已存密钥）；lite_config 不传则仅写审计不改动。
+   */
+  setLiteConfig: (data: { lite_config?: { base_url?: string; api_key?: string; model?: string } }) =>
+    request<import('@/types/api').LiteSettings>(`/admin/lite-config`, { method: 'PUT', body: JSON.stringify(data) }),
+  /** admin 测试轻量任务模型连接。字段全可选：留空走当前已存的轻量配置复检。 */
+  testLiteChat: (data: { base_url?: string; api_key?: string; model?: string }) =>
+    request<TestConnectionResult>(`/admin/lite-config/test`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  /** admin 按 base_url + api_key 拉取轻量配置可用模型列表。 */
+  listLiteModels: (data: {
+    base_url: string
+    api_key: string
+    provider_template_id?: string | null
+  }) =>
+    request<ListModelsResult>(`/admin/lite-config/models`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
   banUser: (userId: string, status: 'active' | 'disabled') =>
     request<{ id: string; status: string }>(`/admin/users/${userId}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }),
   resetUserPassword: (userId: string, newPassword: string) =>

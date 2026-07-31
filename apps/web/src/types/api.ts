@@ -266,6 +266,18 @@ export interface GlobalLLMSettings {
   chat_config: GlobalScopeConfig
 }
 
+/**
+ * 轻量任务模型配置（独立第三套；承接会话标题/章节摘要）。
+ * 未配置时后端回退到全局/用户 chat 配置。
+ */
+export interface LiteSettings {
+  base_url: string
+  api_key_masked: string
+  model: string
+  /** 是否已完整配置（有 api_key + model）；false 表示当前走 chat 回退。 */
+  configured: boolean
+}
+
 // ── 全局 Key 授权（Task 2.2）──
 
 /** GET /admin/users/{id}/global-llm-grant 返回；无记录时后端返回 {is_active: false}。 */
