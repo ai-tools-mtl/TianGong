@@ -1,12 +1,40 @@
 """NLI 矛盾判断模块测试。
 
-核心验证降级安全阀：服务故障/超时/异常时一律返回 neutral（走合并不删，绝不误判矛盾）。
+当前矛盾覆盖默认禁用（Infinity /classify 不支持句子对，见 nli.py docstring）。
+测试覆盖两条路径：
+1. 禁用时（默认）：judge_relation 直接返回 neutral，不调用服务
+2. 启用时：服务正常透传 label；故障/超时/异常一律降级 neutral（绝不误判矛盾）
 """
 from unittest.mock import patch, MagicMock
 
+import pytest
 
-def test_judge_relation_contradiction(monkeypatch):
-    """NLI 明确返回 contradiction 时透传。"""
+
+# ── 禁用态（默认）── 不会真正调用服务，直接 neutral，保证 save_memory 走合并不删
+
+def test_judge_relation_disabled_by_default():
+    """默认禁用：judge_relation 直接返回 neutral，不调用 httpx。"""
+    from app.rag import nli
+
+    # 关键断言：默认禁用时根本不发请求
+    with patch("app.rag.nli.httpx.post") as mock_post:
+        result = nli.judge_relation("偏好简洁", "偏好详尽")
+
+    assert result == "neutral"
+    mock_post.assert_not_called()
+
+
+# ── 启用态：用 fixture 临时打开开关，测真实协议路径 ──
+
+@pytest.fixture
+def enabled_override(monkeypatch):
+    """临时启用矛盾覆盖开关（默认是禁用的）。"""
+    from app.rag import nli
+    monkeypatch.setattr(nli, "CONTRADICTION_OVERRIDE_ENABLED", True)
+
+
+def test_judge_relation_contradiction(enabled_override):
+    """启用时，NLI 明确返回 contradiction 时透传。"""
     from app.rag import nli
 
     fake_resp = MagicMock()
@@ -24,8 +52,8 @@ def test_judge_relation_contradiction(monkeypatch):
     assert result == "contradiction"
 
 
-def test_judge_relation_service_down_returns_neutral():
-    """服务挂掉时降级 neutral（核心安全阀）。"""
+def test_judge_relation_service_down_returns_neutral(enabled_override):
+    """启用时服务挂掉，降级 neutral（核心安全阀）。"""
     from app.rag import nli
 
     with patch("app.rag.nli.httpx.post", side_effect=Exception("connection refused")):
@@ -34,8 +62,8 @@ def test_judge_relation_service_down_returns_neutral():
     assert result == "neutral"  # 绝不误判矛盾
 
 
-def test_judge_relation_timeout_returns_neutral():
-    """超时降级 neutral。"""
+def test_judge_relation_timeout_returns_neutral(enabled_override):
+    """启用时超时，降级 neutral。"""
     import httpx
     from app.rag import nli
 
@@ -45,8 +73,8 @@ def test_judge_relation_timeout_returns_neutral():
     assert result == "neutral"
 
 
-def test_judge_relation_http_error_returns_neutral():
-    """HTTP 4xx/5xx 降级 neutral。"""
+def test_judge_relation_http_error_returns_neutral(enabled_override):
+    """启用时 HTTP 4xx/5xx，降级 neutral。"""
     from app.rag import nli
 
     fake_resp = MagicMock()
@@ -58,8 +86,8 @@ def test_judge_relation_http_error_returns_neutral():
     assert result == "neutral"
 
 
-def test_judge_relation_entailment():
-    """返回 entailment 时透传。"""
+def test_judge_relation_entailment(enabled_override):
+    """启用时返回 entailment，透传。"""
     from app.rag import nli
 
     fake_resp = MagicMock()
