@@ -134,7 +134,7 @@ import asyncio  # noqa: E402
 from fastapi import Body  # noqa: E402
 from fastapi.responses import StreamingResponse  # noqa: E402
 
-from app.ai.init_orchestrator import astream_init_chat  # noqa: E402
+from app.ai.init_orchestrator import astream_init_chat, astream_init_generate  # noqa: E402
 from app.services import llm_config_service  # noqa: E402
 
 HEARTBEAT_INTERVAL = 5.0
@@ -228,4 +228,67 @@ async def _heartbeat_wrap(async_gen):
             nxt = asyncio.ensure_future(ait.__anext__())
         else:
             yield "__heartbeat__"
+
+
+class GenerateRequest(BaseModel):
+    sections: list[str] | None = None  # 按 key 过滤，默认全部
+    chat_source: str | None = None
+
+
+@router.post("/conversations/{conv_id}/generate")
+async def generate(
+    conv_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+    payload: GenerateRequest | None = Body(default=None),
+):
+    """扳机落地：为 init 会话建项目 + 填章节初稿（SSE 进度）。
+
+    用户在前端按「创建项目」扳机后调用。流式事件：
+    project_created / chapter_start / token / chapter_done / done。
+    会话 project_id 被填上（落地标记）→ 列表不再显示。
+    """
+    from app.core.exceptions import ValidationError
+    conv = _get_owned_conversation(db, current_user.id, conv_id)
+    # 防重复落地
+    if conv.project_id is not None:
+        raise ValidationError("该会话已落地为项目")
+
+    history = list(db.scalars(
+        select(Message).where(Message.conversation_id == conv.id).order_by(Message.created_at)
+    ))
+
+    llm_config = llm_config_service.resolve_chat_config(
+        db, user_id=current_user.id, chat_source=(payload.chat_source if payload else None)
+    )
+    sections_filter = payload.sections if payload else None
+
+    async def generate_stream():
+        if llm_config is None:
+            yield _sse_event("error", {"code": "no_llm_config", "message": "未配置 LLM，请先在设置中配置"})
+            return
+        try:
+            async for kind, data in astream_init_generate(
+                db, conv, history, current_user,
+                llm_config=llm_config, sections=sections_filter,
+            ):
+                if kind == "project_created":
+                    yield _sse_event("project_created", data)
+                elif kind == "chapter_start":
+                    yield _sse_event("chapter_start", data)
+                elif kind == "token":
+                    yield _sse_event("token", {"text": data})
+                elif kind == "chapter_done":
+                    yield _sse_event("chapter_done", data)
+                elif kind == "all_done":
+                    yield _sse_event("done", data)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            from app.ai.llm_errors import friendly_llm_error
+            db.rollback()
+            yield _sse_event("error", {"code": "llm_error", "message": friendly_llm_error(e)})
+
+    return StreamingResponse(generate_stream(), media_type="text/event-stream")
+
 
