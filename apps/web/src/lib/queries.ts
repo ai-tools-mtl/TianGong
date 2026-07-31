@@ -761,6 +761,15 @@ export function useTestMcpServer() {
   })
 }
 
+export function useImportMcpServers() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (json: object) => api.importMcpServers(json),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.admin.mcpServers })
+    },
+  })
+}
 
 /** LLM 调用统计（GET /admin/stats/llm?days=）。 */
 export function useLLMStats(days: number) {
