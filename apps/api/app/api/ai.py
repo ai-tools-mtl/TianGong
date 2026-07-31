@@ -107,13 +107,14 @@ def _friendly_llm_error(e: Exception) -> str:
 def _log_llm_call(
     db: Session, *,
     user_id, project_id, action: str, model: str, provider: str,
-    status: str, tokens=None, duration_ms=None, error=None,
+    status: str, tokens=None, duration_ms=None, error=None, context_meta=None,
 ) -> None:
     """写一条 LLM 调用元数据日志（设计 8.3 红线：只存元数据，不存内容）。
 
     tokens（断链 C3）：可选 dict {"prompt": int, "completion": int}，
     由各端点从流的 usage_metadata（astream_llm 的 usage_sink）捕获；
     无值时落 None（如未开 stream_usage 或 provider 未回传 usage 的情形）。
+    context_meta（spec §5.1）：可选 dict，上下文压缩 Snapshot 序列化。
     """
     try:
         log = LLMCallLog(
@@ -127,6 +128,7 @@ def _log_llm_call(
             duration_ms=duration_ms,
             status=status,
             error=(str(error)[:500] if error else None),
+            context_meta=context_meta,
         )
         db.add(log)
         db.commit()
@@ -214,6 +216,7 @@ async def chat(
         db.rollback()
         full_response = ""
         usage = {}  # 断链 C3：astream_llm 把最后一块 usage_metadata 写入此 holder
+        meta = {}   # 压缩 spec §5.1：astream_chat 把 snapshot 写入此 holder，供 _log_llm_call 记 context_meta
         start = time.monotonic()
         status = "success"
         err = None
@@ -229,7 +232,7 @@ async def chat(
         try:
             async for kind, data in _yield_with_heartbeat_tuple(
                 astream_chat(db, section, history, payload.message,
-                             llm_config=llm_config, usage_sink=usage)
+                             llm_config=llm_config, usage_sink=usage, meta_sink=meta)
             ):
                 if kind == "heartbeat":
                     yield _sse_event("heartbeat", {})
@@ -300,6 +303,7 @@ async def chat(
                 tokens=usage or None,
                 duration_ms=int((time.monotonic() - start) * 1000),
                 error=err,
+                context_meta=meta.get("context_meta"),
             )
 
     return StreamingResponse(generate(), media_type="text/event-stream")
@@ -325,6 +329,7 @@ async def generate_draft(
         db.rollback()
         full_md = ""
         usage = {}  # 断链 C3：astream_llm 把最后一块 usage_metadata 写入此 holder
+        meta = {}   # 压缩 spec §5.1：astream_generate 把 snapshot 写入此 holder
         start = time.monotonic()
         status = "success"
         err = None
@@ -339,7 +344,7 @@ async def generate_draft(
             return
         try:
             async for kind, data in _yield_with_heartbeat_tuple(
-                astream_generate(db, section, history, llm_config=llm_config, usage_sink=usage)
+                astream_generate(db, section, history, llm_config=llm_config, usage_sink=usage, meta_sink=meta)
             ):
                 if kind == "heartbeat":
                     yield _sse_event("heartbeat", {})
@@ -396,6 +401,7 @@ async def generate_draft(
                 tokens=usage or None,
                 duration_ms=int((time.monotonic() - start) * 1000),
                 error=err,
+                context_meta=meta.get("context_meta"),
             )
 
     return StreamingResponse(generate(), media_type="text/event-stream")

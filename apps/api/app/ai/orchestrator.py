@@ -1,17 +1,15 @@
 """AI 编排：引导对话、生成草稿、段落重写。"""
 
-import logging
 from collections.abc import AsyncIterator, Iterator
 
 from langchain_core.messages import HumanMessage
+from loguru import logger
 
 from app.ai.context_assembler import assemble_messages, get_project_summaries
 from app.ai.llm_client import astream_llm, stream_llm
 from app.ai.section_prompts import get_section_prompt
 from app.models import Message, Section
 from app.services.llm_config_service import ResolvedChatConfig
-
-logger = logging.getLogger("tiangong.ai")
 
 
 def stream_chat(
@@ -115,6 +113,7 @@ def build_generate_instruction(section: Section) -> str:
 async def astream_chat(
     db, section: Section, history: list[Message], user_input: str,
     *, llm_config: ResolvedChatConfig, usage_sink: dict | None = None,
+    meta_sink: dict | None = None,
 ) -> AsyncIterator[tuple[str, dict | str]]:
     """异步引导对话：委托 deepagents agent loop（路线 B）。
 
@@ -143,11 +142,27 @@ async def astream_chat(
                         section=section, user_input=user_input, intent=intent)
     logger.info("astream_chat: agent 构建完成，开始 agent loop")
 
-    # [L2] 透传历史 + 当前用户输入（spec §3.3.2）
-    messages = []
-    for msg in history:
-        messages.append({"role": msg.role, "content": msg.content})
-    messages.append({"role": "user", "content": user_input})
+    # [L2] 透传历史 + 当前用户输入，长历史先压缩（spec §3.3.2 + 压缩 spec）
+    from app.ai.context_compactor import compress_history
+
+    compressed, snapshot = await compress_history(
+        history, user_input, llm_config, scene="chat"
+    )
+    if snapshot.triggered:
+        # 用 loguru（项目既定日志出口；标准 logging 在本项目默认 WARNING+无 handler，info 会被静默）
+        logger.info(
+            "上下文压缩触发 (chat, section={}): reason={} {}→{}条 fallback={}",
+            section.id, snapshot.reason, snapshot.original_count,
+            snapshot.compressed_count, snapshot.fallback,
+        )
+    # 压缩观测透传：把 snapshot 写入 meta_sink，供 SSE 层记入 LLMCallLog.context_meta（spec §5.1）。
+    if meta_sink is not None:
+        meta_sink["context_meta"] = snapshot.to_dict()
+    # compress_history 的契约：触发/降级路径已在末尾 append current_input；
+    # 未触发路径只返回历史 dict，不含 current_input —— 这里补一次，保证末尾恒为当前输入。
+    messages = compressed
+    if not snapshot.triggered:
+        messages.append({"role": "user", "content": user_input})
 
     async for event in agent.astream_events(
         {"messages": messages},
@@ -176,6 +191,7 @@ async def astream_chat(
 async def astream_generate(
     db, section: Section, history: list[Message],
     *, llm_config: ResolvedChatConfig, usage_sink: dict | None = None,
+    meta_sink: dict | None = None,
 ) -> AsyncIterator[tuple[str, dict | str]]:
     """异步生成草稿：委托 deepagents agent loop（路线 B）。
 
@@ -206,11 +222,25 @@ async def astream_generate(
     # [S4-2] 用 build_generate_instruction 构造含 CoT 分步思考的指令
     instruction = build_generate_instruction(section)
 
-    # [L2] 透传本章节对话历史（spec §3.3.1）
-    messages = []
-    for msg in history:
-        messages.append({"role": msg.role, "content": msg.content})
-    messages.append({"role": "user", "content": instruction})
+    # [L2] 透传历史，长历史先压缩，再 append generate 指令（压缩 spec）
+    from app.ai.context_compactor import compress_history
+
+    compressed, snapshot = await compress_history(
+        history, instruction, llm_config, scene="generate"
+    )
+    if snapshot.triggered:
+        logger.info(
+            "上下文压缩触发 (generate, section={}): reason={} {}→{}条",
+            section.id, snapshot.reason, snapshot.original_count, snapshot.compressed_count,
+        )
+    # 压缩观测透传：把 snapshot 写入 meta_sink，供 SSE 层记入 LLMCallLog.context_meta（spec §5.1）。
+    if meta_sink is not None:
+        meta_sink["context_meta"] = snapshot.to_dict()
+    # compress_history 的契约：触发/降级路径已在末尾 append instruction；
+    # 未触发路径只返回历史 dict，不含 instruction —— 这里补一次，保证末尾恒为 generate 指令。
+    messages = compressed
+    if not snapshot.triggered:
+        messages.append({"role": "user", "content": instruction})
 
     async for event in agent.astream_events(
         {"messages": messages},
