@@ -509,7 +509,9 @@ volumes:
 
 **模型下载**：`cross-encoder/nli-deberta-v3-base`（约 700MB），落位 `models/nli-deberta-v3-base/`（已 gitignore）。核心文件：`pytorch_model.bin`/`model.safetensors`、`config.json`、`tokenizer.json`、`special_tokens_map.json`。
 
-**端口规划**：7997（embedding，现有）/ **7998（NLI，新增）**。未来 reranker 本地化用 7999。
+**端口规划**：7997（embedding）/ 7998（rerank，main 已占用）/ **7999（NLI，新增）**。
+
+> ⚠️ **端口调整说明（merge 时发现）**：本设计初稿规划 NLI 用 7998，但合并 main 时发现 main 已将 7998 分配给 rerank 微服务（`bge-reranker-v2-m3`）。两个本地微服务不能共用端口，故 NLI 让步到 **7999**。最终落地端口以 `docker-compose.yml` 和 `config.py` 为准（`nli_base_url` 默认 `http://localhost:7999`）。下文代码块中的 7998 仍为初稿历史记录，实现时一律用 7999。
 
 **NLI 服务对 api 的影响**：NLI 是**软依赖**——服务挂掉时 `judge_relation` 降级为 neutral，走合并不删，记忆功能正常运行。故 api 服务**不**加 `depends_on: nli: condition: service_healthy`（与 embedding 不同，embedding 是硬依赖）。
 
