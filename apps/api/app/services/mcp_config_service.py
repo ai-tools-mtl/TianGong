@@ -266,8 +266,17 @@ def test_mcp_server(db: Session, *, server_id, timeout: float = 10.0) -> McpTest
         names = [getattr(t, "name", str(t)) for t in tools]
         return McpTestResult(ok=True, tool_count=len(names), tool_names=names, error=None)
     except Exception as e:
-        logger.warning("MCP server %s 测试连接失败: %s", server.name, e)
-        return McpTestResult(ok=False, tool_count=0, tool_names=[], error=str(e)[:300])
+        # str(e) 常为空（如 asyncio 超时、Windows stdio 启动失败、被包装的底层异常），
+        # 拼 type + repr 保留可诊断信息；超时单独给明确文案。
+        import asyncio as _aio
+        msg = str(e).strip()
+        if not msg:
+            if isinstance(e, (_aio.TimeoutError, _aio.CancelledError)):
+                msg = f"连接超时（{timeout}s 内未完成）"
+            else:
+                msg = f"{type(e).__name__}: {e!r}"
+        logger.warning("MCP server %s 测试连接失败: %s", server.name, msg)
+        return McpTestResult(ok=False, tool_count=0, tool_names=[], error=msg[:300])
 
 
 # ── JSON 导入解析 ──
@@ -318,7 +327,16 @@ def parse_mcp_json(raw: dict) -> list[dict[str, Any]]:
             url = cfg.get("url")
             if not isinstance(url, str):
                 raise ValidationError(f"server '{name}' 的 url 必须是字符串")
-            transport = "sse" if cfg.get("transport") == "sse" else "http"
+            # transport 判定优先级：显式字段 > URL 末尾含 /sse > 默认 http
+            explicit = cfg.get("transport")
+            if explicit == "sse":
+                transport = "sse"
+            elif explicit == "http":
+                transport = "http"
+            elif isinstance(url, str) and url.rstrip("/").endswith("/sse"):
+                transport = "sse"  # URL 形如 .../sse 的按 SSE 处理（常见约定）
+            else:
+                transport = "http"
             headers = cfg.get("headers")
             if headers is not None and not isinstance(headers, dict):
                 raise ValidationError(f"server '{name}' 的 headers 必须是对象")

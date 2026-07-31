@@ -104,6 +104,32 @@ def test_test_mcp_server_failure(db_session, monkeypatch):
     assert "refused" in result.error
 
 
+def test_test_mcp_server_empty_error_message_falls_back_to_type(db_session, monkeypatch):
+    """异常 str(e) 为空时（如某些底层超时/连接异常），error 仍要有可诊断信息。"""
+    from app.services import mcp_config_service as svc
+
+    svc.create_mcp_server(
+        db_session, name="empty", transport="http", url="https://x/sse", enabled=True,
+    )
+    server = svc.list_mcp_servers(db_session)[0]
+
+    class _EmptyMsgError(Exception):
+        pass  # str(e) == ""
+
+    class _FakeClient:
+        def __init__(self, *a, **kw): pass
+        async def get_tools(self): raise _EmptyMsgError()
+
+    import app.services.mcp_config_service as mod
+    monkeypatch.setattr(mod, "MultiServerMCPClient", _FakeClient)
+
+    result = svc.test_mcp_server(db_session, server_id=server.id)
+    assert result.ok is False
+    # str(e) 为空时回退到 type 名，绝不返回空字符串
+    assert result.error
+    assert "_EmptyMsgError" in result.error
+
+
 import pytest
 
 from app.core.exceptions import ValidationError
@@ -166,6 +192,24 @@ def test_parse_json_sse_explicit_transport():
         "w": {"transport": "sse", "url": "https://x/sse"},
     }})
     assert parsed[0]["transport"] == "sse"
+
+
+def test_parse_json_url_ending_with_sse_auto_detects_sse():
+    """URL 末尾是 /sse（无显式 transport）→ 自动按 sse 处理。"""
+    from app.services import mcp_config_service as svc
+    parsed = svc.parse_mcp_json({"mcpServers": {
+        "w": {"url": "https://mcp.api-inference.modelscope.net/abc/sse"},
+    }})
+    assert parsed[0]["transport"] == "sse"
+
+
+def test_parse_json_explicit_http_overrides_url_sse_suffix():
+    """显式 transport: http 优先于 URL /sse 后缀推断。"""
+    from app.services import mcp_config_service as svc
+    parsed = svc.parse_mcp_json({"mcpServers": {
+        "w": {"transport": "http", "url": "https://x/sse"},
+    }})
+    assert parsed[0]["transport"] == "http"
 
 
 def test_parse_json_missing_command_and_url():
