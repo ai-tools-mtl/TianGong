@@ -116,6 +116,65 @@ def test_logout_clears_cookies(client, registered_user):
     assert res.cookies.get("access_token") in (None, "")
 
 
+# ── /auth/refresh：access 过期后用 refresh 静默续期 ──
+
+def _login(client, registered_user):
+    """登录并返回响应（cookie jar 自动携带 access/refresh token）。"""
+    return client.post("/api/v1/auth/login", json={
+        "username": registered_user["username"],
+        "password": registered_user["password"],
+    })
+
+
+def test_refresh_issues_new_access_token(client, registered_user):
+    """登录后 refresh 换发新 access token，且新 token 可正常访问 /me。"""
+    _login(client, registered_user)
+    old_access = client.cookies.get("access_token")
+
+    res = client.post("/api/v1/auth/refresh")
+    assert res.status_code == 200
+    new_access = res.json()["access_token"]
+    assert new_access  # 非空
+    assert "access_token" in res.cookies
+    # 新 access token 能访问受保护接口
+    me = client.get("/api/v1/auth/me")
+    assert me.status_code == 200
+    assert me.json()["username"] == registered_user["username"]
+
+
+def test_refresh_without_cookie_401(client):
+    """无 refresh cookie 直接调用 refresh 返回 401。"""
+    res = client.post("/api/v1/auth/refresh")
+    assert res.status_code == 401
+
+
+def test_refresh_with_garbage_token_401(client, registered_user):
+    """refresh cookie 塞乱串返回 401。"""
+    _login(client, registered_user)
+    # 不指定 domain（与 _clear_cookie_domain fixture 一致：domain=""），确保覆盖原 cookie
+    client.cookies.set("refresh_token", "not.a.valid.token")
+    res = client.post("/api/v1/auth/refresh")
+    assert res.status_code == 401
+
+
+def test_refresh_rejects_access_token(client, registered_user):
+    """refresh 端点不接受 access token（type 校验，防类型混用）。"""
+    _login(client, registered_user)
+    # 把 access_token 塞进 refresh cookie 位
+    access = client.cookies.get("access_token")
+    client.cookies.set("refresh_token", access)
+    res = client.post("/api/v1/auth/refresh")
+    assert res.status_code == 401
+
+
+def test_refresh_after_logout_fails(client, registered_user):
+    """登出后 refresh token 随 cookie 一并失效。"""
+    _login(client, registered_user)
+    client.post("/api/v1/auth/logout")
+    res = client.post("/api/v1/auth/refresh")
+    assert res.status_code == 401
+
+
 # ── username-specific：格式校验(schema 层 422,不需要有效邀请码)──
 
 @pytest.mark.parametrize("bad_username", [

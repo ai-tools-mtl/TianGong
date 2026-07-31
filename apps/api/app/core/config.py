@@ -15,8 +15,10 @@ class Settings(BaseSettings):
     # JWT
     jwt_secret: str
     jwt_algorithm: str = "HS256"
+    # access 短期有效：过期后前端 401 时静默调用 /auth/refresh 续期，用户无感。
     access_token_expire_minutes: int = 30
-    refresh_token_expire_days: int = 7
+    # refresh 长期有效：真正的「记住登录」窗口（30 天），是 access 过期后的兜底。
+    refresh_token_expire_days: int = 30
 
     # Cookie
     cookie_domain: str = "localhost"

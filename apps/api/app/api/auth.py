@@ -5,7 +5,7 @@ from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.exceptions import UnauthorizedError
 from app.core.security import create_access_token, create_refresh_token
-from app.deps import get_current_user
+from app.deps import get_current_user, get_current_user_from_refresh
 from app.models import User
 from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse, UserRead
 from app.services.auth_service import authenticate_user, register_user, update_last_login
@@ -60,6 +60,22 @@ def login(payload: LoginRequest, response: Response, db: Session = Depends(get_d
     refresh = create_refresh_token({"sub": str(user.id)})
     _set_auth_cookies(response, access, refresh)
     return TokenResponse(access_token=access, refresh_token=refresh)
+
+
+@router.post("/refresh", response_model=TokenResponse)
+def refresh(
+    response: Response,
+    current_user: User = Depends(get_current_user_from_refresh),
+):
+    """用 refresh_token 换新 access_token（前端 access 过期 401 时静默调用）。
+
+    MVP 不轮换 refresh token（无 token 家族/撤销表），每次刷新顺带续期 refresh
+    cookie 的 max_age——活跃用户长期免登，30 天不活跃才会真正过期。
+    """
+    access = create_access_token({"sub": str(current_user.id), "role": current_user.role})
+    new_refresh = create_refresh_token({"sub": str(current_user.id)})
+    _set_auth_cookies(response, access, new_refresh)
+    return TokenResponse(access_token=access, refresh_token=new_refresh)
 
 
 @router.post("/logout")

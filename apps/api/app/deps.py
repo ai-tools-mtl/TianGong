@@ -34,6 +34,33 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
     return user
 
 
+def get_current_user_from_refresh(request: Request, db: Session = Depends(get_db)) -> User:
+    """从 refresh_token cookie 解析当前用户（用于 /auth/refresh 续期）。
+
+    与 get_current_user 对称，区别：读 refresh_token cookie 且校验 type=="refresh"。
+    """
+    token = request.cookies.get("refresh_token")
+    if not token:
+        raise UnauthorizedError("缺少刷新凭证")
+    try:
+        payload = decode_token(token)
+    except jwt.InvalidTokenError:
+        raise UnauthorizedError("无效的刷新凭证")
+    if payload.get("type") != "refresh":
+        raise UnauthorizedError("token 类型错误")
+    user_id = payload.get("sub")
+    if not user_id:
+        raise UnauthorizedError("token 缺少用户标识")
+    try:
+        uid = uuid.UUID(user_id)
+    except ValueError:
+        raise UnauthorizedError("token 用户标识无效")
+    user = db.scalar(select(User).where(User.id == uid))
+    if user is None or user.status != "active":
+        raise UnauthorizedError("用户不存在或已禁用")
+    return user
+
+
 def require_admin(current_user: User = Depends(get_current_user)) -> User:
     """校验当前用户是 admin，否则 403。"""
     from app.core.exceptions import ForbiddenError
