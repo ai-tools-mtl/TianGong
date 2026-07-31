@@ -125,3 +125,107 @@ def delete_conversation(
     db.delete(conv)
     db.commit()
     return None
+
+
+# ── 对话 + 落地（SSE 流式）──
+
+import asyncio  # noqa: E402
+
+from fastapi import Body  # noqa: E402
+from fastapi.responses import StreamingResponse  # noqa: E402
+
+from app.ai.init_orchestrator import astream_init_chat  # noqa: E402
+from app.services import llm_config_service  # noqa: E402
+
+HEARTBEAT_INTERVAL = 5.0
+
+
+def _sse_event(event: str, data: dict) -> str:
+    import json
+    return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+class ChatRequest(BaseModel):
+    message: str
+    chat_source: str | None = None
+
+
+@router.post("/conversations/{conv_id}/chat")
+async def chat(
+    conv_id: str,
+    payload: ChatRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """init 助手对话（SSE）。消息存到顶层会话（section_id=NULL）。
+
+    流式 token；done 事件带 message_id + conversation_id + ready_to_create（bool）。
+    ready_to_create 由 assistant 回复是否含 [READY_TO_CREATE] 标记判定（前端据此渲染扳机）。
+    """
+    conv = _get_owned_conversation(db, current_user.id, conv_id)
+    history = list(db.scalars(
+        select(Message).where(Message.conversation_id == conv.id).order_by(Message.created_at)
+    ))
+    # 落用户消息（init 消息 section_id=NULL）
+    user_msg = Message(conversation_id=conv.id, section_id=None, role="user", content=payload.message)
+    db.add(user_msg)
+    db.commit()
+
+    llm_config = llm_config_service.resolve_chat_config(
+        db, user_id=current_user.id, chat_source=payload.chat_source
+    )
+
+    async def generate():
+        full_response = ""
+        if llm_config is None:
+            yield _sse_event("error", {"code": "no_llm_config", "message": "未配置 LLM，请先在设置中配置"})
+            return
+        try:
+            async for token in _heartbeat_wrap(astream_init_chat(
+                history, payload.message, llm_config=llm_config
+            )):
+                if token == "__heartbeat__":
+                    yield _sse_event("heartbeat", {})
+                else:
+                    full_response += token
+                    yield _sse_event("token", {"text": token})
+            # 落助手消息
+            ai_msg = Message(conversation_id=conv.id, section_id=None, role="assistant", content=full_response)
+            db.add(ai_msg)
+            db.commit()
+            # 判定时机标记
+            ready = "[READY_TO_CREATE]" in full_response
+            yield _sse_event("done", {
+                "message_id": str(ai_msg.id),
+                "conversation_id": str(conv.id),
+                "ready_to_create": ready,
+            })
+        except asyncio.CancelledError:
+            if full_response:
+                db.add(Message(conversation_id=conv.id, section_id=None, role="assistant", content=full_response))
+                db.commit()
+            raise
+        except Exception as e:
+            from app.ai.llm_errors import friendly_llm_error
+            db.rollback()
+            yield _sse_event("error", {"code": "llm_error", "message": friendly_llm_error(e)})
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+async def _heartbeat_wrap(async_gen):
+    """token 生成器心跳包装（复用 ai.py 模式，用 asyncio.wait 避免超时杀流）。"""
+    ait = async_gen.__aiter__()
+    nxt = asyncio.ensure_future(ait.__anext__())
+    while True:
+        done, _pending = await asyncio.wait({nxt}, timeout=HEARTBEAT_INTERVAL)
+        if nxt in done:
+            try:
+                token = nxt.result()
+            except StopAsyncIteration:
+                break
+            yield token
+            nxt = asyncio.ensure_future(ait.__anext__())
+        else:
+            yield "__heartbeat__"
+
