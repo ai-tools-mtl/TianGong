@@ -97,14 +97,18 @@ def get_conversation(
     db: Session = Depends(get_db),
 ):
     """取会话 + 消息历史。已落地的会话（project_id 非 NULL）也允许读。"""
+    from app.ai.brief_dimensions import compute_coverage
     conv = _get_owned_conversation(db, current_user.id, conv_id)
     messages = db.scalars(
         select(Message).where(Message.conversation_id == conv.id).order_by(Message.created_at)
     ).all()
+    # coverage 从 draft_outline 算（零成本，让切会话能恢复 ready 判断）
+    coverage = compute_coverage(conv.draft_outline).to_dict()
     return {
         **_conv_to_dict(conv),
         "project_id": str(conv.project_id) if conv.project_id else None,
         "draft_outline": conv.draft_outline,
+        "coverage": coverage,
         "messages": [
             {"id": str(m.id), "role": m.role, "content": m.content,
              "created_at": m.created_at.isoformat() if m.created_at else ""}
@@ -132,6 +136,7 @@ def delete_conversation(
 # ── 对话 + 落地（SSE 流式）──
 
 import asyncio  # noqa: E402
+import time  # noqa: E402
 
 from fastapi import Body  # noqa: E402
 from fastapi.responses import StreamingResponse  # noqa: E402
@@ -147,9 +152,67 @@ def _sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _resolve_provider(llm_config) -> str:
+    """从已解析配置取 provider（用于日志）。无配置返回 'none'。"""
+    if llm_config is None:
+        return "none"
+    return llm_config.source
+
+
+def _resolve_model(llm_config) -> str:
+    """从已解析配置取 model（用于日志）。无配置返回空串。"""
+    if llm_config is None:
+        return ""
+    return llm_config.model or ""
+
+
+def _log_llm_call(db: Session, *, user_id, action: str, model: str, provider: str,
+                  status: str, tokens=None, duration_ms=None, error=None,
+                  context_meta=None) -> None:
+    """写一条 LLM 调用元数据日志（init 助手版，project_id 恒 None——未落地）。
+
+    与 ai.py._log_llm_call 同构，仅 action 命名不同（init_chat / init_generate）。
+    只存元数据不存内容（设计 8.3 红线）。工具是事务边界，失败必 rollback。
+    """
+    from app.models import LLMCallLog
+    try:
+        log = LLMCallLog(
+            user_id=user_id, project_id=None, action=action,
+            model=model, provider=provider, status=status,
+            token_prompt=tokens.get("prompt") if tokens else None,
+            token_completion=tokens.get("completion") if tokens else None,
+            duration_ms=duration_ms, error=error, context_meta=context_meta,
+        )
+        db.add(log)
+        db.commit()
+    except Exception:
+        db.rollback()
+
+
 class ChatRequest(BaseModel):
     message: str
     chat_source: str | None = None
+
+
+async def _yield_with_heartbeat_tuple(async_gen):
+    """(kind, payload) 元组生成器的心跳包装（照搬 ai.py 模式）。
+
+    用 asyncio.wait + task 复用（不用 wait_for，避免超时取消杀掉慢速 LLM 流）。
+    原样透传 ("token"|"tool_call"|"tool_result", payload)，超时插 ("heartbeat", None)。
+    """
+    ait = async_gen.__aiter__()
+    nxt = asyncio.ensure_future(ait.__anext__())
+    while True:
+        done, _pending = await asyncio.wait({nxt}, timeout=HEARTBEAT_INTERVAL)
+        if nxt in done:
+            try:
+                item = nxt.result()
+            except StopAsyncIteration:
+                break
+            yield item
+            nxt = asyncio.ensure_future(ait.__anext__())
+        else:
+            yield ("heartbeat", None)
 
 
 @router.post("/conversations/{conv_id}/chat")
@@ -161,8 +224,9 @@ async def chat(
 ):
     """init 助手对话（SSE）。消息存到顶层会话（section_id=NULL）。
 
-    流式 token；done 事件带 message_id + conversation_id + ready_to_create（bool）。
-    ready_to_create 由 assistant 回复是否含 [READY_TO_CREATE] 标记判定（前端据此渲染扳机）。
+    流式 token / tool_call / tool_result；done 事件带 message_id + conversation_id +
+    ready_to_create（bool）+ coverage（维度覆盖率）。
+    ready_to_create 由维度覆盖率算（brief_dimensions.compute_coverage），不再扫描标记字符串。
     """
     conv = _get_owned_conversation(db, current_user.id, conv_id)
     history = list(db.scalars(
@@ -178,19 +242,39 @@ async def chat(
     )
 
     async def generate():
+        # resolve_chat_config 在当前事务做了多次 SELECT，显式 rollback 确保干净事务开始
+        db.rollback()
         full_response = ""
+        usage = {}  # 降级路径（裸 LLM）填充；agent loop 路径留空
+        meta = {}   # 压缩 snapshot 写入，供 _log_llm_call 记 context_meta
+        start = time.monotonic()
+        status = "success"
+        err = None
         if llm_config is None:
             yield _sse_event("error", {"code": "no_llm_config", "message": "未配置 LLM，请先在设置中配置"})
+            _log_llm_call(
+                db, user_id=current_user.id, action="init_chat",
+                model=_resolve_model(llm_config), provider=_resolve_provider(llm_config),
+                status="failed", duration_ms=int((time.monotonic() - start) * 1000),
+                error="no_llm_config",
+            )
             return
         try:
-            async for token in _heartbeat_wrap(astream_init_chat(
-                history, payload.message, llm_config=llm_config
-            )):
-                if token == "__heartbeat__":
+            async for kind, data in _yield_with_heartbeat_tuple(
+                astream_init_chat(
+                    db, current_user.id, history, payload.message,
+                    llm_config=llm_config, usage_sink=usage, meta_sink=meta,
+                )
+            ):
+                if kind == "heartbeat":
                     yield _sse_event("heartbeat", {})
-                else:
-                    full_response += token
-                    yield _sse_event("token", {"text": token})
+                elif kind == "token":
+                    full_response += data
+                    yield _sse_event("token", {"text": data})
+                elif kind == "tool_call":
+                    yield _sse_event("tool_call", {"name": data.get("name", ""), "args": data.get("args", {})})
+                elif kind == "tool_result":
+                    yield _sse_event("tool_result", {"name": data.get("name", ""), "result": data.get("result", "")})
             # 落助手消息
             ai_msg = Message(conversation_id=conv.id, section_id=None, role="assistant", content=full_response)
             db.add(ai_msg)
@@ -213,14 +297,17 @@ async def chat(
             # 提交标题/大纲改动（首轮改了 title、或本轮提取到大纲都要落库；
             # 无条件 commit 确保 new_title 即使在大纲为空时也不丢）
             db.commit()
-            # 判定时机标记
-            ready = "[READY_TO_CREATE]" in full_response
+            # 维度覆盖率计算（替代旧的标记字符串扫描）。
+            # ready 由核心 5 维覆盖 + 缺点/问题/效果对齐达标决定（brief_dimensions.compute_coverage）。
+            from app.ai.brief_dimensions import compute_coverage
+            coverage = compute_coverage(outline).to_dict()
             yield _sse_event("done", {
                 "message_id": str(ai_msg.id),
                 "conversation_id": str(conv.id),
-                "ready_to_create": ready,
+                "ready_to_create": coverage.get("ready", False),
                 "title": new_title,
                 "outline": outline,
+                "coverage": coverage,
             })
         except asyncio.CancelledError:
             if full_response:
@@ -229,27 +316,20 @@ async def chat(
             raise
         except Exception as e:
             from app.ai.llm_errors import friendly_llm_error
+            err = str(e)
+            status = "failed"
             db.rollback()
             yield _sse_event("error", {"code": "llm_error", "message": friendly_llm_error(e)})
+        finally:
+            _log_llm_call(
+                db, user_id=current_user.id, action="init_chat",
+                model=_resolve_model(llm_config), provider=_resolve_provider(llm_config),
+                status=status, tokens=usage or None,
+                duration_ms=int((time.monotonic() - start) * 1000),
+                error=err, context_meta=meta.get("context_meta"),
+            )
 
     return StreamingResponse(generate(), media_type="text/event-stream")
-
-
-async def _heartbeat_wrap(async_gen):
-    """token 生成器心跳包装（复用 ai.py 模式，用 asyncio.wait 避免超时杀流）。"""
-    ait = async_gen.__aiter__()
-    nxt = asyncio.ensure_future(ait.__anext__())
-    while True:
-        done, _pending = await asyncio.wait({nxt}, timeout=HEARTBEAT_INTERVAL)
-        if nxt in done:
-            try:
-                token = nxt.result()
-            except StopAsyncIteration:
-                break
-            yield token
-            nxt = asyncio.ensure_future(ait.__anext__())
-        else:
-            yield "__heartbeat__"
 
 
 class GenerateRequest(BaseModel):

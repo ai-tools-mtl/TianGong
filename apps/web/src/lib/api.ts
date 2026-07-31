@@ -313,13 +313,22 @@ export const api = {
     request<{
       id: string; title: string; status: string; created_at: string; updated_at: string
       project_id: string | null
+      draft_outline?: Record<string, { title: string; content: string; evidence_type?: string }> | null
+      coverage?: {
+        covered: string[]
+        missing: string[]
+        ready: boolean
+        core_filled: [number, number]
+        aligned: boolean
+        alignment_detail: Record<string, number>
+      } | null
       messages: { id: string; role: string; content: string; created_at: string }[]
     }>(`/assistant/conversations/${id}`),
 
   deleteAssistantConversation: (id: string) =>
     request<void>(`/assistant/conversations/${id}`, { method: 'DELETE' }),
 
-  /** init 助手对话（SSE）。done 事件额外带 ready_to_create + outline。 */
+  /** init 助手对话（SSE）。done 事件额外带 ready_to_create + outline + coverage。 */
   streamAssistantChat: async (
     convId: string,
     message: string,
@@ -330,7 +339,15 @@ export const api = {
       conversation_id?: string
       ready_to_create?: boolean
       title?: string
-      outline?: Record<string, { title: string; content: string }>
+      outline?: Record<string, { title: string; content: string; evidence_type?: string }>
+      coverage?: {
+        covered: string[]
+        missing: string[]
+        ready: boolean
+        core_filled: [number, number]
+        aligned: boolean
+        alignment_detail: Record<string, number>
+      }
     }) => void,
     chatSource?: string,
   ) => {

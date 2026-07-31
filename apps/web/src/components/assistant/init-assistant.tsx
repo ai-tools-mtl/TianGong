@@ -21,7 +21,16 @@ import {
 } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 
-const READY_MARKER = '[READY_TO_CREATE]'
+/** 维度覆盖率（后端 brief_dimensions.compute_coverage 输出）。 */
+type Coverage = {
+  covered: string[]
+  missing: string[]
+  ready: boolean
+  core_filled: [number, number]
+  aligned: boolean
+  alignment_detail: Record<string, number>
+}
+
 const GUIDE = '描述你的发明想法，我帮你理清思路并生成交底书初稿。'
 
 /** 三点呼吸：等待 AI 首 token 时的打字指示（init 助手）。三点半靠 delay 错峰。 */
@@ -82,7 +91,7 @@ function ResizeHandle({ onResize }: { onResize: (dx: number) => void }) {
 interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
-  // assistant 消息是否触发过创建扳机（含 READY 标记）
+  // assistant 消息是否触发过创建扳机（覆盖率达标）
   ready?: boolean
 }
 
@@ -111,6 +120,8 @@ export function InitAssistant() {
   const [outline, setOutline] = useState<Record<string, { title: string; content: string }> | null>(null)
   // 右侧预览面板宽度（px），可拖拽手柄调整。clamp 在 [240, 520]。
   const [previewWidth, setPreviewWidth] = useState(320)
+  // 维度覆盖率：done 回调从后端 coverage 更新；驱动 ready 判断（替代旧的标记字符串扫描）。
+  const [coverage, setCoverage] = useState<Coverage | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   // 自动建会话只跑一次的守卫：避免 React StrictMode（dev 下 effect 双触发）与
@@ -145,18 +156,19 @@ export function InitAssistant() {
       setMessages(current.messages.map((m: { id: string; role: string; content: string; created_at: string }) => ({
         role: m.role as 'user' | 'assistant',
         content: m.content,
-        ready: m.role === 'assistant' && m.content.includes(READY_MARKER),
       })))
       setCreatedProjectId(current.project_id)
       setGenerating(false)
       setChapters([])
-      // 恢复该会话已有的草稿大纲（后端每轮提取后写 draft_outline）
+      // 恢复该会话已有的草稿大纲 + 覆盖率（后端每轮提取后写 draft_outline，并据此算 coverage）
       setOutline((current as { draft_outline?: Record<string, { title: string; content: string }> | null }).draft_outline ?? null)
+      setCoverage((current as { coverage?: Coverage | null }).coverage ?? null)
     } else {
       // 会话被删除/清空：清掉残留的本地状态，避免显示已删会话的内容
       setMessages([])
       setCreatedProjectId(null)
       setOutline(null)
+      setCoverage(null)
       setChapters([])
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -195,7 +207,7 @@ export function InitAssistant() {
             const next = [...prev]
             const last = next[next.length - 1]
             if (last && last.role === 'assistant') {
-              next[next.length - 1] = { role: 'assistant', content: full, ready: full.includes(READY_MARKER) }
+              next[next.length - 1] = { role: 'assistant', content: full }
             }
             return next
           })
@@ -208,13 +220,17 @@ export function InitAssistant() {
           if (done.title) {
             qc.invalidateQueries({ queryKey: queryKeys.assistant.conversations, exact: true })
           }
-          // 后端提取的 8 章草稿大纲回传 → 刷新右侧预览
+          // 后端提取的 8 章草稿大纲 + 维度覆盖率回传 → 刷新右侧预览 + ready 判断
           if (done.outline) setOutline(done.outline)
-          if (done.ready_to_create) {
+          if (done.coverage) {
+            setCoverage(done.coverage)
+            // ready 由覆盖率决定（替代旧的标记字符串扫描）
             setMessages((prev) => {
               const next = [...prev]
               const last = next[next.length - 1]
-              if (last && last.role === 'assistant') next[next.length - 1] = { ...last, ready: true }
+              if (last && last.role === 'assistant' && done.coverage?.ready) {
+                next[next.length - 1] = { ...last, ready: true }
+              }
               return next
             })
           }
@@ -324,7 +340,7 @@ export function InitAssistant() {
                       <TypingDots />
                     ) : m.role === 'assistant' ? (
                       <div className="prose prose-sm max-w-none dark:prose-invert">
-                        <ReactMarkdown>{m.content.replace(READY_MARKER, '').trim()}</ReactMarkdown>
+                        <ReactMarkdown>{m.content.trim()}</ReactMarkdown>
                       </div>
                     ) : (
                       <span className="whitespace-pre-wrap">{m.content}</span>
@@ -405,13 +421,13 @@ export function InitAssistant() {
           </div>
         </div>
       </div>
-      {/* 右侧文档实时预览：每轮对话后由轻量 LLM 提取 8 章草稿，实时刷新。桌面端常驻。
+      {/* 右侧文档实时预览：每轮对话后由轻量 LLM 提取 8 章草稿 + 维度覆盖率，实时刷新。桌面端常驻。
           外层 relative 给拖拽手柄（absolute 定位）做参照。 */}
       <div className="relative hidden lg:block">
         <ResizeHandle
           onResize={(dx) => setPreviewWidth((w) => Math.min(PREVIEW_MAX_W, Math.max(PREVIEW_MIN_W, w + dx)))}
         />
-        <OutlinePreview outline={outline} extracting={sending} width={previewWidth} />
+        <OutlinePreview outline={outline} coverage={coverage} extracting={sending} width={previewWidth} />
       </div>
     </div>
   )
