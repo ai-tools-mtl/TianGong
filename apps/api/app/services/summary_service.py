@@ -23,14 +23,16 @@ def generate_summary(db: Session, section: Section) -> str:
 
         from app.ai.llm_client import get_llm
         from app.models import Project
-        from app.services.llm_config_service import resolve_chat_config
+        from app.services.llm_config_service import resolve_lite_config
 
-        # Section 无 user_id，经 project 取归属用户后解析生效配置（断链修复）。
-        # 无配置 → raise ValueError，被下方 except 捕获后走降级（阶段 0 可接受）。
+        # Section 无 user_id，经 project 取归属用户后解析轻量任务模型配置。
+        # resolve_lite_config 优先用 admin 配的轻量模型（典型 GLM-4.7-Flash），
+        # 未配则回退该用户 chat 配置。无配置 → raise ValueError，被下方 except
+        # 捕获后走降级（取正文前 200 字）。
         project = db.get(Project, section.project_id)
         if project is None:
             raise ValueError("section has no project")
-        llm_config = resolve_chat_config(db, user_id=project.user_id)
+        llm_config = resolve_lite_config(db, user_id=project.user_id)
         if llm_config is None:
             raise ValueError("no llm config")
 
