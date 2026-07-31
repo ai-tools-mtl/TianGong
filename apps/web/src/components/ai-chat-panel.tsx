@@ -4,8 +4,8 @@ import { GitCompare, Loader2, PanelRight, Sparkles, Square, Trash2 } from 'lucid
 import { useQueryClient } from '@tanstack/react-query'
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import ReactMarkdown from 'react-markdown'
 
+import { Markdown } from '@/components/markdown'
 import { Button } from '@/components/ui/button'
 import { ConversationList } from '@/components/conversation-list'
 import { DiffReviewPanel } from '@/components/diff-review-panel'
@@ -515,9 +515,9 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
                   AI 正在生成...
                 </div>
               )}
-              <div className="prose prose-sm max-w-none dark:prose-invert">
-                <ReactMarkdown>{aiDraft || '（空）'}</ReactMarkdown>
-              </div>
+              <Markdown className="prose prose-sm max-w-none dark:prose-invert">
+                {aiDraft || '（空）'}
+              </Markdown>
             </div>
             {phase === 'done' && (
               <div className="flex items-center gap-2">
@@ -553,9 +553,9 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
                 <div key={i} className="flex justify-start">
                   <div className="w-full rounded-2xl rounded-bl-sm border border-ai/20 bg-ai-muted/40 px-3 py-2 text-[13px] leading-relaxed text-foreground">
                     {m.content ? (
-                      <div className="prose prose-sm max-w-none dark:prose-invert">
-                        <ReactMarkdown>{m.content}</ReactMarkdown>
-                      </div>
+                      <Markdown className="prose prose-sm max-w-none dark:prose-invert">
+                        {m.content}
+                      </Markdown>
                     ) : (
                       <span className="flex items-center gap-1 text-muted-foreground">
                         <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:0ms]" />
