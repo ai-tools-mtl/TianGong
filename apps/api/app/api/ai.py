@@ -249,10 +249,12 @@ async def chat(
             db.commit()
 
             # 草稿会话首条对话完成：同步用 LLM 总结标题，转 active，通过 done 事件回传
+            # 标题生成走轻量任务模型（resolve_lite_config）：优先 admin 配的轻量模型
+            #（典型 GLM-4.7-Flash），未配回退当前用户 chat 配置，与对话主体分离以省 token。
             new_title = None
             if conv.status == ConversationStatus.draft.value:
                 new_title = conversation_service.summarize_conversation_title(
-                    db, conv, payload.message, full_response, llm_config=llm_config
+                    db, conv, payload.message, full_response, user_id=current_user.id
                 )
                 conv.title = new_title
                 conv.status = ConversationStatus.active.value

@@ -4,7 +4,6 @@ from sqlalchemy.orm import Session
 
 from app.ai.llm_client import get_llm
 from app.models import Conversation
-from app.services.llm_config_service import ResolvedChatConfig
 
 
 def summarize_conversation_title(
@@ -12,23 +11,28 @@ def summarize_conversation_title(
     conversation: Conversation,
     first_user_msg: str,
     first_ai_msg: str,
-    llm_config: ResolvedChatConfig | None = None,
+    user_id,
 ) -> str:
     """用 LLM 根据首条对话内容生成简短标题。失败降级为用户消息前 20 字。
 
-    llm_config 由调用方从 llm_config_service.resolve_chat_config 解析后传入。
-    无配置（None）时直接降级，不调 LLM。
+    内部自行 resolve 轻量任务模型配置（resolve_lite_config）：优先用 admin 配的
+    轻量模型（典型 GLM-4.7-Flash），未配则回退到该用户的 chat 配置。无配置时
+    直接降级，不调 LLM。
 
-    F1 修复：原代码 get_llm(**{base_url,api_key,model}) 传错参数（get_llm 期望
-    ResolvedChatConfig 位置参数），TypeError 被 except Exception 吞掉，标题摘要
-    始终静默 fallback。改为直接传 llm_config。
+    user_id 为会话归属用户，用于在轻量配置未配时回退解析其 chat 配置。
     """
     fallback = first_user_msg[:20] + ("..." if len(first_user_msg) > 20 else "")
-    if llm_config is None:
-        return fallback
     try:
         from langchain_core.messages import HumanMessage
 
+        from app.services.llm_config_service import resolve_lite_config
+
+        llm_config = resolve_lite_config(db, user_id=user_id)
+    except Exception:
+        return fallback
+    if llm_config is None:
+        return fallback
+    try:
         llm = get_llm(llm_config)
         resp = llm.invoke(
             [
