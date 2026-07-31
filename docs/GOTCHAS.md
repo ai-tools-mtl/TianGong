@@ -68,6 +68,16 @@
   - 配置守卫测试：`tests/test_sessionlocal_config.py::test_sessionlocal_expire_on_commit_is_false`
 - **影响**：C1 技术债修复（`fix/c1-expire-on-commit` 分支），见 [2026-07-29-c1-expire-on-commit-design.md](superpowers/specs/2026-07-29-c1-expire-on-commit-design.md)
 
+### G7: 上下文压缩的三处隐性约定（compress_history / JSONType / deepagents 中间件）⚠️
+
+- **现象**：接入对话上下文压缩（`app/ai/context_compactor.py`）时踩到三个计划文档没写清、只有跑起来/读源码才暴露的点。
+- **根因 + 修复**：
+  1. **`JSONType` 是实例不是类，迁移里不能加 `()`**。`JSONType = JSONB().with_variant(JSON, "sqlite")`（`base.py:9`）返回的是 JSONB **实例**（`with_variant` 的返回值）。Alembic autogenerate 可能产出 `postgresql.JSONB(...).with_variant(sa.JSON(), 'sqlite')`（可用）或误导你写 `JSONType()`（**抛 `TypeError: 'JSONB' object is not callable`**）。**正确**：迁移列用 `sa.Column('context_meta', JSONType, nullable=True)`——裸 `JSONType`，无括号（与 `audit_log.py`、`mcp_server.py` 既有写法一致）。
+  2. **`compress_history` 的返回契约分三种路径，`current_input` 不一定在末尾**。未触发路径只返回历史 dict（**不含** `current_input`）；触发/降级路径才在末尾 append 了 `current_input`。接入方（`orchestrator.astream_chat`、`init_orchestrator._build_*`）必须 `if not snapshot.triggered: messages.append(current_input)` 补一次，否则**短对话会静默丢失用户当前输入**。
+  3. **deepagents 无 per-call 排除中间件的参数**。`create_deep_agent(...)` 的签名只有 `middleware=`（追加），**没有** `excluded_middleware`。唯一排除路径是 beta 级、进程全局的 `register_harness_profile(key, HarnessProfile(excluded_middleware={...}))`，副作用大。**采纳的方案**：不排除库默认 `SummarizationMiddleware`，靠天工 `compress_history` 先预处理（产出更短历史），库中间件的 ~170k-token 阈值几乎不会再触发，作为 rarely-firing 兜底——V1 接受。V2 若要完全可控再用全局注册。
+- **预防**：新写迁移用项目 `JSONType` 时裸用不加 `()`；接入 `compress_history` 务必处理未触发路径的 `current_input`；不要假设 deepagents 支持 per-call 中间件排除。
+- **影响任务**：计划「对话上下文压缩」任务 6/7/8/9，见 [2026-07-30-context-compression-design.md](superpowers/specs/2026-07-30-context-compression-design.md)
+
 ---
 
 ## 前端（apps/web）
