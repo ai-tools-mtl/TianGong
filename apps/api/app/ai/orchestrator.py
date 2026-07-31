@@ -140,7 +140,7 @@ async def astream_chat(
                         section=section, user_input=user_input, intent=intent)
 
     # [L2] 透传历史 + 当前用户输入，长历史先压缩（spec §3.3.2 + 压缩 spec）
-    import logging
+    from loguru import logger
 
     from app.ai.context_compactor import compress_history
 
@@ -148,8 +148,9 @@ async def astream_chat(
         history, user_input, llm_config, scene="chat"
     )
     if snapshot.triggered:
-        logging.getLogger(__name__).info(
-            "上下文压缩触发 (chat, section=%s): reason=%s %d→%d条 fallback=%s",
+        # 用 loguru（项目既定日志出口；标准 logging 在本项目默认 WARNING+无 handler，info 会被静默）
+        logger.info(
+            "上下文压缩触发 (chat, section={}): reason={} {}→{}条 fallback={}",
             section.id, snapshot.reason, snapshot.original_count,
             snapshot.compressed_count, snapshot.fallback,
         )
@@ -221,7 +222,7 @@ async def astream_generate(
     instruction = build_generate_instruction(section)
 
     # [L2] 透传历史，长历史先压缩，再 append generate 指令（压缩 spec）
-    import logging
+    from loguru import logger
 
     from app.ai.context_compactor import compress_history
 
@@ -229,8 +230,8 @@ async def astream_generate(
         history, instruction, llm_config, scene="generate"
     )
     if snapshot.triggered:
-        logging.getLogger(__name__).info(
-            "上下文压缩触发 (generate, section=%s): reason=%s %d→%d条",
+        logger.info(
+            "上下文压缩触发 (generate, section={}): reason={} {}→{}条",
             section.id, snapshot.reason, snapshot.original_count, snapshot.compressed_count,
         )
     # 压缩观测透传：把 snapshot 写入 meta_sink，供 SSE 层记入 LLMCallLog.context_meta（spec §5.1）。

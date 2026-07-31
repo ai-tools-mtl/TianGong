@@ -58,15 +58,15 @@ async def _build_init_chat_messages(
     历史先经 compress_history 压缩（压缩 spec），再转 LangChain 消息类型。
     meta_sink 非空时写入压缩 snapshot，供调用方记入 LLMCallLog.context_meta。
     """
+    from loguru import logger
     from app.ai.context_compactor import compress_history
 
     compressed, snapshot = await compress_history(
         history, user_input, llm_config, scene="init"
     )
     if snapshot.triggered:
-        import logging
-        logging.getLogger(__name__).info(
-            "上下文压缩触发 (init chat): reason=%s %d→%d条",
+        logger.info(
+            "上下文压缩触发 (init chat): reason={} {}→{}条",
             snapshot.reason, snapshot.original_count, snapshot.compressed_count,
         )
     if meta_sink is not None:
@@ -113,6 +113,7 @@ async def _build_section_generate_messages(
     复用 build_generate_instruction（含 CoT 分步引导 + 章节 output_format/criteria）。
     meta_sink 非空时写入压缩 snapshot，供调用方记入 LLMCallLog.context_meta。
     """
+    from loguru import logger
     from app.ai.context_compactor import compress_history
 
     instruction = build_generate_instruction(section)
@@ -120,9 +121,8 @@ async def _build_section_generate_messages(
         history, instruction, llm_config, scene="init_generate"
     )
     if snapshot.triggered:
-        import logging
-        logging.getLogger(__name__).info(
-            "上下文压缩触发 (init generate, section=%s): reason=%s %d→%d条",
+        logger.info(
+            "上下文压缩触发 (init generate, section={}): reason={} {}→{}条",
             section.key, snapshot.reason, snapshot.original_count, snapshot.compressed_count,
         )
     if meta_sink is not None:

@@ -208,9 +208,12 @@ async def compress_history(
         summary = await summarize(middle, llm_config)
     except SummarizeRuntimeError:
         # 降级①：硬截断保首尾，中段丢弃（spec §5.2）
-        import logging
-        logging.getLogger(__name__).warning(
-            "上下文压缩摘要失败，降级硬截断 (scene=%s, middle=%d)", scene, len(middle)
+        # 注意用 loguru 而非标准 logging：项目未配 root logging（默认 WARNING+无 handler），
+        # 标准 logging.info 会被静默；loguru 是项目既定日志出口（默认 DEBUG 级，必定输出）。
+        from loguru import logger
+        logger.warning(
+            "上下文压缩摘要失败，降级硬截断 (scene={}, middle={})",
+            scene, len(middle),
         )
         msgs = [_msg_to_dict(m) for m in head] + [_msg_to_dict(m) for m in tail]
         msgs.append({"role": "user", "content": current_input})
