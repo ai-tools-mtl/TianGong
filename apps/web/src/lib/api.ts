@@ -7,6 +7,7 @@ import type {
   Memory,
   MemoryCreate,
   MemoryUpdate,
+  MessageMeta,
   MyGrant,
   Project,
   ProjectCreate,
@@ -34,6 +35,20 @@ import type {
 } from '@/types/api'
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+
+/**
+ * Agent 透明化事件回调（类 zcode 工具调用提示 + 思考过程）。
+ * 由 _consumeSSE 在收到对应 SSE 事件时分发，供面板实时累积渲染。
+ * 三者皆可选——不传则忽略该类事件。
+ */
+export type AgentStreamHandlers = {
+  /** 模型思考过程片段（流式分块，逐块回调，调用方自行拼接） */
+  onThinking?: (t: string) => void
+  /** agent 发起工具调用 */
+  onToolCall?: (e: { name: string; args: Record<string, unknown> }) => void
+  /** 工具返回（result 后端已截断 500 字符） */
+  onToolResult?: (e: { name: string; result: string }) => void
+}
 
 // ── 静默刷新：access token 过期(401)时用 refresh token 续期并重试一次 ──
 // access 有效期短(默认 30 分钟)，前端无感续期；refresh 长(默认 30 天)才是「记住登录」窗口。
@@ -250,6 +265,7 @@ export const api = {
     source?: string,
     conversationId?: string,
     onDone?: (data: { message_id: string; conversation_id?: string; title?: string | null }) => void,
+    agentHandlers?: AgentStreamHandlers,
   ) => {
     const res = await authFetch(`/sections/${sectionId}/chat`, {
       method: 'POST',
@@ -262,7 +278,7 @@ export const api = {
       signal,
     })
     if (!res.ok) throw await _sseHttpError(res)
-    return _consumeSSE(res, onToken, onDone)
+    return _consumeSSE(res, onToken, onDone, agentHandlers)
   },
 
   streamGenerate: async (
@@ -270,6 +286,7 @@ export const api = {
     onToken: (t: string) => void,
     signal?: AbortSignal,
     source?: string,
+    agentHandlers?: AgentStreamHandlers,
   ) => {
     const res = await authFetch(`/sections/${sectionId}/generate`, {
       method: 'POST',
@@ -278,7 +295,7 @@ export const api = {
       signal,
     })
     if (!res.ok) throw await _sseHttpError(res)
-    return _consumeSSE(res, onToken)
+    return _consumeSSE(res, onToken, undefined, agentHandlers)
   },
 
   streamRewrite: async (
@@ -322,7 +339,7 @@ export const api = {
         aligned: boolean
         alignment_detail: Record<string, number>
       } | null
-      messages: { id: string; role: string; content: string; created_at: string }[]
+      messages: { id: string; role: string; content: string; meta?: MessageMeta | null; created_at: string }[]
     }>(`/assistant/conversations/${id}`),
 
   deleteAssistantConversation: (id: string) =>
@@ -350,6 +367,7 @@ export const api = {
       }
     }) => void,
     chatSource?: string,
+    agentHandlers?: AgentStreamHandlers,
   ) => {
     const res = await authFetch(`/assistant/conversations/${convId}/chat`, {
       method: 'POST',
@@ -358,7 +376,7 @@ export const api = {
       signal,
     })
     if (!res.ok) throw await _sseHttpError(res)
-    return _consumeSSE(res, onToken, onDone as never)
+    return _consumeSSE(res, onToken, onDone as never, agentHandlers)
   },
 
   /** 扳机落地：建项目+填章（SSE，多事件：project_created/chapter_start/token/chapter_done/done）。 */
@@ -415,7 +433,7 @@ export const api = {
   },
 
   listMessages: (sectionId: string, conversationId?: string) =>
-    request<{ id: string; role: string; content: string; created_at: string }[]>(
+    request<{ id: string; role: string; content: string; meta?: MessageMeta | null; created_at: string }[]>(
       `/sections/${sectionId}/messages${conversationId ? `?conversation_id=${conversationId}` : ''}`,
     ),
 
@@ -957,9 +975,15 @@ async function _sseHttpError(res: Response): Promise<Error & { status: number; c
  *
  * 后端事件类型（见 app/api/ai.py）：
  * - token：追加文本 {text}
+ * - thinking：模型思考过程片段 {text}（GLM/DeepSeek reasoning_content，流式分块）
+ * - tool_call：agent 发起工具调用 {name, args}
+ * - tool_result：工具返回 {name, result}（result 已截断 500 字符）
  * - heartbeat：保活心跳，忽略
  * - done：完成 {message_id, conversation_id?, title?}，触发 onDone 回调
  * - error：服务端错误 {code, message}，抛出 ApiError 让上层走 catch 分支
+ *
+ * thinking / tool_call / tool_result 是 agent 透明化事件（类 zcode），
+ * 通过 agentHandlers 可选回调上抛；不传则忽略（向后兼容旧调用方）。
  *
  * 原实现只看 data.text，导致 error 事件被静默吞掉（用户看到"空回复+无报错"）。
  */
@@ -967,6 +991,11 @@ async function _consumeSSE(
   res: Response,
   onToken: (t: string) => void,
   onDone?: (data: { message_id: string; conversation_id?: string; title?: string | null }) => void,
+  agentHandlers?: {
+    onThinking?: (t: string) => void
+    onToolCall?: (e: { name: string; args: Record<string, unknown> }) => void
+    onToolResult?: (e: { name: string; result: string }) => void
+  },
 ): Promise<void> {
   if (!res.body) return
   const reader = res.body.getReader()
@@ -1004,6 +1033,13 @@ async function _consumeSSE(
       if (eventType === 'token') {
         const text = data.text as string | undefined
         if (text) onToken(text)
+      } else if (eventType === 'thinking') {
+        const text = data.text as string | undefined
+        if (text) agentHandlers?.onThinking?.(text)
+      } else if (eventType === 'tool_call') {
+        agentHandlers?.onToolCall?.({ name: String(data.name ?? ''), args: (data.args as Record<string, unknown>) ?? {} })
+      } else if (eventType === 'tool_result') {
+        agentHandlers?.onToolResult?.({ name: String(data.name ?? ''), result: String(data.result ?? '') })
       } else if (eventType === 'done' && onDone) {
         // done 事件：透传元数据（message_id / conversation_id / title）
         onDone(data as { message_id: string; conversation_id?: string; title?: string | null })

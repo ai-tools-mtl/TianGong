@@ -5,6 +5,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { toast } from 'sonner'
 
+import { AgentSteps } from '@/components/ai/agent-steps'
 import { Markdown } from '@/components/markdown'
 import { Button } from '@/components/ui/button'
 import { ConversationList } from '@/components/conversation-list'
@@ -23,11 +24,15 @@ import {
 } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import { useUIStore } from '@/stores/ui'
-import type { Conversation, Hunk, Section } from '@/types/api'
+import type { Conversation, Hunk, MessageMeta, Section, ToolEvent } from '@/types/api'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
+  /** agent 透明化：本轮思考过程（流式累积 / 历史回灌） */
+  thinking?: string
+  /** agent 透明化：本轮工具调用事件序列（流式累积 / 历史回灌） */
+  toolEvents?: ToolEvent[]
 }
 
 /**
@@ -90,6 +95,8 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
   const [input, setInput] = useState('')
   const [phase, setPhase] = useState<AIPhase>('idle')
   const [aiDraft, setAiDraft] = useState('')
+  // generate 场景的 agent 透明化状态（思考/工具），展示在草稿预览区上方
+  const [genSteps, setGenSteps] = useState<{ thinking?: string; toolEvents?: ToolEvent[] }>({})
   const [hunks, setHunks] = useState<Hunk[]>([])
   // diff 审核的来源 + 选区重写路径专用的整章 ai 文本（apply 时必须原样回传）。
   const [diffOrigin, setDiffOrigin] = useState<DiffOrigin>('full')
@@ -130,9 +137,12 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
     if (history && msgLoadedForConv.current !== currentConvId) {
       msgLoadedForConv.current = currentConvId
       setMessages(
-        history.map((m: { role: string; content: string }) => ({
+        history.map((m: { role: string; content: string; meta?: MessageMeta | null }) => ({
           role: m.role as 'user' | 'assistant',
           content: m.content,
+          // 历史回灌：从 Message.meta 恢复思考过程 + 工具调用（刷新后仍可见）
+          thinking: m.meta?.thinking,
+          toolEvents: m.meta?.tool_events,
         })),
       )
     }
@@ -221,6 +231,24 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
     abortRef.current = new AbortController()
 
     let aiText = ''
+    // agent 透明化累积器（流式期间逐事件累加，合并进最后一条 assistant 消息）
+    let aiThinking = ''
+    const aiToolEvents: ToolEvent[] = []
+    /** 把累积的 thinking/toolEvents 合并进最后一条 assistant 消息。 */
+    const mergeAgentState = () => {
+      setMessages((m) => {
+        const copy = [...m]
+        const last = copy[copy.length - 1]
+        if (last && last.role === 'assistant') {
+          copy[copy.length - 1] = {
+            ...last,
+            thinking: aiThinking || undefined,
+            toolEvents: aiToolEvents.length ? [...aiToolEvents] : undefined,
+          }
+        }
+        return copy
+      })
+    }
     try {
       await api.streamChat(
         sectionId,
@@ -243,6 +271,11 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
             setCurrentConvId(doneData.conversation_id)
           }
           qc.invalidateQueries({ queryKey: ['conversations', sectionId] })
+        },
+        {
+          onThinking: (t) => { aiThinking += t; mergeAgentState() },
+          onToolCall: (e) => { aiToolEvents.push({ kind: 'call', name: e.name, args: e.args }); mergeAgentState() },
+          onToolResult: (e) => { aiToolEvents.push({ kind: 'result', name: e.name, result: e.result }); mergeAgentState() },
         },
       )
     } catch (err: unknown) {
@@ -306,11 +339,25 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
     setAiDraft('')
     abortRef.current = new AbortController()
     let md = ''
+    // generate 场景同样透传 agent 透明化事件（思考/工具），用于生成预览区展示
+    let genThinking = ''
+    const genToolEvents: ToolEvent[] = []
+    setGenSteps({ thinking: '', toolEvents: [] })
     try {
-      await api.streamGenerate(sectionId, (token) => {
-        md += token
-        setAiDraft(md)
-      }, abortRef.current.signal, source)
+      await api.streamGenerate(
+        sectionId,
+        (token) => {
+          md += token
+          setAiDraft(md)
+        },
+        abortRef.current.signal,
+        source,
+        {
+          onThinking: (t) => { genThinking += t; setGenSteps({ thinking: genThinking, toolEvents: [...genToolEvents] }) },
+          onToolCall: (e) => { genToolEvents.push({ kind: 'call', name: e.name, args: e.args }); setGenSteps({ thinking: genThinking, toolEvents: [...genToolEvents] }) },
+          onToolResult: (e) => { genToolEvents.push({ kind: 'result', name: e.name, result: e.result }); setGenSteps({ thinking: genThinking, toolEvents: [...genToolEvents] }) },
+        },
+      )
       setPhase('done')
     } catch (err: unknown) {
       if (err instanceof DOMException && err.name === 'AbortError') {
@@ -505,7 +552,13 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
           // 生成草稿的 markdown 预览
           <div className="space-y-3">
             <div className="rounded-lg border border-ai/20 bg-ai-muted/50 px-3 py-2.5">
-              {phase === 'generating' && (
+              {/* agent 透明化：生成阶段的思考过程 + 工具调用 */}
+              <AgentSteps
+                thinking={genSteps.thinking}
+                toolEvents={genSteps.toolEvents}
+                streaming={phase === 'generating'}
+              />
+              {phase === 'generating' && !genSteps.thinking && !genSteps.toolEvents?.length && !aiDraft && (
                 <div className="mb-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
                   <span className="flex gap-0.5">
                     <span className="size-1.5 animate-bounce rounded-full bg-ai [animation-delay:0ms]" />
@@ -552,17 +605,23 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
               ) : (
                 <div key={i} className="flex justify-start">
                   <div className="w-full rounded-2xl rounded-bl-sm border border-ai/20 bg-ai-muted/40 px-3 py-2 text-[13px] leading-relaxed text-foreground">
+                    {/* agent 透明化：思考过程 + 工具调用（正文之前；流式时 streaming=true） */}
+                    <AgentSteps
+                      thinking={m.thinking}
+                      toolEvents={m.toolEvents}
+                      streaming={phase === 'chatting' && i === messages.length - 1}
+                    />
                     {m.content ? (
                       <Markdown className="prose prose-sm max-w-none dark:prose-invert">
                         {m.content}
                       </Markdown>
-                    ) : (
+                    ) : !m.thinking && !m.toolEvents?.length ? (
                       <span className="flex items-center gap-1 text-muted-foreground">
                         <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:0ms]" />
                         <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:150ms]" />
                         <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:300ms]" />
                       </span>
-                    )}
+                    ) : null}
                   </div>
                 </div>
               ),

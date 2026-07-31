@@ -526,6 +526,26 @@ export interface Conversation {
   updated_at: string
 }
 
+// ── Agent 透明化（工具调用 + 思考过程，类 zcode）──
+
+/** 一次工具调用的事件记录（流式期间与历史回灌共用）。 */
+export type ToolEvent = {
+  kind: 'call' | 'result'
+  name: string
+  /** tool_call 携带：调用参数 */
+  args?: Record<string, unknown>
+  /** tool_result 携带：工具返回（后端已截断 500 字符） */
+  result?: string
+}
+
+/** assistant 消息的 agent 元数据（对应后端 Message.meta）。 */
+export interface MessageMeta {
+  /** 本轮工具调用/返回序列（按时间顺序，call 与 result 交替或相邻） */
+  tool_events?: ToolEvent[]
+  /** 模型思考过程全文（GLM/DeepSeek reasoning_content 拼接） */
+  thinking?: string
+}
+
 // ── Agent Skill（spec 合规，两档可见性）──
 export type SkillScope = 'global' | 'personal'
 export type SkillStatus = 'draft' | 'active'

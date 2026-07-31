@@ -7,6 +7,7 @@ import { type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } f
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
 
+import { AgentSteps } from '@/components/ai/agent-steps'
 import { AssistantConversationList } from '@/components/assistant/assistant-conversation-list'
 import { OutlinePreview } from '@/components/assistant/outline-preview'
 import { Button } from '@/components/ui/button'
@@ -20,6 +21,7 @@ import {
   useDeleteAssistantConversation,
 } from '@/lib/queries'
 import { cn } from '@/lib/utils'
+import type { MessageMeta, ToolEvent } from '@/types/api'
 
 /** 维度覆盖率（后端 brief_dimensions.compute_coverage 输出）。 */
 type Coverage = {
@@ -93,6 +95,10 @@ interface ChatMessage {
   content: string
   // assistant 消息是否触发过创建扳机（覆盖率达标）
   ready?: boolean
+  /** agent 透明化：本轮思考过程（流式累积 / 历史回灌） */
+  thinking?: string
+  /** agent 透明化：本轮工具调用事件序列（流式累积 / 历史回灌） */
+  toolEvents?: ToolEvent[]
 }
 
 interface ChapterProgress {
@@ -153,9 +159,12 @@ export function InitAssistant() {
     if (id === lastLoadedIdRef.current) return // 同一会话，不重复初始化（防覆盖）
     lastLoadedIdRef.current = id
     if (current) {
-      setMessages(current.messages.map((m: { id: string; role: string; content: string; created_at: string }) => ({
+      setMessages(current.messages.map((m: { id: string; role: string; content: string; meta?: MessageMeta | null; created_at: string }) => ({
         role: m.role as 'user' | 'assistant',
         content: m.content,
+        // 历史回灌：从 Message.meta 恢复思考过程 + 工具调用（刷新后仍可见）
+        thinking: m.meta?.thinking,
+        toolEvents: m.meta?.tool_events,
       })))
       setCreatedProjectId(current.project_id)
       setGenerating(false)
@@ -198,6 +207,24 @@ export function InitAssistant() {
     const ac = new AbortController()
     abortRef.current = ac
     let full = ''
+    // agent 透明化累积器（思考过程 + 工具调用，合并进最后一条 assistant 消息）
+    let aiThinking = ''
+    const aiToolEvents: ToolEvent[] = []
+    /** 把累积的 thinking/toolEvents 合并进最后一条 assistant 消息。 */
+    const mergeAgentState = () => {
+      setMessages((prev) => {
+        const next = [...prev]
+        const last = next[next.length - 1]
+        if (last && last.role === 'assistant') {
+          next[next.length - 1] = {
+            ...last,
+            thinking: aiThinking || undefined,
+            toolEvents: aiToolEvents.length ? [...aiToolEvents] : undefined,
+          }
+        }
+        return next
+      })
+    }
     try {
       await api.streamAssistantChat(
         currentId, msg,
@@ -234,6 +261,12 @@ export function InitAssistant() {
               return next
             })
           }
+        },
+        undefined,
+        {
+          onThinking: (t) => { aiThinking += t; mergeAgentState() },
+          onToolCall: (e) => { aiToolEvents.push({ kind: 'call', name: e.name, args: e.args }); mergeAgentState() },
+          onToolResult: (e) => { aiToolEvents.push({ kind: 'result', name: e.name, result: e.result }); mergeAgentState() },
         },
       )
     } catch (e) {
@@ -321,12 +354,14 @@ export function InitAssistant() {
               </div>
             )}
             {messages.map((m, i) => {
-              // 等待态：发送中、最后一条 assistant 消息、尚无 token → 显示三点呼吸
+              // 等待态：发送中、最后一条 assistant 消息、尚无 token 且无思考/工具 → 三点呼吸
               const isWaiting =
                 sending &&
                 i === messages.length - 1 &&
                 m.role === 'assistant' &&
-                !m.content
+                !m.content &&
+                !m.thinking &&
+                !m.toolEvents?.length
               return (
                 <div key={i} className={cn('flex bubble-in', m.role === 'user' ? 'justify-end' : 'justify-start')}>
                   <div
@@ -339,9 +374,17 @@ export function InitAssistant() {
                     {isWaiting ? (
                       <TypingDots />
                     ) : m.role === 'assistant' ? (
-                      <div className="prose prose-sm max-w-none dark:prose-invert">
-                        <ReactMarkdown>{m.content.trim()}</ReactMarkdown>
-                      </div>
+                      <>
+                        {/* agent 透明化：思考过程 + 工具调用（正文之前；流式时 streaming=true） */}
+                        <AgentSteps
+                          thinking={m.thinking}
+                          toolEvents={m.toolEvents}
+                          streaming={sending && i === messages.length - 1}
+                        />
+                        <div className="prose prose-sm max-w-none dark:prose-invert">
+                          <ReactMarkdown>{m.content.trim()}</ReactMarkdown>
+                        </div>
+                      </>
                     ) : (
                       <span className="whitespace-pre-wrap">{m.content}</span>
                     )}
