@@ -103,13 +103,14 @@ def _friendly_llm_error(e: Exception) -> str:
 def _log_llm_call(
     db: Session, *,
     user_id, project_id, action: str, model: str, provider: str,
-    status: str, tokens=None, duration_ms=None, error=None,
+    status: str, tokens=None, duration_ms=None, error=None, context_meta=None,
 ) -> None:
     """写一条 LLM 调用元数据日志（设计 8.3 红线：只存元数据，不存内容）。
 
     tokens（断链 C3）：可选 dict {"prompt": int, "completion": int}，
     由各端点从流的 usage_metadata（astream_llm 的 usage_sink）捕获；
     无值时落 None（如未开 stream_usage 或 provider 未回传 usage 的情形）。
+    context_meta（spec §5.1）：可选 dict，上下文压缩 Snapshot 序列化。
     """
     try:
         log = LLMCallLog(
@@ -123,6 +124,7 @@ def _log_llm_call(
             duration_ms=duration_ms,
             status=status,
             error=(str(error)[:500] if error else None),
+            context_meta=context_meta,
         )
         db.add(log)
         db.commit()

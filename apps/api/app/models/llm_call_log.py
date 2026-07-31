@@ -6,7 +6,7 @@ from datetime import datetime
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.models.base import Base, IdMixin
+from app.models.base import Base, IdMixin, JSONType
 
 
 class LLMCallLog(Base, IdMixin):
@@ -25,6 +25,8 @@ class LLMCallLog(Base, IdMixin):
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(20))  # success/failed
     error: Mapped[str | None] = mapped_column(Text, nullable=True)  # 不含内容
+    # 上下文压缩观测（spec §5.1）：Snapshot 序列化。nullable（未压缩或旧记录为空）。
+    context_meta: Mapped[dict | None] = mapped_column(JSONType, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
