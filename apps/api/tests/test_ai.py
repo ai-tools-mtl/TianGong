@@ -236,7 +236,9 @@ def test_get_llm_uses_resolved_config_fields(monkeypatch):
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setattr("app.ai.llm_client.ChatOpenAI", _FakeChatOpenAI)
+    # get_llm 现返回 ReasoningChatOpenAI（ChatOpenAI 子类，透传 reasoning_content），
+    # 故 monkeypatch 子类而非基类。
+    monkeypatch.setattr("app.ai.llm_client.ReasoningChatOpenAI", _FakeChatOpenAI)
 
     cfg = ResolvedChatConfig(
         base_url="https://user.custom.example/v1",
@@ -262,7 +264,9 @@ def test_get_llm_streaming_enables_stream_usage(monkeypatch):
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setattr("app.ai.llm_client.ChatOpenAI", _FakeChatOpenAI)
+    # get_llm 现返回 ReasoningChatOpenAI（ChatOpenAI 子类，透传 reasoning_content），
+    # 故 monkeypatch 子类而非基类。
+    monkeypatch.setattr("app.ai.llm_client.ReasoningChatOpenAI", _FakeChatOpenAI)
 
     cfg = ResolvedChatConfig(
         base_url="https://global.example/v1",
