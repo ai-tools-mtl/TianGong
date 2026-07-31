@@ -44,6 +44,39 @@ def create_server(
     return McpServerOut(**svc.to_out(server))
 
 
+@router.post("/admin/mcp/servers/import", response_model=list[McpServerOut])
+def import_servers(
+    payload: dict,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """粘贴 MCP 配置 JSON 批量导入。
+
+    支持 {"mcpServers": {...}} 标准格式 + {name: {...}} 裸字典格式。
+    同名/解析错 → 整体回滚，一个都不导入，错误信息指明 server name。
+    """
+    parsed = svc.parse_mcp_json(payload)
+    created = []
+    try:
+        for cfg in parsed:
+            s = svc.create_mcp_server(  # 内部做应用层同名检查，命中即抛 ConflictError
+                db, name=cfg["name"], transport=cfg["transport"],
+                command=cfg.get("command"), args=cfg.get("args"),
+                url=cfg.get("url"), headers=cfg.get("headers"),
+                env=cfg.get("env"), enabled=True, actor=admin,
+            )
+            created.append(s)
+    except Exception:
+        db.rollback()
+        raise  # ConflictError(409) / ValidationError(422) 透传给前端
+    admin_service._audit(
+        db, actor=admin, action="import_mcp_servers", target_type="mcp_server",
+        target_id=None,
+        detail={"count": len(created), "names": [s.name for s in created]},
+    )
+    return [McpServerOut(**svc.to_out(s)) for s in created]
+
+
 @router.get("/admin/mcp/servers/{server_id}", response_model=McpServerOut)
 def get_server(
     server_id: str,
