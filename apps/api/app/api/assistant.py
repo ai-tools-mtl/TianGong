@@ -110,7 +110,7 @@ def get_conversation(
         "draft_outline": conv.draft_outline,
         "coverage": coverage,
         "messages": [
-            {"id": str(m.id), "role": m.role, "content": m.content,
+            {"id": str(m.id), "role": m.role, "content": m.content, "meta": m.meta,
              "created_at": m.created_at.isoformat() if m.created_at else ""}
             for m in messages
         ],
@@ -150,6 +150,39 @@ HEARTBEAT_INTERVAL = 5.0
 def _sse_event(event: str, data: dict) -> str:
     import json
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
+class _StreamMeta:
+    """流式期间累积 agent 透明化元数据（tool_events + thinking），落 Message.meta 用。
+
+    与 app/api/ai.py._StreamMeta 同构（两个模块各自维护同构辅助，项目既有模式）。
+    无任何事件时 build() 返回 None（不写 meta 列）。
+    """
+
+    def __init__(self) -> None:
+        self.tool_events: list[dict] = []
+        self._thinking_parts: list[str] = []
+
+    def add_tool_call(self, name: str, args: dict) -> None:
+        self.tool_events.append({"kind": "call", "name": name, "args": args})
+
+    def add_tool_result(self, name: str, result: str) -> None:
+        self.tool_events.append({"kind": "result", "name": name, "result": result})
+
+    def add_thinking(self, text: str) -> None:
+        if text:
+            self._thinking_parts.append(text)
+
+    def build(self) -> dict | None:
+        thinking = "".join(self._thinking_parts)
+        if not self.tool_events and not thinking:
+            return None
+        meta: dict = {}
+        if self.tool_events:
+            meta["tool_events"] = self.tool_events
+        if thinking:
+            meta["thinking"] = thinking
+        return meta
 
 
 def _resolve_provider(llm_config) -> str:
@@ -247,6 +280,7 @@ async def chat(
         full_response = ""
         usage = {}  # 降级路径（裸 LLM）填充；agent loop 路径留空
         meta = {}   # 压缩 snapshot 写入，供 _log_llm_call 记 context_meta
+        stream_meta = _StreamMeta()  # 工具调用 + 思考过程累积，落 Message.meta（历史回灌用）
         start = time.monotonic()
         status = "success"
         err = None
@@ -271,12 +305,18 @@ async def chat(
                 elif kind == "token":
                     full_response += data
                     yield _sse_event("token", {"text": data})
+                elif kind == "thinking":
+                    stream_meta.add_thinking(data)
+                    yield _sse_event("thinking", {"text": data})
                 elif kind == "tool_call":
+                    stream_meta.add_tool_call(data.get("name", ""), data.get("args", {}))
                     yield _sse_event("tool_call", {"name": data.get("name", ""), "args": data.get("args", {})})
                 elif kind == "tool_result":
+                    stream_meta.add_tool_result(data.get("name", ""), data.get("result", ""))
                     yield _sse_event("tool_result", {"name": data.get("name", ""), "result": data.get("result", "")})
             # 落助手消息
-            ai_msg = Message(conversation_id=conv.id, section_id=None, role="assistant", content=full_response)
+            ai_msg = Message(conversation_id=conv.id, section_id=None, role="assistant",
+                             content=full_response, meta=stream_meta.build())
             db.add(ai_msg)
             db.commit()
             # 首轮对话：用 LLM 总结生成简短标题（走轻量模型，降级用户消息前缀）。
@@ -311,7 +351,8 @@ async def chat(
             })
         except asyncio.CancelledError:
             if full_response:
-                db.add(Message(conversation_id=conv.id, section_id=None, role="assistant", content=full_response))
+                db.add(Message(conversation_id=conv.id, section_id=None, role="assistant",
+                               content=full_response, meta=stream_meta.build()))
                 db.commit()
             raise
         except Exception as e:

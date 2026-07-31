@@ -41,6 +41,41 @@ def _sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+class _StreamMeta:
+    """流式期间累积 agent 透明化元数据（tool_events + thinking），落 Message.meta 用。
+
+    三个 SSE 端点（chat/generate/init chat）共用。工具调用按到达顺序累积成
+    序列（前端据此渲染工具卡片的时间线）；thinking 文本拼接成串（流式分块
+    逐 token 累加）。无任何事件时为空，build() 返回 None（不写 meta 列）。
+    """
+
+    def __init__(self) -> None:
+        self.tool_events: list[dict] = []
+        self._thinking_parts: list[str] = []
+
+    def add_tool_call(self, name: str, args: dict) -> None:
+        self.tool_events.append({"kind": "call", "name": name, "args": args})
+
+    def add_tool_result(self, name: str, result: str) -> None:
+        self.tool_events.append({"kind": "result", "name": name, "result": result})
+
+    def add_thinking(self, text: str) -> None:
+        if text:
+            self._thinking_parts.append(text)
+
+    def build(self) -> dict | None:
+        """组装 meta dict；无内容返回 None（不污染消息）。"""
+        thinking = "".join(self._thinking_parts)
+        if not self.tool_events and not thinking:
+            return None
+        meta: dict = {}
+        if self.tool_events:
+            meta["tool_events"] = self.tool_events
+        if thinking:
+            meta["thinking"] = thinking
+        return meta
+
+
 def _get_section_with_history(
     db: Session, user_id, section_id: str, conversation_id: str | None = None
 ) -> tuple[Section, list[Message]]:
@@ -217,6 +252,7 @@ async def chat(
         full_response = ""
         usage = {}  # 断链 C3：astream_llm 把最后一块 usage_metadata 写入此 holder
         meta = {}   # 压缩 spec §5.1：astream_chat 把 snapshot 写入此 holder，供 _log_llm_call 记 context_meta
+        stream_meta = _StreamMeta()  # 工具调用 + 思考过程累积，落 Message.meta（历史回灌用）
         start = time.monotonic()
         status = "success"
         err = None
@@ -239,15 +275,21 @@ async def chat(
                 elif kind == "token":
                     full_response += data
                     yield _sse_event("token", {"text": data})
+                elif kind == "thinking":
+                    stream_meta.add_thinking(data)
+                    yield _sse_event("thinking", {"text": data})
                 elif kind == "tool_call":
+                    stream_meta.add_tool_call(data["name"], data["args"])
                     yield _sse_event("tool_call", {
                         "name": data["name"], "args": data["args"],
                     })
                 elif kind == "tool_result":
+                    stream_meta.add_tool_result(data["name"], data["result"])
                     yield _sse_event("tool_result", {
                         "name": data["name"], "result": data["result"],
                     })
-            ai_msg = Message(section_id=section.id, conversation_id=conv.id, role="assistant", content=full_response)
+            ai_msg = Message(section_id=section.id, conversation_id=conv.id, role="assistant",
+                             content=full_response, meta=stream_meta.build())
             db.add(ai_msg)
             db.commit()
 
@@ -270,7 +312,8 @@ async def chat(
             })
         except asyncio.CancelledError:
             if full_response:
-                db.add(Message(section_id=section.id, conversation_id=conv.id, role="assistant", content=full_response))
+                db.add(Message(section_id=section.id, conversation_id=conv.id, role="assistant",
+                               content=full_response, meta=stream_meta.build()))
                 db.commit()
             status = "failed"
             err = "client_cancelled"
@@ -351,6 +394,8 @@ async def generate_draft(
                 elif kind == "token":
                     full_md += data
                     yield _sse_event("token", {"text": data})
+                elif kind == "thinking":
+                    yield _sse_event("thinking", {"text": data})
                 elif kind == "tool_call":
                     yield _sse_event("tool_call", {
                         "name": data["name"], "args": data["args"],
@@ -502,6 +547,7 @@ def list_messages(
             "id": str(m.id),
             "role": m.role,
             "content": m.content,
+            "meta": m.meta,
             "created_at": m.created_at.isoformat(),
         }
         for m in messages

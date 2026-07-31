@@ -6,7 +6,7 @@ from langchain_core.messages import HumanMessage
 from loguru import logger
 
 from app.ai.context_assembler import assemble_messages, get_project_summaries
-from app.ai.llm_client import astream_llm, stream_llm
+from app.ai.llm_client import astream_llm, extract_reasoning, stream_llm
 from app.ai.section_prompts import get_section_prompt
 from app.models import Message, Section
 from app.services.llm_config_service import ResolvedChatConfig
@@ -119,11 +119,13 @@ async def astream_chat(
 
     yield (kind, payload) 元组（Task 23：agent loop 透明化）：
       - ("token", str)：文本 token
+      - ("thinking", str)：模型思考过程片段（GLM/DeepSeek 推理模型的 reasoning）
       - ("tool_call", {"name", "args"})：agent 发起工具调用
       - ("tool_result", {"name", "result"})：工具返回
 
-    agent.astream_events 暴露 token + tool_call/tool_result 事件，本函数
-    全部透传给 SSE 层。
+    agent.astream_events 暴露 token + thinking + tool_call/tool_result 事件，本函数
+    全部透传给 SSE 层（thinking 由 ReasoningChatOpenAI 回填进 chunk.additional_kwargs，
+    extract_reasoning 读出）。
 
     注意：usage_sink 在 agent loop 路径下**不会被填充**——token 用量
     需从 agent 的最终 message 的 usage_metadata 提取（agent loop 多步调用，
@@ -171,6 +173,11 @@ async def astream_chat(
         evt = event["event"]
         if evt == "on_chat_model_stream":
             chunk = event["data"].get("chunk")
+            # 先透传思考过程（reasoning），再透传正文 token。思考片段在正文之前产出
+            # （GLM-4.x 思考模型先 think 后答），前端据此展示可折叠思考块。
+            reasoning = extract_reasoning(chunk)
+            if reasoning:
+                yield ("thinking", reasoning)
             if chunk and chunk.content:
                 yield ("token", chunk.content)
         elif evt == "on_tool_start":
@@ -197,11 +204,13 @@ async def astream_generate(
 
     yield (kind, payload) 元组（Task 23：agent loop 透明化）：
       - ("token", str)：文本 token
+      - ("thinking", str)：模型思考过程片段（GLM/DeepSeek 推理模型的 reasoning）
       - ("tool_call", {"name", "args"})：agent 发起工具调用
       - ("tool_result", {"name", "result"})：工具返回
 
-    agent.astream_events 暴露 token + tool_call/tool_result 事件，本函数
-    全部透传给 SSE 层。
+    agent.astream_events 暴露 token + thinking + tool_call/tool_result 事件，本函数
+    全部透传给 SSE 层（thinking 由 ReasoningChatOpenAI 回填进 chunk.additional_kwargs，
+    extract_reasoning 读出）。
 
     注意：usage_sink 在 agent loop 路径下**不会被填充**——token 用量
     需从 agent 的最终 message 的 usage_metadata 提取（agent loop 多步调用，
@@ -249,6 +258,11 @@ async def astream_generate(
         evt = event["event"]
         if evt == "on_chat_model_stream":
             chunk = event["data"].get("chunk")
+            # 先透传思考过程（reasoning），再透传正文 token。思考片段在正文之前产出
+            # （GLM-4.x 思考模型先 think 后答），前端据此展示可折叠思考块。
+            reasoning = extract_reasoning(chunk)
+            if reasoning:
+                yield ("thinking", reasoning)
             if chunk and chunk.content:
                 yield ("token", chunk.content)
         elif evt == "on_tool_start":

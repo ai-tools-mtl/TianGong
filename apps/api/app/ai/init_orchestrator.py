@@ -18,7 +18,7 @@ from collections.abc import AsyncIterator
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from app.ai.llm_client import astream_llm
+from app.ai.llm_client import astream_llm, extract_reasoning
 from app.ai.orchestrator import build_generate_instruction
 from app.models import Message, Section
 from app.services.llm_config_service import ResolvedChatConfig
@@ -145,6 +145,10 @@ async def _astream_init_chat_agent(
         evt = event["event"]
         if evt == "on_chat_model_stream":
             chunk = event["data"].get("chunk")
+            # 先透传思考过程（reasoning），再透传正文 token（与 orchestrator.astream_chat 同构）
+            reasoning = extract_reasoning(chunk)
+            if reasoning:
+                yield ("thinking", reasoning)
             if chunk and chunk.content:
                 yield ("token", chunk.content)
         elif evt == "on_tool_start":
