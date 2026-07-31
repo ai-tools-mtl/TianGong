@@ -32,6 +32,21 @@ def test_connection_error():
     assert "连接" in friendly_llm_error(_exc("Connection refused unreachable host"))
 
 
+def test_json_decode_empty_response():
+    """空响应 / 非 JSON 响应 → 提示检查 API 地址和密钥。"""
+    assert "无效响应" in friendly_llm_error(_exc("Expecting value: line 1 column 1 (char 0)"))
+
+
+def test_json_decode_html_response():
+    """base_url 返回 HTML 时 httpx 抛 JSONDecodeError。"""
+    assert "无效响应" in friendly_llm_error(_exc("JSONDecodeError: Expecting value: line 1 column 1 (char 0)"))
+
+
+def test_json_decode_property_name():
+    """JSON 格式错误 → 同属无效响应。"""
+    assert "无效响应" in friendly_llm_error(_exc("Expecting property name enclosed in double quotes: line 2 column 5 (char 10)"))
+
+
 def test_unmatched_keeps_original_truncated():
     long = "x" * 500
     out = friendly_llm_error(_exc(long))

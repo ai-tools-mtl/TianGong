@@ -3,6 +3,7 @@
 供 knowledge_service 的 upload 流程调用:外部素材上传 → 提取文本 → 分块 → 向量化。
 - pdf → 优先 MinerU（保留表格/标题的 Markdown，含 OCR 扫描件）；未配置降级 pypdf（扫描件拒收）
 - docx → 直接抽段落文本(不造 structure,这里只要文本供分块)
+- md → UTF-8 直解（纯文本/Markdown，保留原始格式供分块）
 - 其他 → 拒收
 """
 
@@ -32,6 +33,10 @@ def extract_text(filename: str, content: bytes, db=None) -> str:
         text = _extract_pdf(filename, content, db)
     elif ext == "docx":
         text = _docx_to_text(content)
+    elif ext == "md":
+        text = content.decode("utf-8", errors="replace")
+    elif ext == "txt":
+        text = content.decode("utf-8", errors="replace")
     else:
         raise ValueError(f"不支持的格式: .{ext}")
 

@@ -77,6 +77,37 @@ docker compose up -d postgres minio
 
 > 注:docker-compose 用 `quay.io/minio/minio` 镜像(国内可达性优于 docker.io)。如 quay.io 不可达,可改回 `minio/minio`。
 
+### 预下载 RAG 模型（embedding + rerank）
+
+RAG 检索依赖两个本地推理微服务（Infinity），需提前下载模型权重到 `models/` 目录（已 gitignore，不入库）：
+
+| 模型 | 用途 | 体积 | 目标目录 |
+|---|---|---|---|
+| `BAAI/bge-m3` | 文本向量化（embedding，检索强制依赖） | ~2.3 GB | `models/bge-m3` |
+| `BAAI/bge-reranker-v2-m3` | 检索结果精排（rerank，可选增强） | ~2.2 GB | `models/bge-reranker-v2-m3` |
+
+**方式一：ModelScope（国内推荐，速度快）**
+
+```bash
+pip install modelscope
+cd <仓库根目录>
+
+python -c "from modelscope import snapshot_download; snapshot_download('BAAI/bge-m3', local_dir='models/bge-m3')"
+python -c "from modelscope import snapshot_download; snapshot_download('BAAI/bge-reranker-v2-m3', local_dir='models/bge-reranker-v2-m3')"
+```
+
+**方式二：HuggingFace 镜像（备选）**
+
+```bash
+pip install -U "huggingface_hub[cli]"
+export HF_ENDPOINT=https://hf-mirror.com
+
+huggingface-cli download BAAI/bge-m3 --local-dir models/bge-m3
+huggingface-cli download BAAI/bge-reranker-v2-m3 --local-dir models/bge-reranker-v2-m3
+```
+
+> 下载完成后，`models/` 下应有两个子目录，各含 `config.json` 与权重文件（`pytorch_model.bin` 或 `model.safetensors`）。`bge-m3` 由 `docker-compose.yml` 的 embedding 服务挂载使用；`bge-reranker-v2-m3` 供 rerank 微服务加载。
+
 ### 2. 启动后端
 
 ```bash

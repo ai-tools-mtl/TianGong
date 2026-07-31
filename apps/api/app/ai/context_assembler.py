@@ -226,8 +226,44 @@ def _profile_density_hint(profile_text: str) -> str:
 
 
 
+def _retrieve_knowledge_for_section(
+    db, user_id, section: Section, user_input: str | None = None,
+) -> list[dict] | None:
+    """为当前章节预检索知识库，失败静默返回 None（不阻断 agent 构建）。
+
+    检索 query 由章节标题 + 章节目标 + 用户输入拼接构成。user_input 为空时
+    仅用章节信号检索。top_k=3，单条内容截断到 300 字以控制 system prompt token。
+    """
+    try:
+        from app.rag.retriever import retrieve
+        from app.ai.section_prompts import get_section_prompt
+
+        sp = get_section_prompt(section.key)
+        parts = [section.title, sp.goal]
+        if user_input and user_input.strip():
+            parts.append(user_input.strip()[:200])
+        query = " ".join(parts)
+
+        results = retrieve(db, user_id=user_id, query=query, top_k=3)
+        if not results:
+            return None
+        return [
+            {
+                "content": r.content[:300],
+                "score": round(r.score, 2),
+                "section_key": r.source_section_key,
+                "project_title": r.project_title,
+            }
+            for r in results
+        ]
+    except Exception:
+        db.rollback()
+        return None
+
+
 def build_system_prompt(
-    db, section: Section, user_input: str | None = None, intent: str | None = None
+    db, section: Section, user_input: str | None = None, intent: str | None = None,
+    knowledge_context: list[dict] | None = None,
 ) -> str:
     """装配动态 system prompt（agent loop 路线用，spec §3.1.1）。
 
@@ -271,18 +307,38 @@ def build_system_prompt(
             "③ 不要与上文的技术方案、技术效果矛盾。"
         )
 
+    # 知识库预注入层：系统自动检索与当前章节最相关的历史案例，让 agent 从一开始就
+    # 带着参考上下文工作。放在已写章节之后（同属结构性上下文），用户记忆之前。
+    if knowledge_context:
+        parts.append(
+            "# 知识库参考（你历史案例中与本章节最相关的内容，请参考其术语与风格）"
+        )
+        for k in knowledge_context:
+            source = k.get("project_title") or "历史案例"
+            key = f"·{k['section_key']}" if k.get("section_key") else ""
+            score = k.get("score", 0)
+            content = k.get("content", "")
+            parts.append(f"- 《{source}》{key}（相关度 {score}）：{content}")
+        parts.append(
+            "使用规则：参考上述案例的术语体系和写作风格，自然地呼应其表述方式，"
+            "不要逐字抄内容。若与当前项目无关则忽略。"
+        )
+
     # 【新增】用户长期记忆层（检索注入，纯检索式策略）
     # 检索 query 选择（实测：混拼会稀释语义信号，必须二选一）：
     # - 有 user_input（chat 场景）：只用用户输入。它是最强语义信号，
     #   如「检查我的写作风格」→命中「偏好简洁风格」记忆。
     # - 无 user_input（generate 等场景）：回退到章节标题+目标。
     # project 已在上方 fetch（L164），直接复用其 user_id，避免重复查询。
-    if project.user_id is not None:
+    project_user_id = project.user_id  # 预取值：_search_user_memories 内部失败会 rollback，
+    # 导致 project 对象被 expire；后续访问 project.user_id 会触发惰性加载，
+    # 若事务已被毒化则抛 InFailedSqlTransaction。用局部变量绑定，避开惰性加载。
+    if project_user_id is not None:
         # user_input 非空且非纯空格时用它检索；否则回退章节信号
         # （纯空格 embed 会产出垃圾向量，污染检索结果）
         memory_query = (user_input.strip() if user_input and user_input.strip()
                         else f"{section.title} {sp.goal}")
-        memories = _search_user_memories(db, project.user_id, memory_query)
+        memories = _search_user_memories(db, project_user_id, memory_query)
         if memories:
             memory_lines = "\n".join(f"- {m.content}" for m in memories)
             parts.append("# 关于这位用户的长期记忆（请遵循其偏好与约定）")
@@ -299,7 +355,7 @@ def build_system_prompt(
         # [S2-3] 用户画像层：source=profile 的记忆（职业/领域/专业水平），全量注入。
         # 画像不走语义检索（量少、要全量），用 list_memories(source=profile) 直取。
         # 据画像内容调节表达密度：代理人/律师 → 高密度专业术语；发明人/工程师 → 通俗化。
-        profile = _get_profile_memories(db, project.user_id)
+        profile = _get_profile_memories(db, project_user_id)
         if profile:
             profile_text = "\n".join(f"- {m.content}" for m in profile)
             density_hint = _profile_density_hint(profile_text)

@@ -299,17 +299,21 @@ export const api = {
     handlers: {
       onChapterStart?: (d: { index: number; total: number; title: string; key: string }) => void
       onToken?: (t: string) => void
-      onChapterDone?: (d: { index: number; title: string; status: string; error: string | null }) => void
+      onChapterDone?: (d: { index: number; title: string; key: string; status: string; error: string | null }) => void
       onAllDone?: (d: { project_id: string }) => void
     },
     signal?: AbortSignal,
     conversationId?: string,
+    sections?: string[],
   ) => {
     const res = await fetch(`${BASE}/api/v1/projects/${projectId}/init-generate`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conversation_id: conversationId ?? null }),
+      body: JSON.stringify({
+        conversation_id: conversationId ?? null,
+        ...(sections && sections.length ? { sections } : {}),
+      }),
       signal,
     })
     if (!res.ok) throw await _sseHttpError(res)
@@ -350,7 +354,7 @@ export const api = {
           const text = data.text as string | undefined
           if (text) handlers.onToken?.(text)
         } else if (eventType === 'chapter_done') {
-          handlers.onChapterDone?.(data as { index: number; title: string; status: string; error: string | null })
+          handlers.onChapterDone?.(data as { index: number; title: string; key: string; status: string; error: string | null })
         } else if (eventType === 'done') {
           handlers.onAllDone?.(data as { project_id: string })
         }
@@ -717,22 +721,6 @@ export const api = {
   }) =>
     request(`/admin/knowledge/chunks/${chunkId}`, {
       method: 'PATCH',
-      body: JSON.stringify(payload),
-    }),
-
-  // G3 rerank 配置（混合检索精排模型配置）
-  getRerankConfig: () =>
-    request<{ enabled: boolean; base_url: string; has_api_key: boolean; model: string }>(
-      '/admin/rag/rerank-config',
-    ),
-  saveRerankConfig: (payload: { enabled: boolean; base_url: string; api_key: string; model: string }) =>
-    request<{ ok: boolean }>('/admin/rag/rerank-config', {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    }),
-  testRerankConfig: (payload: { enabled: boolean; base_url: string; api_key: string; model: string }) =>
-    request<{ ok: boolean; message: string }>('/admin/rag/rerank-config/test', {
-      method: 'POST',
       body: JSON.stringify(payload),
     }),
 

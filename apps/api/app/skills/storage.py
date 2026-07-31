@@ -63,9 +63,24 @@ class MinIOSkillStore(BaseStore):
         return json.dumps(value, ensure_ascii=False).encode("utf-8")
 
     def _deserialize(self, raw: bytes) -> dict[str, Any]:
+        """反序列化 MinIO 对象值 → dict。
+
+        skill 目录下同时存在两种对象：
+        - JSON 元数据（通过 store.put 写入的 value dict → json.dumps）
+        - 原始文本文件（SKILL.md / scripts / references 通过 skill_service
+          直接 st.put(..., "text/plain") 写入，非 JSON）
+
+        对 JSON 解析失败的对象：降级包装为 {"content": <原文>} 返回，
+        不阻断 search() 列举（SkillsMiddleware 需遍历所有文件）。
+        """
         if not raw:
             return {}
-        return json.loads(raw.decode("utf-8"))
+        text = raw.decode("utf-8")
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            # 非 JSON 文件（SKILL.md / 脚本等）：包装原文
+            return {"content": text}
 
     # ---- 单项同步 API（BaseStore 契约） ---------------------------------
 
@@ -76,7 +91,7 @@ class MinIOSkillStore(BaseStore):
 
     def get(self, namespace, key, *, refresh_ttl=None) -> Item | None:
         st = self._storage()
-        minio_key = namespace_to_minio_key(namespace, key)
+        minio_key = self._resolve_key(namespace, key)
         if not st.stat(self._bucket_alias, minio_key):
             return None
         raw = st.get(self._bucket_alias, minio_key)
@@ -87,6 +102,20 @@ class MinIOSkillStore(BaseStore):
             created_at=now, updated_at=now,
         )
 
+    def _resolve_key(self, namespace, key: str) -> str:
+        """把 store 协议 (namespace, key) 解析为 MinIO 对象 key。
+
+        StoreBackend 调用 store.get(namespace, key) 时，key 可能是：
+        - 完整 MinIO 路径（如 "skills/builtin/patent-de-ai/SKILL.md"）
+          → 直接用，避免 namespace_to_minio_key 导致双前缀
+        - 纯文件名（如 "SKILL.md"）→ 拼接 namespace + key
+
+        启发式判断：key 以 namespace 首段 + "/" 开头 = 已含前缀。
+        """
+        if namespace and key.startswith(namespace[0] + "/"):
+            return key
+        return namespace_to_minio_key(namespace, key)
+
     def search(
         self, namespace_prefix, /, *,
         query=None, filter=None, limit=10, offset=0, refresh_ttl=None,
@@ -96,6 +125,9 @@ class MinIOSkillStore(BaseStore):
         MinIO 无原生 namespace 查询，用 minio client list_objects（前缀匹配）模拟。
         每个 skill 的文件（SKILL.md/scripts/*）各成一个 SearchItem。
         query/filter 在 skill 文件场景不适用，忽略。
+
+        key 用完整 MinIO 对象路径：StoreBackend.ls() 会用 item.key 做前缀匹配 +
+        构造结果 path 字段，需要全路径而非纯文件名。
         """
         st = self._storage()
         prefix_str = "/".join(namespace_prefix) + "/"
@@ -112,7 +144,9 @@ class MinIOSkillStore(BaseStore):
             raw = st.get(self._bucket_alias, obj.object_name)
             value = self._deserialize(raw)
             items.append(SearchItem(
-                value=value, key=file_key, namespace=ns,
+                value=value,
+                key=obj.object_name,  # 完整 MinIO 路径：StoreBackend 做前缀匹配需要
+                namespace=ns,
                 created_at=now, updated_at=now,
             ))
             if len(items) >= limit + offset:

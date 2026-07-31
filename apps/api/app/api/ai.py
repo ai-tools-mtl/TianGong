@@ -2,7 +2,9 @@
 
 import asyncio
 import json
+import logging
 import time
+import traceback
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Body, Depends
@@ -13,6 +15,8 @@ from sqlalchemy.orm import Session
 
 from app.ai.llm_client import astream_llm
 from app.ai.llm_errors import friendly_llm_error
+
+logger = logging.getLogger("tiangong.ai")
 from app.ai.orchestrator import astream_chat, astream_generate, astream_rewrite
 from app.core.database import get_db
 from app.core.exceptions import ValidationError
@@ -204,6 +208,10 @@ async def chat(
     llm_config = llm_config_service.resolve_chat_config(db, user_id=current_user.id, chat_source=payload.chat_source)
 
     async def generate():
+        # 防御：resolve_chat_config（外层已执行）在当前事务中做了多次 SELECT，
+        # 若任一查询触发了隐性错误，事务可能已进入 aborted 状态。此处显式
+        # rollback 确保 generator 内第一条 DB 操作从干净事务开始。
+        db.rollback()
         full_response = ""
         usage = {}  # 断链 C3：astream_llm 把最后一块 usage_metadata 写入此 holder
         start = time.monotonic()
@@ -265,6 +273,7 @@ async def chat(
         except Exception as e:
             status = "failed"
             err = e
+            logger.exception("SSE 流式端点异常（已友好化转发前端）")
             yield _sse_event("error", {"code": "llm_error", "message": _friendly_llm_error(e)})
         finally:
             # 防御：agent loop 内任何 DB 操作失败会让事务进入 aborted 状态。
@@ -311,6 +320,7 @@ async def generate_draft(
     llm_config = llm_config_service.resolve_chat_config(db, user_id=current_user.id, chat_source=chat_source)
 
     async def generate():
+        db.rollback()
         full_md = ""
         usage = {}  # 断链 C3：astream_llm 把最后一块 usage_metadata 写入此 holder
         start = time.monotonic()
@@ -361,6 +371,7 @@ async def generate_draft(
         except Exception as e:
             status = "failed"
             err = e
+            logger.exception("SSE 流式端点异常（已友好化转发前端）")
             yield _sse_event("error", {"code": "llm_error", "message": _friendly_llm_error(e)})
         finally:
             # 防御：同 chat 端点，agent loop 内 DB 失败可能毒化事务，
@@ -402,6 +413,7 @@ async def rewrite(
     llm_config = llm_config_service.resolve_chat_config(db, user_id=current_user.id, chat_source=payload.chat_source)
 
     async def generate():
+        db.rollback()
         usage = {}  # 断链 C3：astream_llm 把最后一块 usage_metadata 写入此 holder
         start = time.monotonic()
         status = "success"
@@ -432,6 +444,7 @@ async def rewrite(
         except Exception as e:
             status = "failed"
             err = e
+            logger.exception("SSE 流式端点异常（已友好化转发前端）")
             yield _sse_event("error", {"code": "llm_error", "message": _friendly_llm_error(e)})
         finally:
             _log_llm_call(
@@ -632,6 +645,7 @@ async def caption_figures(
     ]
 
     async def generate():
+        db.rollback()
         usage = {}  # 断链 C3：astream_llm 把最后一块 usage_metadata 写入此 holder
         start = time.monotonic()
         status = "success"
@@ -656,6 +670,7 @@ async def caption_figures(
         except Exception as e:
             status = "failed"
             err = e
+            logger.exception("SSE 流式端点异常（已友好化转发前端）")
             yield _sse_event("error", {"code": "llm_error", "message": _friendly_llm_error(e)})
         finally:
             _log_llm_call(

@@ -111,7 +111,7 @@ async def astream_init_generate(
     yield 元组（与 astream_chat/generate 风格一致，供 SSE 层消费）：
       - ("chapter_start", {"index": int, "total": int, "title": str, "key": str})
       - ("token", str)  # 当前章节的生成 token
-      - ("chapter_done", {"index": int, "title": str, "status": "ok"|"failed", "error": str|None})
+      - ("chapter_done", {"index": int, "title": str, "key": str, "status": "ok"|"failed", "error": str|None})
       - ("all_done", {"project_id": str})
 
     单章失败不中断整体（标记 failed，继续下一章）——避免一章挂掉导致整批回滚。
@@ -152,7 +152,7 @@ async def astream_init_generate(
             db.refresh(section)
         finally:
             yield ("chapter_done", {
-                "index": idx, "title": section.title,
+                "index": idx, "title": section.title, "key": section.key,
                 "status": "failed" if chapter_error else "ok",
                 "error": chapter_error,
             })

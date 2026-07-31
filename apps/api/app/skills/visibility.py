@@ -28,17 +28,30 @@ def list_visible_skills(db: Session, *, user_id) -> list[Skill]:
 def build_agent_skill_sources(db: Session, *, user_id) -> list[str]:
     """为 deepagents 的 create_deep_agent(skills=...) 构造 source 路径列表。
 
-    返回 MinIO 前缀列表，SkillsMiddleware 按这些前缀加载 skill 目录。
+    返回技能 PARENT 目录的 MinIO 前缀列表，而非单个 skill 路径。
+    deepagents 的 SkillsMiddleware 调用 backend.ls(source) 时期望
+    source/ 下的**子目录**各为一个 skill（内含 SKILL.md），而非 source
+    本身为 skill 目录。
+
+    示例：skill minio_prefix = "skills/builtin/patent-de-ai/" 时，
+    source = "skills/builtin/"（去掉末尾 skill 名），
+    middleware 列出后找到 patent-de-ai/、patent-effect-contrast/ 等子目录。
+
     deepagents 语义：later source 覆盖 earlier（personal 后于 global，同名 personal 生效）。
     """
     skills = list_visible_skills(db, user_id=user_id)
-    prefixes: list[str] = []
+    sources: list[str] = []
     seen: set[str] = set()
     # global 先（低优先级），personal 后（高优先级，覆盖同名 global）
     ordered = sorted(skills, key=lambda s: 0 if s.scope == SCOPE_GLOBAL else 1)
     for s in ordered:
-        prefix = s.minio_prefix
-        if prefix not in seen:
-            seen.add(prefix)
-            prefixes.append(prefix)
-    return prefixes
+        prefix = s.minio_prefix.rstrip("/")  # e.g. "skills/builtin/patent-de-ai"
+        parts = prefix.split("/")
+        if len(parts) >= 2:
+            parent = "/".join(parts[:-1]) + "/"  # e.g. "skills/builtin/"
+        else:
+            parent = prefix + "/"
+        if parent not in seen:
+            seen.add(parent)
+            sources.append(parent)
+    return sources

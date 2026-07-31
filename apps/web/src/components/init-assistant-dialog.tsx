@@ -1,6 +1,6 @@
 'use client'
 
-import { Loader2, MessageSquarePlus, Sparkles } from 'lucide-react'
+import { Loader2, MessageSquarePlus, RotateCcw, Sparkles } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -37,6 +37,18 @@ interface ChapterProgress {
   error: string | null
 }
 
+// 8 章固定结构（与后端 DEFAULT_STRUCTURE 一致）。生成前供用户勾选，控制 token 成本。
+const ALL_CHAPTERS: { key: string; title: string }[] = [
+  { key: 'name', title: '发明名称' },
+  { key: 'field', title: '技术领域' },
+  { key: 'background', title: '背景技术' },
+  { key: 'problem', title: '发明目的与技术问题' },
+  { key: 'solution', title: '技术方案' },
+  { key: 'effect', title: '有益效果' },
+  { key: 'drawings', title: '附图说明' },
+  { key: 'embodiment', title: '具体实施方式' },
+]
+
 /**
  * 项目初始化助手：对话式新建项目。
  *
@@ -58,7 +70,11 @@ export function InitAssistantDialog() {
   const [chatSending, setChatSending] = useState(false)
   const [chapters, setChapters] = useState<ChapterProgress[]>([])
   const [currentChapterDraft, setCurrentChapterDraft] = useState('')
+  const [selectedSections, setSelectedSections] = useState<string[]>(ALL_CHAPTERS.map((c) => c.key))
+  const [showPicker, setShowPicker] = useState(false)
   const abortRef = useRef<AbortController | null>(null)
+  // 跟踪本轮生成中失败的章节 key（避开 stale closure：异步 SSE 回调里读 state 是旧快照）
+  const failedKeysRef = useRef<Set<string>>(new Set())
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // 对话区自动滚到底
@@ -83,6 +99,8 @@ export function InitAssistantDialog() {
         setInput('')
         setChapters([])
         setCurrentChapterDraft('')
+        setSelectedSections(ALL_CHAPTERS.map((c) => c.key))
+        setShowPicker(false)
       }, 200)
     } else {
       setOpen(true)
@@ -173,12 +191,23 @@ export function InitAssistantDialog() {
     }
   }
 
-  // 第 3 步：批量生成 8 章初稿
-  async function handleGenerate() {
+  // 第 3 步：批量生成章节初稿。
+  // - 首次生成：按 selectedSections 过滤，重置 chapters。
+  // - 重试（isRetry=true）：只跑当前 failed 的 key，复用已有 chapters 进度（不重置），
+  //   且不自动跳转（让用户看到重试结果后再手动进项目）。
+  async function handleGenerate(isRetry = false) {
     if (!projectId) return
+    const targetSections = isRetry
+      ? chapters.filter((c) => c.status === 'failed').map((c) => c.key)
+      : selectedSections
+    if (targetSections.length === 0) {
+      toast.error('请至少选择一个章节')
+      return
+    }
     setPhase('generating')
-    setChapters([])
     setCurrentChapterDraft('')
+    if (!isRetry) setChapters([])
+    failedKeysRef.current = new Set()  // 本轮重置失败跟踪
     const ac = new AbortController()
     abortRef.current = ac
     try {
@@ -188,9 +217,10 @@ export function InitAssistantDialog() {
           onChapterStart: (d) => {
             setCurrentChapterDraft('')
             setChapters((prev) => {
-              const exists = prev.find((c) => c.index === d.index)
+              const exists = prev.find((c) => c.key === d.key)
               if (exists) {
-                return prev.map((c) => (c.index === d.index ? { ...c, status: 'generating' } : c))
+                // 重试场景：复用原 index，置 generating
+                return prev.map((c) => (c.key === d.key ? { ...c, status: 'generating', error: null } : c))
               }
               return [...prev, {
                 index: d.index, total: d.total, title: d.title, key: d.key,
@@ -201,20 +231,30 @@ export function InitAssistantDialog() {
           onToken: (t) => setCurrentChapterDraft((prev) => prev + t),
           onChapterDone: (d) => {
             setCurrentChapterDraft('')
+            // ref 跟踪失败（onAllDone 用，避开 stale closure）
+            if (d.status === 'failed') failedKeysRef.current.add(d.key)
+            else failedKeysRef.current.delete(d.key)
             setChapters((prev) => prev.map((c) =>
-              c.index === d.index ? { ...c, status: d.status as 'ok' | 'failed', error: d.error } : c
+              c.key === d.key ? { ...c, status: d.status as 'ok' | 'failed', error: d.error } : c
             ))
           },
           onAllDone: () => {
-            // 失效项目列表（新项目 + 章节已填充），跳转项目页
             qc.invalidateQueries({ queryKey: queryKeys.projects })
-            toast.success('项目初稿已生成')
-            handleOpenChange(false)
-            router.push(`/projects/${projectId}`)
+            // 重试场景：不自动跳转，留在进度页让用户确认结果
+            if (isRetry) return
+            // 首次生成：全 ok 才自动跳转；有 failed 留着让用户重试
+            if (failedKeysRef.current.size === 0) {
+              toast.success('项目初稿已生成')
+              handleOpenChange(false)
+              router.push(`/projects/${projectId}`)
+            } else {
+              toast.warning('部分章节生成失败，可点击「重试失败章节」')
+            }
           },
         },
         ac.signal,
         conversationId ?? undefined,
+        targetSections,
       )
     } catch (e) {
       if ((e as Error)?.name !== 'AbortError') {
@@ -223,6 +263,15 @@ export function InitAssistantDialog() {
       }
     }
   }
+
+  function toggleSection(key: string) {
+    setSelectedSections((prev) =>
+      prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key],
+    )
+  }
+
+  // 生成完成后是否留在 generating 阶段（有失败需重试，或重试后供用户确认）
+  const hasFailedChapters = chapters.some((c) => c.status === 'failed')
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -322,10 +371,48 @@ export function InitAssistantDialog() {
                   <MessageSquarePlus className="size-4" />
                 </Button>
               </div>
-              <div className="flex justify-end">
-                <Button onClick={handleGenerate} disabled={chatSending} className="gap-1.5">
-                  <Sparkles className="size-3.5" /> 生成项目骨架
-                </Button>
+              <div className="space-y-2">
+                {/* 章节选择（控制生成范围 / token 成本） */}
+                <div className="rounded-md border bg-muted/30 p-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowPicker((v) => !v)}
+                    className="flex w-full items-center justify-between text-xs text-muted-foreground"
+                  >
+                    <span>
+                      生成章节（已选 {selectedSections.length}/{ALL_CHAPTERS.length}）
+                    </span>
+                    <span>{showPicker ? '收起 ▲' : '选择 ▼'}</span>
+                  </button>
+                  {showPicker && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {ALL_CHAPTERS.map((c) => (
+                        <button
+                          key={c.key}
+                          type="button"
+                          onClick={() => toggleSection(c.key)}
+                          className={cn(
+                            'rounded-full border px-2 py-0.5 text-[11px] transition-colors',
+                            selectedSections.includes(c.key)
+                              ? 'border-primary bg-primary text-primary-foreground'
+                              : 'bg-background text-muted-foreground hover:bg-muted',
+                          )}
+                        >
+                          {c.title}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="flex justify-end">
+                  <Button
+                    onClick={() => handleGenerate(false)}
+                    disabled={chatSending || selectedSections.length === 0}
+                    className="gap-1.5"
+                  >
+                    <Sparkles className="size-3.5" /> 生成项目骨架
+                  </Button>
+                </div>
               </div>
             </div>
           </>
@@ -333,34 +420,64 @@ export function InitAssistantDialog() {
 
         {/* 阶段 3：生成进度 */}
         {phase === 'generating' && (
-          <div className="flex-1 space-y-3 overflow-y-auto pr-1">
-            {chapters.length === 0 && (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="size-4 animate-spin" /> 准备生成…
-              </div>
-            )}
-            {chapters.map((c) => (
-              <div key={c.index} className="rounded-lg border p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-[13px] font-medium">
-                    {c.index}/{c.total} {c.title}
-                  </span>
-                  {c.status === 'generating' && <Loader2 className="size-3.5 animate-spin text-primary" />}
-                  {c.status === 'ok' && <span className="text-xs text-green-600">✓ 完成</span>}
-                  {c.status === 'failed' && (
-                    <span className="text-xs text-destructive" title={c.error ?? undefined}>
-                      ✗ 失败
+          <>
+            <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto pr-1">
+              {chapters.length === 0 && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="size-4 animate-spin" /> 准备生成…
+                </div>
+              )}
+              {chapters.map((c) => (
+                <div key={c.index} className="rounded-lg border p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[13px] font-medium">
+                      {c.index}/{c.total} {c.title}
                     </span>
+                    {c.status === 'generating' && <Loader2 className="size-3.5 animate-spin text-primary" />}
+                    {c.status === 'ok' && <span className="text-xs text-green-600">✓ 完成</span>}
+                    {c.status === 'failed' && (
+                      <span className="text-xs text-destructive" title={c.error ?? undefined}>
+                        ✗ 失败
+                      </span>
+                    )}
+                  </div>
+                  {c.status === 'generating' && currentChapterDraft && (
+                    <p className="mt-1.5 line-clamp-2 text-xs text-muted-foreground">
+                      {currentChapterDraft.slice(-120)}
+                    </p>
                   )}
                 </div>
-                {c.status === 'generating' && currentChapterDraft && (
-                  <p className="mt-1.5 line-clamp-2 text-xs text-muted-foreground">
-                    {currentChapterDraft.slice(-120)}
-                  </p>
-                )}
+              ))}
+            </div>
+            {/* 底部操作栏：全部生成结束（无 generating）后显示。
+                - 有失败：可「重试失败章节」或先「进入项目」（已成功的章节已落库）
+                - 全成功：首次已在 onAllDone 自动跳转；重试场景留在原地供确认 */}
+            {chapters.length > 0 && !chapters.some((c) => c.status === 'generating') && (
+              <div className="flex items-center justify-between gap-2 border-t pt-3">
+                <span className="text-xs text-muted-foreground">
+                  {hasFailedChapters
+                    ? `${chapters.filter((c) => c.status === 'failed').length} 章失败，可重试或先进入项目`
+                    : '全部章节已生成'}
+                </span>
+                <div className="flex gap-2">
+                  {hasFailedChapters && (
+                    <Button variant="outline" onClick={() => handleGenerate(true)} className="gap-1.5">
+                      <RotateCcw className="size-3.5" /> 重试失败章节
+                    </Button>
+                  )}
+                  <Button
+                    onClick={() => {
+                      handleOpenChange(false)
+                      router.push(`/projects/${projectId}`)
+                    }}
+                    className="gap-1.5"
+                  >
+                    进入项目
+                  </Button>
+                </div>
               </div>
-            ))}
-          </div>
+            )}
+          </>
         )}
       </DialogContent>
     </Dialog>

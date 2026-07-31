@@ -95,7 +95,7 @@ def retrieve(
     # pg_trgm 按 trigram 匹配，对中文子串效果好（需迁移 4c736cec13b7 建扩展+GIN 索引）。
     kw_rows = []
     if is_postgres():
-        db.execute(text("SET LOCAL pg_trgm.similarity_threshold = :th"), {"th": 0.1})
+        db.execute(text("SET LOCAL pg_trgm.similarity_threshold = 0.1"))
         kw_stmt = (
             select(
                 KnowledgeChunk,

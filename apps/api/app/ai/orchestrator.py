@@ -1,5 +1,6 @@
 """AI 编排：引导对话、生成草稿、段落重写。"""
 
+import logging
 from collections.abc import AsyncIterator, Iterator
 
 from langchain_core.messages import HumanMessage
@@ -9,6 +10,8 @@ from app.ai.llm_client import astream_llm, stream_llm
 from app.ai.section_prompts import get_section_prompt
 from app.models import Message, Section
 from app.services.llm_config_service import ResolvedChatConfig
+
+logger = logging.getLogger("tiangong.ai")
 
 
 def stream_chat(
@@ -135,8 +138,10 @@ async def astream_chat(
     # user_input 用于记忆检索（用户当前输入是最强语义信号，如「检查写作风格」→命中偏好记忆）
     # [S2-2] 规则层意图识别：draft/edit/info/guide → 注入对应行为指令（D1，LLM 兜底默认关）
     intent = classify_intent(user_input)
+    logger.info("astream_chat: 开始构建 agent（intent=%s model=%s）", intent, llm_config.model)
     agent = await build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section),
                         section=section, user_input=user_input, intent=intent)
+    logger.info("astream_chat: agent 构建完成，开始 agent loop")
 
     # [L2] 透传历史 + 当前用户输入（spec §3.3.2）
     messages = []
