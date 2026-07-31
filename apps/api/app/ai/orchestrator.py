@@ -138,11 +138,25 @@ async def astream_chat(
     agent = await build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section),
                         section=section, user_input=user_input, intent=intent)
 
-    # [L2] 透传历史 + 当前用户输入（spec §3.3.2）
-    messages = []
-    for msg in history:
-        messages.append({"role": msg.role, "content": msg.content})
-    messages.append({"role": "user", "content": user_input})
+    # [L2] 透传历史 + 当前用户输入，长历史先压缩（spec §3.3.2 + 压缩 spec）
+    import logging
+
+    from app.ai.context_compactor import compress_history
+
+    compressed, snapshot = await compress_history(
+        history, user_input, llm_config, scene="chat"
+    )
+    if snapshot.triggered:
+        logging.getLogger(__name__).info(
+            "上下文压缩触发 (chat, section=%s): reason=%s %d→%d条 fallback=%s",
+            section.id, snapshot.reason, snapshot.original_count,
+            snapshot.compressed_count, snapshot.fallback,
+        )
+    # compress_history 的契约：触发/降级路径已在末尾 append current_input；
+    # 未触发路径只返回历史 dict，不含 current_input —— 这里补一次，保证末尾恒为当前输入。
+    messages = compressed
+    if not snapshot.triggered:
+        messages.append({"role": "user", "content": user_input})
 
     async for event in agent.astream_events(
         {"messages": messages},
@@ -201,11 +215,24 @@ async def astream_generate(
     # [S4-2] 用 build_generate_instruction 构造含 CoT 分步思考的指令
     instruction = build_generate_instruction(section)
 
-    # [L2] 透传本章节对话历史（spec §3.3.1）
-    messages = []
-    for msg in history:
-        messages.append({"role": msg.role, "content": msg.content})
-    messages.append({"role": "user", "content": instruction})
+    # [L2] 透传历史，长历史先压缩，再 append generate 指令（压缩 spec）
+    import logging
+
+    from app.ai.context_compactor import compress_history
+
+    compressed, snapshot = await compress_history(
+        history, instruction, llm_config, scene="generate"
+    )
+    if snapshot.triggered:
+        logging.getLogger(__name__).info(
+            "上下文压缩触发 (generate, section=%s): reason=%s %d→%d条",
+            section.id, snapshot.reason, snapshot.original_count, snapshot.compressed_count,
+        )
+    # compress_history 的契约：触发/降级路径已在末尾 append instruction；
+    # 未触发路径只返回历史 dict，不含 instruction —— 这里补一次，保证末尾恒为 generate 指令。
+    messages = compressed
+    if not snapshot.triggered:
+        messages.append({"role": "user", "content": instruction})
 
     async for event in agent.astream_events(
         {"messages": messages},
