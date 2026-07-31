@@ -6,6 +6,7 @@ import { Trash2, FlaskConical, Upload } from 'lucide-react'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
 import { Button } from '@/components/ui/button'
+import { Collapsible } from '@/components/ui/collapsible'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Switch } from '@/components/ui/switch'
 import {
@@ -121,6 +122,48 @@ export default function McpConfigPage() {
             onChange={(e) => setJsonText(e.target.value)}
             placeholder={SAMPLE_PLACEHOLDER}
           />
+          <div className="mt-3">
+            <Collapsible trigger="常见问题与配置示例">
+              <div className="space-y-3 rounded-md bg-muted/40 p-3 text-xs leading-relaxed text-muted-foreground">
+                <div>
+                  <div className="font-medium text-foreground">stdio server 测试报 ImportError（如 McpError 找不到）</div>
+                  <div className="mt-1">
+                    MCP 生态正处于 mcp 1.x → 2.0 过渡期，部分 server（如 mcp-server-fetch）代码尚不兼容 mcp 2.0。
+                    uvx/npx 默认装最新版会导致启动崩溃。在 args 里 pin 住版本即可：
+                  </div>
+                  <pre className="mt-1 overflow-x-auto rounded bg-background p-2 text-[11px] text-foreground">{`{
+  "mcpServers": {
+    "fetch": {
+      "command": "uvx",
+      "args": ["--with", "mcp<2", "mcp-server-fetch"]
+    }
+  }
+}`}</pre>
+                </div>
+                <div>
+                  <div className="font-medium text-foreground">http/sse server 测试一直超时</div>
+                  <div className="mt-1">
+                    若远端接受连接但不响应，通常是缺少认证或端点已失效。在 headers 里带上 provider 要求的 token：
+                  </div>
+                  <pre className="mt-1 overflow-x-auto rounded bg-background p-2 text-[11px] text-foreground">{`{
+  "mcpServers": {
+    "remote": {
+      "url": "https://provider.example/sse",
+      "headers": { "Authorization": "Bearer <你的 token>" }
+    }
+  }
+}`}</pre>
+                </div>
+                <div>
+                  <div className="font-medium text-foreground">stdio 启动慢 / 首次测试超时</div>
+                  <div className="mt-1">
+                    uvx/npx 首次会下载依赖（可能几十秒）。测试连接 stdio 超时为 30s，http/sse 为 15s。
+                    首次失败可等下载完成后重试。
+                  </div>
+                </div>
+              </div>
+            </Collapsible>
+          </div>
         </div>
 
         {/* 全局开关 */}
