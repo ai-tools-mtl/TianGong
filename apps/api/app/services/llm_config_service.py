@@ -18,7 +18,17 @@ chat source 取值：
 用户自定义配置 CRUD（list/create/update/delete_user_llm_config）只管 chat 配置；
 全局配置只保留 chat 一套（get/set_global_chat_settings），admin 控制台
 GET/PUT /admin/llm-config 也只管 chat。
+
+轻量任务模型（lite config）：独立的第三套配置，承接高频轻量任务（会话标题
+summarize_conversation_title、章节摘要 generate_summary），由 admin 在控制台
+配置（典型 GLM-4.7-Flash，免费）。存 SystemSetting key "llm_lite_config"
+（get/set_lite_settings），resolve_lite_config 解析：已配且完整 → 用轻量配置；
+未配/不完整 → 回退 resolve_chat_config(user_id)，保证轻量任务不中断。轻量配置
+是全平台共享的单套（不分用户），无 enabled 开关（未配即回退）。
 """
+
+# SystemSetting key：轻量任务模型配置（独立于 llm_global_chat_config）。
+LITE_CONFIG_KEY = "llm_lite_config"
 
 import time
 import uuid
@@ -447,3 +457,68 @@ def set_global_chat_settings(
             db.add(SystemSetting(key="llm_global_chat_config", value=new_value))
     db.commit()
     return get_global_chat_settings(db)
+
+
+# ── 轻量任务模型配置（独立第三套；承接会话标题/章节摘要等轻量任务）──
+
+def get_lite_settings(db: Session) -> dict:
+    """读取轻量任务模型配置（key 掩码）。与 get_global_chat_settings 同构，
+    额外返回 configured 标志（前端据此提示是否已配/回退到 chat）。"""
+    cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == LITE_CONFIG_KEY))
+    value = cfg.value if cfg else {}
+    configured = bool(value.get("api_key_encrypted") and value.get("model"))
+    return {
+        "base_url": value.get("base_url", "") if cfg else "",
+        "api_key_masked": _mask_key(decrypt_value(value["api_key_encrypted"])) if configured else "",
+        "model": value.get("model", "") if cfg else "",
+        "configured": configured,
+    }
+
+
+def set_lite_settings(
+    db: Session, *, base_url: str | None = None,
+    api_key: str | None = None, model: str | None = None,
+) -> dict:
+    """保存轻量任务模型配置。无 enabled 开关（未配即回退 chat）。
+
+    api_key 留空 = 不修改（保留现有密钥），与 set_global_chat_settings 语义一致。
+    """
+    if base_url or api_key or model:
+        cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == LITE_CONFIG_KEY))
+        current = cfg.value if cfg else {}
+        new_value = {
+            "base_url": base_url or current.get("base_url", ""),
+            "model": model or current.get("model", ""),
+        }
+        if api_key:
+            new_value["api_key_encrypted"] = encrypt_value(api_key)
+        elif current.get("api_key_encrypted"):
+            new_value["api_key_encrypted"] = current["api_key_encrypted"]
+        if cfg:
+            cfg.value = new_value
+        else:
+            db.add(SystemSetting(key=LITE_CONFIG_KEY, value=new_value))
+        db.commit()
+    return get_lite_settings(db)
+
+
+def resolve_lite_config(db: Session, *, user_id) -> ResolvedChatConfig | None:
+    """解析轻量任务模型配置。
+
+    优先用 admin 配的 llm_lite_config（典型 GLM-4.7-Flash）；未配/不完整时回退
+    resolve_chat_config(user_id)，保证轻量任务（标题/摘要）不中断——轻量任务本
+    就允许失败降级，回退到 chat 模型只是「省钱目标暂未达成」，而非功能损坏。
+
+    轻量配置是全平台共享的单套（不分用户），不查 grant/user_llm_config。
+    返回 source="lite" 便于日志区分实际命中的是轻量配置还是 chat 回退。
+    """
+    cfg = db.scalar(select(SystemSetting).where(SystemSetting.key == LITE_CONFIG_KEY))
+    if cfg and cfg.value and cfg.value.get("api_key_encrypted") and cfg.value.get("model"):
+        v = cfg.value
+        return ResolvedChatConfig(
+            base_url=v.get("base_url", ""),
+            api_key=decrypt_value(v["api_key_encrypted"]),
+            model=v.get("model", ""),
+            source="lite",
+        )
+    return resolve_chat_config(db, user_id=user_id)
