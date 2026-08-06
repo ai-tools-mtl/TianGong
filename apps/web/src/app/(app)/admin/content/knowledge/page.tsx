@@ -140,8 +140,8 @@ function GlobalKnowledgeCard({
   return (
     <Card className="apple-lift">
       <CardHeader className="pb-3">
-        <CardTitle className="flex items-center justify-between gap-2 text-[15px]">
-          <span className="truncate" title={kf.filename}>
+        <CardTitle className="flex min-w-0 items-center justify-between gap-2 text-[15px]">
+          <span className="min-w-0 truncate" title={kf.filename}>
             {kf.filename}
           </span>
           <Badge variant="outline" className="shrink-0 text-[10px] font-normal">
