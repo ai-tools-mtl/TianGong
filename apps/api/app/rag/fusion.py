@@ -14,6 +14,7 @@ class RetrievalCandidate:
     vector_score: float = 0.0    # 向量路原始分（cosine similarity）
     keyword_score: float = 0.0   # 关键词路原始分（ts_rank_cd）
     fused_score: float = 0.0     # RRF 融合后分
+    rerank_score: float = 0.0    # rerank 精排分（relevance_score），0.0=未走 rerank
     weight: float = 1.0          # G4 chunk 权重（召回分数乘子）
     metadata: dict = field(default_factory=dict)
 

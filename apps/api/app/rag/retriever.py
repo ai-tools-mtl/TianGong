@@ -146,11 +146,17 @@ def retrieve(
     # candidate 池与传给 rerank 的 docs 按列表位置一一对应：用 rerank 返回的索引
     # 直接取回 candidate，避免用 content 文本做匹配键——候选池内若有重复文本，
     # dict 匹配会把多条 candidate 合并成一条，排序错乱。
+    # 同时把 relevance_score 写回 candidate.rerank_score，供最终 score 优先采用。
     rerank_cfg = resolve_rerank_config(db, user_id=user_id)
     if rerank_cfg.enabled and len(fused) > 1:
         pool = fused[:RETRIEVAL_CANDIDATE_POOL]
-        ranked_indices = rerank(query, [c.content for c in pool], config=rerank_cfg)
-        fused = [pool[i] for i in ranked_indices if i < len(pool)][:top_k]
+        ranked = rerank(query, [c.content for c in pool], config=rerank_cfg)
+        fused = []
+        for idx, rel_score in ranked:
+            if idx < len(pool):
+                pool[idx].rerank_score = rel_score
+                fused.append(pool[idx])
+        fused = fused[:top_k]
     else:
         fused = fused[:top_k]
 
@@ -163,7 +169,9 @@ def retrieve(
         meta = chunk.metadata_ or {}
         results.append(RetrievalResult(
             content=chunk.edited_text or chunk.content,
-            score=cand.fused_score or cand.vector_score,
+            # 最终展示分优先用 rerank 精排分（走 rerank 时才有）；
+            # 否则回退 RRF 融合分，再回退向量路原始分。
+            score=cand.rerank_score or cand.fused_score or cand.vector_score,
             source_section_key=chunk.source_section_key,
             # 归档类用 project_title,导入类用 title
             project_title=meta.get("project_title") or meta.get("title"),

@@ -107,10 +107,10 @@ def test_rerank_duplicate_content_keeps_all(monkeypatch, db_session, fake_embed)
 
     _patch_execute_with_chunks(monkeypatch, db_session, chunks)
 
-    # mock rerank：返回索引 [1, 0, 2]（把第二条重复条目排到第一）
+    # mock rerank：返回 [(索引, relevance_score), ...]，把第二条重复条目排到第一
     monkeypatch.setattr(
         retriever, "rerank",
-        lambda query, documents, config=None: [1, 0, 2],
+        lambda query, documents, config=None: [(1, 0.9), (0, 0.8), (2, 0.7)],
     )
     monkeypatch.setattr(
         retriever, "resolve_rerank_config",
@@ -127,3 +127,78 @@ def test_rerank_duplicate_content_keeps_all(monkeypatch, db_session, fake_embed)
     # rerank 顺序生效：第二条（索引1）排在第一条（索引0）前面
     titles = [r.project_title for r in results]
     assert titles[0] == "B", f"rerank 应把索引1排到首位，实际顺序: {titles}"
+
+
+def test_rerank_score_propagated_to_final_score(monkeypatch, db_session, fake_embed):
+    """rerank 的 relevance_score 写回 candidate，最终 score 用 rerank 分而非 RRF 分。
+
+    旧实现：retrieve 最终 score=cand.fused_score or cand.vector_score，是 rerank
+    之前就算好的 RRF 融合分。rerank 只重排顺序、分值未回写，admin 调参时会误判
+    rerank 效果（顺序变了但分差没拉开）。新实现把 relevance_score 回写并优先采用。
+    """
+    from app.rag import retriever
+    from app.rag.reranker import RerankConfig
+
+    chunks = [
+        _make_chunk("甲内容", chunk_id="00000000-0000-0000-0000-000000000010", title="甲"),
+        _make_chunk("乙内容", chunk_id="00000000-0000-0000-0000-000000000011", title="乙"),
+    ]
+    for c in chunks:
+        db_session.add(c)
+    db_session.commit()
+
+    _patch_execute_with_chunks(monkeypatch, db_session, chunks)
+
+    # mock rerank：返回 relevance_score 0.9（甲）、0.3（乙）
+    monkeypatch.setattr(
+        retriever, "rerank",
+        lambda query, documents, config=None: [(0, 0.9), (1, 0.3)],
+    )
+    monkeypatch.setattr(
+        retriever, "resolve_rerank_config",
+        lambda db, user_id: RerankConfig(
+            enabled=True, base_url="http://x", api_key="k", model="m", top_n=3,
+        ),
+    )
+
+    results = retriever.retrieve(db_session, user_id="u", query="q", top_k=2)
+
+    assert len(results) == 2
+    # 最终 score 等于 rerank 的 relevance_score，而非 RRF 分
+    assert results[0].score == 0.9, f"甲应取 rerank 分 0.9，实际: {results[0].score}"
+    assert results[1].score == 0.3, f"乙应取 rerank 分 0.3，实际: {results[1].score}"
+
+
+def test_score_fallback_to_rrf_when_rerank_disabled(monkeypatch, db_session, fake_embed):
+    """rerank 未启用时，最终 score 回退到 RRF 融合分（向后兼容）。
+
+    rerank_score 默认 0.0（falsy），走 score=rerank_score or fused_score or vector_score
+    时正确回退到 fused_score。
+    """
+    from app.rag import retriever
+    from app.rag.reranker import RerankConfig
+
+    chunks = [
+        _make_chunk("丙内容", chunk_id="00000000-0000-0000-0000-000000000020", title="丙"),
+    ]
+    for c in chunks:
+        db_session.add(c)
+    db_session.commit()
+
+    _patch_execute_with_chunks(monkeypatch, db_session, chunks)
+
+    # rerank 关闭：len(fused) <= 1，不进 rerank 分支
+    monkeypatch.setattr(
+        retriever, "resolve_rerank_config",
+        lambda db, user_id: RerankConfig(
+            enabled=True, base_url="http://x", api_key="k", model="m", top_n=3,
+        ),
+    )
+
+    results = retriever.retrieve(db_session, user_id="u", query="q", top_k=3)
+
+    assert len(results) == 1
+    # 单条候选不触发 rerank，rerank_score=0.0，回退到 fused_score（RRF 分）。
+    # 单路单条 RRF 分 = 1/(k+rank+1) = 1/(60+0+1) = 1/61 ≈ 0.01639（经 weight=1.0 加权）
+    assert results[0].score == pytest.approx(1 / 61), \
+        f"应回退到 RRF 分 1/61，实际: {results[0].score}"
