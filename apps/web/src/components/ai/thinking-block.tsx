@@ -49,8 +49,13 @@ export function ThinkingBlock({
 
   return (
     <div className={cn('rounded-lg border border-ai/15 bg-ai-muted/20', className)}>
-      <details open={open} className="group" onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}>
-        <summary className="flex cursor-pointer list-none items-center gap-1.5 px-2.5 py-1.5 text-[12px] text-muted-foreground [&::-webkit-details-marker]:hidden">
+      {/* 受控 details：用 summary onClick 主动切换 state，preventDefault 阻止浏览器
+          自行切换——否则 onToggle 与受控 open 会互相覆盖，导致点击展开被「撤销」（点不开）。 */}
+      <details open={open} className="group">
+        <summary
+          onClick={(e) => { e.preventDefault(); setOpen((o) => !o) }}
+          className="flex cursor-pointer list-none items-center gap-1.5 px-2.5 py-1.5 text-[12px] text-muted-foreground [&::-webkit-details-marker]:hidden"
+        >
           <ThinkingIcon className="size-3.5 text-ai/60" />
           <span className="font-medium">{streaming ? '思考中' : '思考过程'}</span>
           {streaming && (

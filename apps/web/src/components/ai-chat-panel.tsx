@@ -257,7 +257,10 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
           aiText += token
           setMessages((m) => {
             const copy = [...m]
-            copy[copy.length - 1] = { role: 'assistant', content: aiText }
+            const last = copy[copy.length - 1]
+            // 保留已累积的 thinking/toolEvents（思考阶段写入），仅更新 content。
+            // 此前用 { role, content } 全新对象替换会丢掉 agent 透明化字段。
+            copy[copy.length - 1] = { ...last, role: 'assistant', content: aiText }
             return copy
           })
         },

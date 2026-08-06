@@ -234,7 +234,8 @@ export function InitAssistant() {
             const next = [...prev]
             const last = next[next.length - 1]
             if (last && last.role === 'assistant') {
-              next[next.length - 1] = { role: 'assistant', content: full }
+              // 保留已累积的 thinking/toolEvents（思考阶段写入），仅更新 content。
+              next[next.length - 1] = { ...last, content: full }
             }
             return next
           })
