@@ -69,9 +69,12 @@ class Settings(BaseSettings):
     mineru_base_url: str = "https://mineru.net"
     mineru_model_version: str = "vlm"  # vlm（高精度）/ pipeline（快）
 
-    # 腾讯 ima 实时检索源（用户自配 Client ID + API Key，单配置）
-    # 仅 search 端点可用，只返回 highlight 片段；用户凭据加密存 user_ima_configs。
-    # 鉴权 header 格式需联调确认（见 rag/ima_source.py 的 TODO），此处仅配置地址/超时。
+    # 腾讯 ima 实时检索源（admin 全局配置，所有用户共享单源）
+    # 仅 search 端点可用，只返回 highlight 片段；凭据加密存 SystemSetting（ima_config）。
+    # 鉴权用 ima 官方自定义 header（ima-openapi-clientid/apikey），见 rag/ima_source.py。
+    # env 仅兜底：admin 未在控制台配置时，可经这两个环境变量提供。
+    ima_client_id: str = ""
+    ima_api_key: str = ""
     ima_search_base_url: str = "https://ima.qq.com/openapi/wiki/v1/search_knowledge_base"
     ima_search_timeout: float = 5.0  # 外网不可靠，比 rerank(15s) 更短，超时即降级
 

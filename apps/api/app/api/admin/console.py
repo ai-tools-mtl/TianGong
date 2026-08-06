@@ -396,3 +396,73 @@ def test_mineru_config(
         return {"ok": True, "message": f"MinerU 连通正常（{cfg.base_url}）"}
     except Exception as e:
         return {"ok": False, "message": f"MinerU 测试失败：{str(e)[:200]}"}
+
+
+# ── ima 检索源配置（腾讯 ima 知识库全局检索源）─────────────────
+
+
+class IMAConfigRequest(BaseModel):
+    """admin 设置全局 ima 检索源配置。
+
+    client_id / api_key 空串表示不修改（保留现有凭据）。
+    """
+    enabled: bool
+    client_id: str = ""
+    api_key: str = ""
+
+
+class IMATestRequest(BaseModel):
+    """测试 ima 连通性（不落库，用传入凭据直接检索）。"""
+    client_id: str
+    api_key: str
+
+
+@router.get("/admin/console/ima")
+def get_ima_config(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """读全局 ima 配置（凭据脱敏）。"""
+    from app.services.ima_config_service import get_ima_settings
+
+    return get_ima_settings(db)
+
+
+@router.put("/admin/console/ima")
+def set_ima_config(
+    payload: IMAConfigRequest,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """写全局 ima 配置。"""
+    from app.services.ima_config_service import set_ima_settings
+
+    set_ima_settings(
+        db, enabled=payload.enabled,
+        client_id=payload.client_id, api_key=payload.api_key,
+        updated_by=admin.id,
+    )
+    return {"ok": True}
+
+
+@router.post("/admin/console/ima/test")
+def test_ima_config(
+    payload: IMATestRequest,
+    admin: User = Depends(require_admin),
+):
+    """测试 ima 检索连通性（不落库）。
+
+    用传入凭据做一次最小检索，返回成功/失败与命中数。
+    strict=True：失败必须抛错，否则 fail-open 返回空列表会被误判为成功。
+    """
+    from app.rag.ima_source import search_ima
+    from app.services.ima_config_service import ResolvedIMAConfig
+
+    cfg = ResolvedIMAConfig(
+        client_id=payload.client_id, api_key=payload.api_key, enabled=True,
+    )
+    try:
+        hits = search_ima("测试", cfg, top_k=1, strict=True)
+        return {"ok": True, "hit_count": len(hits)}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "hit_count": 0}

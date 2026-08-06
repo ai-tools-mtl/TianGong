@@ -62,6 +62,8 @@ export const queryKeys = {
     firecrawlConfig: ['admin', 'firecrawl-config'] as const,
     // MinerU 配置（PDF→Markdown 解析）
     mineruConfig: ['admin', 'mineru-config'] as const,
+    // ima 检索源配置（腾讯 ima 知识库全局检索源）
+    imaConfig: ['admin', 'ima-config'] as const,
     // MCP server 配置（stdio/http/sse）
     mcpServers: ['admin', 'mcp-servers'] as const,
     mcpEnabled: ['admin', 'mcp-enabled'] as const,
@@ -744,6 +746,26 @@ export function useSaveMineruConfig() {
 export function useTestMineruConfig() {
   return useMutation({
     mutationFn: () => api.testMineruConfig(),
+  })
+}
+
+// ── ima 检索源全局配置（腾讯 ima 知识库）──
+export function useIMAConfig() {
+  return useQuery({
+    queryKey: queryKeys.admin.imaConfig,
+    queryFn: () => api.getIMAConfig(),
+  })
+}
+
+export function useSaveIMAConfig() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: import('@/types/api').IMAConfigPayload) =>
+      api.setIMAConfig(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: queryKeys.admin.imaConfig })
+      qc.invalidateQueries({ queryKey: queryKeys.admin.all })
+    },
   })
 }
 

@@ -260,10 +260,10 @@ def _retrieve_knowledge_for_section(
         ]
 
         # ── ima 实时外部检索源（可选，fail-open）──
-        # 用户在 /settings 配置并开启 ima 后，每次预检索额外查 ima 知识库。
+        # admin 在控制台配置并开启 ima 全局检索源后，每次预检索额外查 ima 知识库。
         # 独立 try/except：ima 失败绝不影响已拿到的本地结果。
         try:
-            knowledge.extend(_retrieve_ima_for_section(db, user_id, query))
+            knowledge.extend(_retrieve_ima_for_section(db, query))
         except Exception:
             db.rollback()
 
@@ -273,16 +273,16 @@ def _retrieve_knowledge_for_section(
         return None
 
 
-def _retrieve_ima_for_section(db, user_id, query: str) -> list[dict]:
-    """ima 外部检索源：用户开启时实时查 ima，返回统一片段结构。
+def _retrieve_ima_for_section(db, query: str) -> list[dict]:
+    """ima 外部检索源：全局开启时实时查 ima，返回统一片段结构。
 
-    未配置 / disabled / 调用失败 → 返回 []。成功则把 highlight 片段转成
+    admin 未配置 / disabled / 调用失败 → 返回 []。成功则把 highlight 片段转成
     与本地结果同构的 dict（project_title 标记为「腾讯 ima」便于区分来源）。
     """
     from app.rag.ima_source import IMA_FALLBACK_SCORE, search_ima
     from app.services.ima_config_service import resolve_ima_config
 
-    ima_cfg = resolve_ima_config(db, user_id=user_id)
+    ima_cfg = resolve_ima_config(db)
     if ima_cfg is None:
         return []
     hits = search_ima(query, ima_cfg, top_k=3)

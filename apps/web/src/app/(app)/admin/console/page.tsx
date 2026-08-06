@@ -1,6 +1,6 @@
 'use client'
 
-import { BarChart3, FileText, Globe, Plug, ScanText, Search, Settings } from 'lucide-react'
+import { BarChart3, Database, FileText, Globe, Plug, ScanText, Search, Settings } from 'lucide-react'
 import Link from 'next/link'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
@@ -24,6 +24,12 @@ const CONSOLE_SECTIONS = [
     icon: ScanText,
     title: 'MinerU 配置',
     description: 'PDF 转 Markdown 解析（保留表格/OCR）',
+  },
+  {
+    href: '/admin/console/ima',
+    icon: Database,
+    title: 'ima 检索源',
+    description: '腾讯 ima 知识库全局检索源凭据',
   },
   {
     href: '/admin/console/stats',

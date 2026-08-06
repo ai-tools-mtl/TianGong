@@ -386,26 +386,23 @@ export interface UserLLMConfigUpdate {
  */
 export type MyGrant = UserGrant
 
-// ── 腾讯 ima 检索源（单配置）──
+// ── 腾讯 ima 检索源（admin 全局配置）──
 
-/** GET /settings/ima 返回；无配置时 configured=false。凭据均掩码。 */
-export interface UserIMAConfig {
-  configured: boolean
+/** GET /admin/console/ima 返回；凭据均掩码。未配置时掩码为空、enabled=false。 */
+export interface IMASettings {
   enabled: boolean
-  name: string
   client_id_masked: string
   api_key_masked: string
 }
 
-/** PUT /settings/ima 请求体。client_id/api_key 留空=不改；首次配置必填。 */
-export interface UserIMAUpsert {
-  client_id?: string
-  api_key?: string
+/** PUT /admin/console/ima 请求体。client_id/api_key 留空=不改。 */
+export interface IMAConfigPayload {
   enabled: boolean
-  name?: string
+  client_id: string
+  api_key: string
 }
 
-/** POST /settings/ima/test 返回（连通性测试结果）。 */
+/** POST /admin/console/ima/test 返回（连通性测试结果）。 */
 export interface IMATestResult {
   ok: boolean
   hit_count: number

@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.deps import get_current_user
 from app.models import User
-from app.services import admin_service, ima_config_service, llm_config_service
+from app.services import admin_service, llm_config_service
 
 router = APIRouter(tags=["admin"])  # tag 保持 admin 与原一致，避免 OpenAPI 文档分组变化
 
@@ -156,74 +156,3 @@ def test_my_llm(
         base_url=payload.base_url, api_key=payload.api_key,
         model=payload.model, scope="chat",
     )
-
-
-# ── 腾讯 ima 检索源（单配置）──
-
-class UserIMAUpsertRequest(BaseModel):
-    """更新 ima 配置（单配置 upsert）。
-
-    client_id / api_key 留空（None/空串）= 不改；首次配置必须两者都给。
-    enabled 必填（控制是否参与检索）；name 可选。
-    """
-    client_id: str | None = None
-    api_key: str | None = None
-    enabled: bool = False
-    name: str | None = None
-
-
-class UserIMATestRequest(BaseModel):
-    """测试 ima 连通性（不落库，直接用传入凭据检索）。"""
-    client_id: str
-    api_key: str
-
-
-@router.get("/settings/ima")
-def get_my_ima(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """返回当前用户的 ima 配置（凭据掩码）。无配置返回 {configured: False}。"""
-    cfg = ima_config_service.get_ima_config(db, user_id=current_user.id)
-    return ima_config_service.config_to_dict(cfg)
-
-
-@router.put("/settings/ima")
-def upsert_my_ima(
-    payload: UserIMAUpsertRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    """新增或更新 ima 配置（单配置 upsert）。返回掩码后的配置。"""
-    cfg = ima_config_service.upsert_ima_config(
-        db, user_id=current_user.id,
-        client_id=payload.client_id or None,
-        api_key=payload.api_key or None,
-        enabled=payload.enabled,
-        name=payload.name,
-    )
-    return ima_config_service.config_to_dict(cfg)
-
-
-@router.post("/settings/ima/test")
-def test_my_ima(
-    payload: UserIMATestRequest,
-    current_user: User = Depends(get_current_user),
-):
-    """测试 ima 检索连通性（不落库）。
-
-    用传入凭据做一次空 query 之外的最小检索，返回成功/失败与命中的知识库数。
-    用于联调鉴权格式（见 rag/ima_source.py 的 TODO）。
-    """
-    from app.rag.ima_source import search_ima
-    from app.services.ima_config_service import ResolvedIMAConfig
-
-    cfg = ResolvedIMAConfig(
-        client_id=payload.client_id, api_key=payload.api_key, enabled=True,
-    )
-    try:
-        # strict=True：失败必须抛错，否则 fail-open 返回空列表会被误判为"成功但无命中"
-        hits = search_ima("测试", cfg, top_k=1, strict=True)
-        return {"ok": True, "hit_count": len(hits)}
-    except Exception as e:
-        return {"ok": False, "error": str(e), "hit_count": 0}
