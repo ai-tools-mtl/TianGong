@@ -43,6 +43,7 @@ async def build_agent(
     db, *, llm_config: ResolvedChatConfig, user_id,
     section=None, user_input: str | None = None, intent: str | None = None,
     system_prompt_override: str | None = None,
+    tool_scope: str = "section",
 ) -> CompiledStateGraph:
     """构造 deepagents agent（路线 B 的装配入口）。
 
@@ -76,6 +77,9 @@ async def build_agent(
         system_prompt_override: 覆盖 system prompt（init 助手用 INIT_SYSTEM_PROMPT）。
             非空时跳过 section 装配逻辑直接用它——供 init 场景（无 section、用专用 prompt）
             复用全部装配逻辑。普通 chat/generate 不传此参数。
+        tool_scope: agent 场景，控制内置工具白名单（透传给 create_agent_tools）。
+            "section"（默认）全部内置工具可见；"init" 仅 save_memory（砍 rag_search，
+            项目初始化阶段知识库检索无意义）。MCP 工具不受此参数限制。
 
     Returns:
         CompiledStateGraph：具备 ainvoke / astream_events。
@@ -150,7 +154,7 @@ async def build_agent(
     # 再触发——相当于一个极少生效的后备保险，而非活跃的第二套压缩。
     # 唯一代价：库的黑盒行为作为后备保留，可观测性略差；对正确性无损害。
     # （路径 B 的 §9 V1 明确接受此并存。）
-    agent_tools = await create_agent_tools(db, user_id)
+    agent_tools = await create_agent_tools(db, user_id, scope=tool_scope)
     logger.info("build_agent: 调用 create_deep_agent（tools=%d skills=%d）",
                 len(agent_tools),
                 len(skill_sources) if skill_sources else 0)

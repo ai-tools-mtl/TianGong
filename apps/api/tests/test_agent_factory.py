@@ -176,6 +176,41 @@ def test_build_agent_assembly_args(db_session, monkeypatch):
     assert captured["system_prompt"]
 
 
+def test_build_agent_init_scope_excludes_rag_search(db_session, monkeypatch):
+    """[tool_scope=init] 时 tools 不含 rag_search，但保留 save_memory + MCP（如有）。
+
+    init 场景白名单：仅 save_memory。rag_search 被过滤（项目初始化阶段
+    知识库检索无意义）。MCP 工具不在 BUILTIN_TOOLS 内，不受 scope 影响。
+    """
+    from app.ai import agent as agent_mod
+    from app.services.llm_config_service import ResolvedChatConfig
+
+    captured: dict = {}
+
+    def _fake_create(model=None, tools=None, **kw):
+        captured["tools"] = tools or []
+        return type("_S", (), {"ainvoke": lambda *a: None, "astream_events": lambda *a: None})()
+
+    monkeypatch.setattr(agent_mod, "get_llm", lambda config, **kw: _mock_llm())
+    monkeypatch.setattr(agent_mod, "create_deep_agent", _fake_create)
+    from app.core import storage as storage_mod
+
+    class _FakeStorage:
+        def __init__(self): self._client = None
+        def _resolve(self, a): return a
+    monkeypatch.setattr(storage_mod, "get_storage", lambda: _FakeStorage())
+
+    config = ResolvedChatConfig(base_url="http://x", api_key="k", model="glm-4.7", source="env")
+    asyncio.run(agent_mod.build_agent(
+        db_session, llm_config=config, user_id=uuid.uuid4(),
+        tool_scope="init",
+    ))
+
+    tool_names = [getattr(t, "name", None) for t in captured["tools"]]
+    assert "save_memory" in tool_names
+    assert "rag_search" not in tool_names
+
+
 def test_build_agent_storebackend_namespace_is_valid(db_session, monkeypatch):
     """StoreBackend 的 namespace 必须非空（I2 回归保护）。
 

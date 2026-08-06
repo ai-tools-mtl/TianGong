@@ -124,6 +124,7 @@ async def _astream_init_chat_agent(
     agent = await build_agent(
         db, llm_config=llm_config, user_id=user_id,
         system_prompt_override=INIT_SYSTEM_PROMPT,
+        tool_scope="init",
     )
     logger.info("astream_init_chat: init agent 构建完成，开始 agent loop")
 

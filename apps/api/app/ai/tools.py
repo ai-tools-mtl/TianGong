@@ -20,15 +20,33 @@ from app.rag.nli import judge_relation
 logger = logging.getLogger(__name__)
 
 
-async def create_agent_tools(db: Any, user_id):
+# ── 工具可见性白名单（按 agent 场景）──
+# init: 项目初始化阶段，仅保留 save_memory（沉淀画像/偏好），不检索知识库
+#       （项目尚未建立，rag_search 无意义且拖慢首屏回复）
+# section: 章节撰写/对话，全部内置工具可见（默认）
+#
+# 仅 BUILTIN_TOOLS 内的工具受白名单控制；MCP 工具（外部插件，按 server 启用）
+# 不受 scope 限制——启用即生效，与 agent 场景无关。
+BUILTIN_TOOLS: frozenset[str] = frozenset({"rag_search", "save_memory"})
+TOOL_WHITELIST: dict[str, frozenset[str] | None] = {
+    "init": frozenset({"save_memory"}),
+    "section": None,  # None = 不过滤，全部内置工具可见
+}
+
+
+async def create_agent_tools(db: Any, user_id, *, scope: str = "section"):
     """构造绑定到当前用户的 agent 工具集合。
 
     Args:
         db: SQLAlchemy Session（由 build_agent 传入，agent 生命周期内有效）。
         user_id: 当前用户 ID（限定检索/写入范围到本人）。
+        scope: agent 场景，控制内置工具白名单。"init" 仅 save_memory，
+            "section"（默认）全部内置工具可见。MCP 工具不受 scope 限制。
+            未知 scope 宽放（不过滤），等同 section。
 
     Returns:
-        [rag_search, save_memory] —— 供 create_deep_agent(tools=...) 使用。
+        工具列表（含按 scope 过滤后的内置工具 + 全部 MCP 工具）——
+        供 create_deep_agent(tools=...) 使用。
     """
     @tool("rag_search")
     def rag_search(query: str) -> list[dict]:
@@ -130,6 +148,13 @@ async def create_agent_tools(db: Any, user_id):
         tools.extend(await load_mcp_tools(db))
     except Exception as e:
         logger.warning("MCP 工具整体加载失败，跳过: %s", e)
+
+    # 按 scope 过滤内置工具（MCP 工具放行：不在 BUILTIN_TOOLS 内的不受影响）
+    allowed = TOOL_WHITELIST.get(scope)
+    if allowed is not None:
+        tools = [t for t in tools if t.name not in BUILTIN_TOOLS or t.name in allowed]
+    elif scope not in TOOL_WHITELIST:
+        logger.debug("create_agent_tools: 未知 scope=%s，宽放（不过滤）", scope)
     return tools
 
 
