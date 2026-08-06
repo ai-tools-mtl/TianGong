@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     mineru_base_url: str = "https://mineru.net"
     mineru_model_version: str = "vlm"  # vlm（高精度）/ pipeline（快）
 
+    # 腾讯 ima 实时检索源（用户自配 Client ID + API Key，单配置）
+    # 仅 search 端点可用，只返回 highlight 片段；用户凭据加密存 user_ima_configs。
+    # 鉴权 header 格式需联调确认（见 rag/ima_source.py 的 TODO），此处仅配置地址/超时。
+    ima_search_base_url: str = "https://ima.qq.com/openapi/wiki/v1/search_knowledge_base"
+    ima_search_timeout: float = 5.0  # 外网不可靠，比 rerank(15s) 更短，超时即降级
+
     # 文件上传（设计 13.2，附录 B：MVP 本地存储）
     upload_dir: str = "uploads"
     max_image_size_mb: int = 10

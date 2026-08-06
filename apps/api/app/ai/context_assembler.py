@@ -233,6 +233,10 @@ def _retrieve_knowledge_for_section(
 
     检索 query 由章节标题 + 章节目标 + 用户输入拼接构成。user_input 为空时
     仅用章节信号检索。top_k=3，单条内容截断到 300 字以控制 system prompt token。
+
+    检索源：① 本地 RAG（pgvector）为主；② 用户开启 ima 实时检索源时，
+    并行查 ima search_knowledge_base，返回 highlight 片段合并进来。
+    ima 为 fail-open 外部源——任何失败静默跳过，不影响本地结果与 agent 构建。
     """
     try:
         from app.rag.retriever import retrieve
@@ -245,9 +249,7 @@ def _retrieve_knowledge_for_section(
         query = " ".join(parts)
 
         results = retrieve(db, user_id=user_id, query=query, top_k=3)
-        if not results:
-            return None
-        return [
+        knowledge = [
             {
                 "content": r.content[:300],
                 "score": round(r.score, 2),
@@ -256,9 +258,43 @@ def _retrieve_knowledge_for_section(
             }
             for r in results
         ]
+
+        # ── ima 实时外部检索源（可选，fail-open）──
+        # 用户在 /settings 配置并开启 ima 后，每次预检索额外查 ima 知识库。
+        # 独立 try/except：ima 失败绝不影响已拿到的本地结果。
+        try:
+            knowledge.extend(_retrieve_ima_for_section(db, user_id, query))
+        except Exception:
+            db.rollback()
+
+        return knowledge if knowledge else None
     except Exception:
         db.rollback()
         return None
+
+
+def _retrieve_ima_for_section(db, user_id, query: str) -> list[dict]:
+    """ima 外部检索源：用户开启时实时查 ima，返回统一片段结构。
+
+    未配置 / disabled / 调用失败 → 返回 []。成功则把 highlight 片段转成
+    与本地结果同构的 dict（project_title 标记为「腾讯 ima」便于区分来源）。
+    """
+    from app.rag.ima_source import IMA_FALLBACK_SCORE, search_ima
+    from app.services.ima_config_service import resolve_ima_config
+
+    ima_cfg = resolve_ima_config(db, user_id=user_id)
+    if ima_cfg is None:
+        return []
+    hits = search_ima(query, ima_cfg, top_k=3)
+    return [
+        {
+            "content": (h.get("content") or "")[:300],
+            "score": IMA_FALLBACK_SCORE,
+            "section_key": None,
+            "project_title": h.get("title") or "腾讯 ima",
+        }
+        for h in hits
+    ]
 
 
 def build_system_prompt(
