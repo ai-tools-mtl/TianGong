@@ -9,9 +9,16 @@
 # 参照 rlespinasse/docker-drawio-desktop-headless 的做法。
 set -e
 
-# 1. dbus：建 socket 目录 + 起 system bus
+# 1. dbus：Chromium/Electron 需要两套 bus，缺任一会报
+#    "Failed to connect to the bus: Could not parse server address"
+#    - system bus：dbus-daemon --system（需要 /run/dbus 目录）
+#    - session bus：dbus-launch（Chromium 实际连的是它，需 DBUS_SESSION_BUS_ADDRESS 环境变量）
 mkdir -p /run/dbus
 dbus-daemon --system --fork
+# --sh-syntax 输出 "VAR='value'; export VAR;" 形式，eval 进当前 shell；双引号包裹命令替换
+# 比裸 $(...) 更可靠。export 后 exec 的 uvicorn 及其 drawio 子进程继承该环境变量。
+eval "$(dbus-launch --sh-syntax)"
+echo "dbus session bus: ${DBUS_SESSION_BUS_ADDRESS:-未设置}"
 
 # 2. Xvfb：固定 DISPLAY 常驻
 export DISPLAY=":42"

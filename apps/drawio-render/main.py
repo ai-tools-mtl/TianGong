@@ -56,15 +56,18 @@ def _warmup() -> None:
             out_path = str(Path(td) / "w.png")
             Path(in_path).write_text(minimal, encoding="utf-8")
             _run_drawio_export(in_path, out_path, "png", scale=1, width=None, embed=False)
-        logger.info("drawio 预热完成")
+        logger.info("drawio 预热完成（首请求将快）")
     except Exception as e:  # noqa: BLE001
-        logger.warning("drawio 预热失败（首请求可能较慢）: %s", e)
+        # 预热是优化项非必需：失败只意味着首请求承担 Chromium 冷启延迟（约 10-20s），
+        # client timeout 120s 已覆盖。真实渲染经 /render 端点验证可靠，故失败降级为
+        # debug 日志，不刷 WARNING 噪声污染容器启动日志。
+        logger.debug("drawio 预热失败（首请求将承担冷启延迟，功能不受影响）: %s", e)
 
 
 def _delayed_warmup() -> None:
-    """延迟预热：等 dbus daemon 完全就绪（entrypoint 刚 fork 它）再跑，避免预热抢跑失败。"""
+    """延迟预热：等 dbus + Xvfb + Chromium 冷启动完成再跑。"""
     import time
-    time.sleep(3)
+    time.sleep(8)
     _warmup()
 
 
