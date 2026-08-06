@@ -1138,3 +1138,20 @@ export function useDeleteAssistantConversation() {
     onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.assistant.conversations, exact: true }),
   })
 }
+
+/**
+ * 失效 init 助手会话列表缓存。严格只失效列表，不连带失效单会话详情
+ * （单会话 key 是列表的子 key：`['assistant','conversations',id]`）。
+ * 误伤子 key 会触发单会话 refetch → 外层 effect 用服务端快照覆盖本地流式 messages，
+ * 那正是「切对话丢最新消息」的根因（见 commit 2a36319）。
+ *
+ * 所有需要刷新 init 助手列表的调用点统一用这个 helper，把 `exact: true` 收敛进单一函数，
+ * 杜绝新调用点漏写 flag 导致丢对话回归。
+ */
+export function useInvalidateAssistantList() {
+  const qc = useQueryClient()
+  return () => qc.invalidateQueries({
+    queryKey: queryKeys.assistant.conversations,
+    exact: true,
+  })
+}

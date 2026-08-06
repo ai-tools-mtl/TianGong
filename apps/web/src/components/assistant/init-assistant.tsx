@@ -1,7 +1,6 @@
 'use client'
 
 import { Loader2, RotateCcw, Sparkles } from 'lucide-react'
-import { useQueryClient } from '@tanstack/react-query'
 import { useRouter } from 'next/navigation'
 import { type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -14,11 +13,11 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { api } from '@/lib/api'
 import {
-  queryKeys,
   useAssistantConversation,
   useAssistantConversations,
   useCreateAssistantConversation,
   useDeleteAssistantConversation,
+  useInvalidateAssistantList,
 } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import type { MessageMeta, ToolEvent } from '@/types/api'
@@ -99,6 +98,8 @@ interface ChatMessage {
   thinking?: string
   /** agent 透明化：本轮工具调用事件序列（流式累积 / 历史回灌） */
   toolEvents?: ToolEvent[]
+  /** 回复被中断（历史回灌）：后端兜底落了半截内容，非正常结束。 */
+  incomplete?: boolean
 }
 
 interface ChapterProgress {
@@ -108,10 +109,11 @@ interface ChapterProgress {
 
 export function InitAssistant() {
   const router = useRouter()
-  const qc = useQueryClient()
   const { data: conversations, isLoading: listLoading } = useAssistantConversations()
   const createConv = useCreateAssistantConversation()
   const deleteConv = useDeleteAssistantConversation()
+  // 收敛的列表失效器（exact:true 内置），杜绝内联调用漏写 flag 导致丢对话回归。
+  const invalidateAssistantList = useInvalidateAssistantList()
 
   const [currentId, setCurrentId] = useState<string | null>(null)
   const { data: current } = useAssistantConversation(currentId)
@@ -165,6 +167,8 @@ export function InitAssistant() {
         // 历史回灌：从 Message.meta 恢复思考过程 + 工具调用（刷新后仍可见）
         thinking: m.meta?.thinking,
         toolEvents: m.meta?.tool_events,
+        // 历史回灌：恢复中断标记（后端兜底落的半截回复）
+        incomplete: m.meta?.incomplete,
       })))
       setCreatedProjectId(current.project_id)
       setGenerating(false)
@@ -189,10 +193,14 @@ export function InitAssistant() {
   }, [messages, chapters])
 
   function handleNew() {
+    // 切会话前 abort 在途的流式请求，避免旧会话的 token 回调污染新会话的 messages（丢对话根因）。
+    abortRef.current?.abort()
     createConv.mutate(undefined, { onSuccess: (c) => setCurrentId(c.id) })
   }
 
   function handleDelete(id: string) {
+    // 同上：删/切会话前 abort。
+    abortRef.current?.abort()
     deleteConv.mutate(id, {
       onSuccess: () => { if (id === currentId) setCurrentId(null) },
     })
@@ -243,10 +251,9 @@ export function InitAssistant() {
         ac.signal,
         (done) => {
           // 后端在首轮生成总结性标题后回传 title。失效列表缓存使左侧显示新名称。
-          // exact:true 仅失效列表 query，不连带失效 ['assistant','conversations',id]
-          // （单会话详情是子 key，前缀匹配会误伤它 → 触发重拉 → 覆盖本地流式 messages，丢对话）。
+          // 用收敛的 helper（内置 exact:true），避免误伤单会话详情子 key → 重拉 → 覆盖本地流式 messages（丢对话）。
           if (done.title) {
-            qc.invalidateQueries({ queryKey: queryKeys.assistant.conversations, exact: true })
+            invalidateAssistantList()
           }
           // 后端提取的 8 章草稿大纲 + 维度覆盖率回传 → 刷新右侧预览 + ready 判断
           if (done.outline) setOutline(done.outline)
@@ -307,8 +314,8 @@ export function InitAssistant() {
             setChapters((prev) => prev.map((c) => c.key === d.key ? { ...c, status: d.status as 'ok' | 'failed', error: d.error } : c))
           },
           onAllDone: () => {
-            // exact:true 同上——落地后会话从列表消失，但不重拉/覆盖单会话详情。
-            qc.invalidateQueries({ queryKey: queryKeys.assistant.conversations, exact: true })
+            // 落地后会话从列表消失，用 helper 刷新列表（不重拉/覆盖单会话详情，避免丢对话）。
+            invalidateAssistantList()
             if (!isRetry && failedKeys.size === 0) toast.success('项目初稿已生成')
             else if (failedKeys.size > 0) toast.warning('部分章节失败，可重试')
           },
@@ -338,7 +345,7 @@ export function InitAssistant() {
         conversations={conversations ?? []}
         currentId={currentId}
         loading={listLoading}
-        onSelect={setCurrentId}
+        onSelect={(id) => { abortRef.current?.abort(); setCurrentId(id) }}
         onNew={handleNew}
         onDelete={handleDelete}
       />
@@ -385,6 +392,13 @@ export function InitAssistant() {
                         <div className="prose prose-sm max-w-none dark:prose-invert">
                           <ReactMarkdown>{m.content.trim()}</ReactMarkdown>
                         </div>
+                        {/* 中断标记：后端兜底落的半截回复（切会话/断连/异常），提示非正常结束 */}
+                        {m.incomplete && (
+                          <div className="mt-1.5 flex items-center gap-1 text-[11px] text-muted-foreground/70">
+                            <span className="inline-block size-1.5 rounded-full bg-muted-foreground/40" />
+                            回复已中断
+                          </div>
+                        )}
                       </>
                     ) : (
                       <span className="whitespace-pre-wrap">{m.content}</span>

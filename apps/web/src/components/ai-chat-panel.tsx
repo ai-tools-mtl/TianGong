@@ -33,6 +33,8 @@ interface ChatMessage {
   thinking?: string
   /** agent 透明化：本轮工具调用事件序列（流式累积 / 历史回灌） */
   toolEvents?: ToolEvent[]
+  /** 回复被中断（历史回灌）：后端兜底落了半截内容，非正常结束。 */
+  incomplete?: boolean
 }
 
 /**
@@ -143,6 +145,8 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
           // 历史回灌：从 Message.meta 恢复思考过程 + 工具调用（刷新后仍可见）
           thinking: m.meta?.thinking,
           toolEvents: m.meta?.tool_events,
+          // 历史回灌：恢复中断标记（后端兜底落的半截回复）
+          incomplete: m.meta?.incomplete,
         })),
       )
     }
@@ -177,6 +181,8 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
   // 切换会话时重置消息加载标记
   function handleSelectConversation(convId: string) {
     if (convId === currentConvId) return
+    // 切会话前 abort 在途的流式请求，避免旧会话的 token 回调污染新会话的 messages（丢对话根因）。
+    abortRef.current?.abort()
     msgLoadedForConv.current = null
     setCurrentConvId(convId)
     setMessages([])
@@ -186,6 +192,8 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
   function handleNewConversation() {
     // 立即建草稿会话（后端 status=draft），列表可见、有反馈。
     // 首条对话完成后，后端同步总结标题并转 active。
+    // 切会话前 abort（同上）。
+    abortRef.current?.abort()
     msgLoadedForConv.current = null
     setMessages([])
     setPhase('idle')
@@ -200,6 +208,8 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
   }
 
   function handleDeleteConversation(convId: string) {
+    // 删除当前会话会触发显示清空（等同切会话），先 abort 在途请求。
+    if (convId === currentConvId) abortRef.current?.abort()
     deleteConv.mutate(convId, {
       onSuccess: () => {
         // 删除的是当前会话才清空显示
@@ -615,9 +625,18 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
                       streaming={phase === 'chatting' && i === messages.length - 1}
                     />
                     {m.content ? (
-                      <Markdown className="prose prose-sm max-w-none dark:prose-invert">
-                        {m.content}
-                      </Markdown>
+                      <>
+                        <Markdown className="prose prose-sm max-w-none dark:prose-invert">
+                          {m.content}
+                        </Markdown>
+                        {/* 中断标记：后端兜底落的半截回复（切会话/断连/异常），提示非正常结束 */}
+                        {m.incomplete && (
+                          <div className="mt-1.5 flex items-center gap-1 text-[11px] text-muted-foreground/70">
+                            <span className="inline-block size-1.5 rounded-full bg-muted-foreground/40" />
+                            回复已中断
+                          </div>
+                        )}
+                      </>
                     ) : !m.thinking && !m.toolEvents?.length ? (
                       <span className="flex items-center gap-1 text-muted-foreground">
                         <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:0ms]" />

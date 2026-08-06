@@ -544,6 +544,8 @@ export interface MessageMeta {
   tool_events?: ToolEvent[]
   /** 模型思考过程全文（GLM/DeepSeek reasoning_content 拼接） */
   thinking?: string
+  /** 回复被中断（客户端断连 / LLM 异常）：后端兜底落了半截内容，非正常结束。 */
+  incomplete?: boolean
 }
 
 // ── Agent Skill（spec 合规，两档可见性）──
