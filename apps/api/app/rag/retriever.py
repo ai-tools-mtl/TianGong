@@ -143,12 +143,14 @@ def retrieve(
         c.fused_score *= c.weight
 
     # G3 rerank 精排（D5，失败降级）
+    # candidate 池与传给 rerank 的 docs 按列表位置一一对应：用 rerank 返回的索引
+    # 直接取回 candidate，避免用 content 文本做匹配键——候选池内若有重复文本，
+    # dict 匹配会把多条 candidate 合并成一条，排序错乱。
     rerank_cfg = resolve_rerank_config(db, user_id=user_id)
     if rerank_cfg.enabled and len(fused) > 1:
-        docs = [c.content for c in fused[:RETRIEVAL_CANDIDATE_POOL]]
-        ranked_docs = rerank(query, docs, config=rerank_cfg)
-        content_order = {d: i for i, d in enumerate(ranked_docs)}
-        fused = sorted(fused, key=lambda c: content_order.get(c.content, 999))[:top_k]
+        pool = fused[:RETRIEVAL_CANDIDATE_POOL]
+        ranked_indices = rerank(query, [c.content for c in pool], config=rerank_cfg)
+        fused = [pool[i] for i in ranked_indices if i < len(pool)][:top_k]
     else:
         fused = fused[:top_k]
 
