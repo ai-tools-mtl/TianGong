@@ -63,6 +63,7 @@
 | 批量生成项目 8 章初稿 | `ai/init_orchestrator.py` `astream_init_generate` | 裸 `astream_llm` 逐章生成 Markdown |
 | 项目初始化冷启动引导 | `ai/init_orchestrator.py` `astream_init_chat` | 引导用户把技术想法说清 |
 | 图注润色 | `api/ai.py` `caption_figures` | drawings 章节基于文字描述生成规范图注 |
+| **附图生成** | `services/figure_service.py` `generate_figure` | drawings 章节 AI 生成专利附图：`resolve_chat_config` → `get_llm().invoke()` 出 drawio XML → 调 drawio 渲染微服务出 PNG。**非流式同步调用**，记账 action=`figure`（`log_chat_call`）。渲染失败（`ServiceUnavailableError`）不落库，fail-closed |
 
 ## 六、维护说明
 

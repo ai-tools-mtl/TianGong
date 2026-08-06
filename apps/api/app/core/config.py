@@ -58,6 +58,12 @@ class Settings(BaseSettings):
     memory_grace_days: int = 7                    # 新记忆豁免期（天）
     nli_base_url: str = "http://localhost:7999"   # NLI 矛盾判断服务地址
 
+    # drawio 渲染微服务（apps/drawio-render/，端口 8001）。
+    # 跑 draw.io desktop headless CLI 把 XML 渲染成 PNG。软依赖（fail-closed）：
+    # 服务不可用时 figure 生成整体报错，不降级、不留半成品。api 启动不 depends_on 它。
+    # 端口规划：7997 embedding / 7998 rerank / 7999 NLI / 8000 api / 8001 drawio。
+    drawio_base_url: str = "http://localhost:8001"
+
     # Firecrawl (web ingestion;全局 key 存 SystemSetting,env 仅兜底)
     firecrawl_api_key: str = ""
     firecrawl_base_url: str = "https://api.firecrawl.dev"

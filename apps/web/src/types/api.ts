@@ -203,6 +203,23 @@ export interface Attachment {
   created_at: string
 }
 
+/** AI 生成的专利附图（drawio XML 源 + 渲染产物 PNG）。 */
+export interface Figure {
+  id: string
+  project_id: string
+  section_id: string | null
+  attachment_id: string | null
+  prompt: string
+  diagram_type: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** 附图详情（含 drawio XML 源）。 */
+export interface FigureDetail extends Figure {
+  drawio_xml: string
+}
+
 // ── 管理 ──
 
 export interface AdminUser {

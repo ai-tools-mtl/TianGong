@@ -10,6 +10,7 @@ import { AIChatPanel } from '@/components/ai-chat-panel'
 import type { AIChatPanelRef } from '@/components/ai-chat-panel'
 import { ResizeHandle } from '@/components/resize-handle'
 import { SectionOutline } from '@/components/section-outline'
+import { FigureGenerate } from '@/components/editor/figure-generate'
 import { FigureUpload } from '@/components/editor/figure-upload'
 import { TiptapEditor } from '@/components/editor/tiptap-editor'
 import type { TiptapEditorRef } from '@/components/editor/tiptap-editor'
@@ -364,8 +365,15 @@ export default function ProjectDetailPage() {
         <div className="flex-1 overflow-y-auto px-6 py-4">
           <div className="h-full">
             {current && current.key === 'drawings' && (
-              <div className="mb-3">
-                <FigureUpload
+              <div className="mb-3 space-y-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  <FigureUpload
+                    sectionId={current.id}
+                    projectId={projectId}
+                    onInsertImage={(src, alt) => editorRef.current?.insertImage(src, alt)}
+                  />
+                </div>
+                <FigureGenerate
                   sectionId={current.id}
                   projectId={projectId}
                   onInsertImage={(src, alt) => editorRef.current?.insertImage(src, alt)}

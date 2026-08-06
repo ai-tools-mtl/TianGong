@@ -506,6 +506,34 @@ export const api = {
   attachmentUrl: (projectId: string, attachmentId: string) =>
     `${BASE}/api/v1/projects/${projectId}/attachments/${attachmentId}/file`,
 
+  // ── 附图生成（drawio 渲染）──
+  generateFigure: (
+    sectionId: string,
+    body: { prompt: string; diagram_type?: string | null; chat_source?: string | null },
+  ) =>
+    request<import('@/types/api').Figure>(`/sections/${sectionId}/figures/generate`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  listFigures: (projectId: string) =>
+    request<import('@/types/api').Figure[]>(`/projects/${projectId}/figures`),
+
+  getFigure: (figureId: string) =>
+    request<import('@/types/api').FigureDetail>(`/figures/${figureId}`),
+
+  regenerateFigure: (
+    figureId: string,
+    body: { prompt?: string; chat_source?: string | null },
+  ) =>
+    request<import('@/types/api').Figure>(`/figures/${figureId}/regenerate`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  deleteFigure: (figureId: string) =>
+    request<void>(`/figures/${figureId}`, { method: 'DELETE' }),
+
   // ── 审查 ──
   runReview: (projectId: string) =>
     request<import('@/types/api').ReviewRecord>(`/projects/${projectId}/review`, { method: 'POST' }),

@@ -44,6 +44,13 @@ class ValidationError(AppError):
     code = "validation_error"
 
 
+class ServiceUnavailableError(AppError):
+    """依赖的外部服务不可用（如 drawio 渲染容器故障）。fail-closed 语义：
+    不降级、不留半成品，直接报错让用户重试。"""
+    status_code = 503
+    code = "service_unavailable"
+
+
 def register_exception_handlers(app) -> None:
     """注册全局异常处理器，统一错误响应格式 {code, message}。"""
     from fastapi import Request

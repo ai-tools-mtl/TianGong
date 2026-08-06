@@ -1,5 +1,6 @@
 from app.models.skill import Skill
 from app.models.attachment import Attachment
+from app.models.figure import Figure
 from app.models.audit_log import AuditLog
 from app.models.invite_code import InviteCode
 from app.models.base import Base, JSONType
@@ -30,7 +31,7 @@ from app.models.web_ingestion_job import WebIngestionJob
 
 __all__ = [
     "Base", "JSONType",
-    "User", "Attachment", "Project", "ProjectMember", "ProjectTag", "Tag",
+    "User", "Attachment", "Figure", "Project", "ProjectMember", "ProjectTag", "Tag",
     "SystemSetting", "Template", "ParseJob", "Section", "SectionVersion",
     "ShareLink", "Message", "Conversation", "ConversationStatus",
     "KIND_INIT", "KIND_PROJECT",

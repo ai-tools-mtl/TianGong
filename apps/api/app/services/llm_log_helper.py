@@ -50,6 +50,43 @@ def log_embed_call(
         pass
 
 
+def log_chat_call(
+    db: Session, *,
+    user_id,
+    action: str,
+    model: str,
+    provider: str,
+    status: str = "success",
+    tokens: dict | None = None,
+    duration_ms: int | None = None,
+    error: str | None = None,
+    project_id=None,
+) -> None:
+    """写一条 chat 类 LLM 调用元数据日志（供 figure 等同步 LLM 调用复用）。
+
+    与 ai.py 内的 _log_llm_call 等价，但放共享层供非 chat 端点（如 figure 生成）
+    复用，避免跨 router 调私有函数。仅存元数据（设计 8.3 红线），失败不抛。
+
+    事务边界：同 log_embed_call，用 SAVEPOINT（begin_nested）隔离，不提前 commit。
+    """
+    try:
+        with db.begin_nested():
+            db.add(LLMCallLog(
+                user_id=user_id,
+                project_id=project_id,
+                action=action,
+                model=model,
+                provider=provider,
+                token_prompt=tokens.get("prompt") if tokens else None,
+                token_completion=tokens.get("completion") if tokens else None,
+                duration_ms=duration_ms,
+                status=status,
+                error=(str(error)[:500] if error else None),
+            ))
+    except Exception:
+        pass
+
+
 def log_firecrawl_call(
     db: Session, *,
     user_id,

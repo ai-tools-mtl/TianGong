@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from app.api import (
-    admin, ai, assistant, attachments, auth, export, health, knowledge, memories, projects, review, sections, settings, share, skills, tags, templates, versions,
+    admin, ai, assistant, attachments, auth, export, figures, health, knowledge, memories, projects, review, sections, settings, share, skills, tags, templates, versions,
 )
 
 api_router = APIRouter(prefix="/api/v1")
@@ -13,6 +13,8 @@ api_router.include_router(tags.router)
 api_router.include_router(templates.router)
 api_router.include_router(sections.router)
 api_router.include_router(attachments.router)
+# /sections/{id}/figures/* /figures/* AI 生成的专利附图（drawio 渲染）
+api_router.include_router(figures.router)
 api_router.include_router(ai.router)
 api_router.include_router(versions.router)
 api_router.include_router(export.router)

@@ -163,6 +163,37 @@ services:
       start_period: 90s
     restart: unless-stopped
 
+  # drawio 渲染微服务(自建,apps/drawio-render/)。
+  # 跑 draw.io desktop headless CLI(xvfb + Chromium),把 .drawio XML 导出为 PNG,
+  # 供「附图说明」章节 AI 生成专利附图用。与 nli 同属自建微服务,但「计算资源」是
+  # 系统级二进制(drawio-desktop .deb 烤进镜像)而非模型权重,无 volume 挂载。
+  #
+  # 与 nli/rerank 的不对称:nli/rerank 是软依赖且 fail-open(挂了降级);
+  # drawio 渲染是软依赖但 **fail-closed**(挂了 figure 生成整体报错,不降级、不留半成品)。
+  # 故 api 服务**不** depends_on drawio(渲染挂了不影响主功能,只是 figure 生成不可用)。
+  # 端口规划:7997 embedding / 7998 rerank / 7999 NLI / 8000 api / 8001 drawio。
+  #
+  # 镜像较重(Chromium ~500MB+);memory 2g 限制防 Chromium 内存膨胀。
+  # start_period 给足:Chromium 冷启 + 模块级预热(warmup)需 60-120s。
+  drawio:
+    build:
+      context: ./apps/drawio-render
+    container_name: tiangong-drawio
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      # Chromium 冷启 + warmup(后台线程预热一次空渲染),需较长宽限期
+      start_period: 150s
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
   # ---- 以下为全栈部署服务,仅在 --profile full 时启动 ----
 
   api:
@@ -208,6 +239,10 @@ services:
       # 容器间用服务名 nli:7999;本地开发用 localhost:7999(在 apps/api/.env 配)。
       # 软依赖:故障时 judge_relation 降级 neutral 走合并,故 api 不 depends_on nli。
       NLI_BASE_URL: ${NLI_BASE_URL:-http://nli:7999}
+      # drawio 渲染服务(本 compose 的 drawio 服务)。
+      # 容器间用服务名 drawio:8001;本地开发用 localhost:8001(在 apps/api/.env 配)。
+      # 软依赖且 fail-closed:故障时 figure 生成报 503,不降级、不留半成品,故 api 不 depends_on drawio。
+      DRAWIO_BASE_URL: ${DRAWIO_BASE_URL:-http://drawio:8001}
       # 首个 admin 账号(entrypoint 跑 init_db 时读取,已存在则跳过)
       INIT_ADMIN_USERNAME: ${INIT_ADMIN_USERNAME:-admin}
       INIT_ADMIN_PASSWORD: ${INIT_ADMIN_PASSWORD}
