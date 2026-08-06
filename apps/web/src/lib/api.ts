@@ -32,6 +32,9 @@ import type {
   UserLLMConfig,
   UserLLMConfigCreate,
   UserLLMConfigUpdate,
+  UserIMAConfig,
+  UserIMAUpsert,
+  IMATestResult,
 } from '@/types/api'
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -705,6 +708,19 @@ export const api = {
     }),
   /** 普通用户查自己的全局 Key 授权状态（选源器用）。 */
   getMyGrant: () => request<MyGrant>(`/settings/my-grant`),
+
+  // ── 腾讯 ima 检索源（单配置 upsert）──
+  /** 获取当前用户的 ima 配置（掩码），无配置时 configured=false。 */
+  getMyIMA: () => request<UserIMAConfig>(`/settings/ima`),
+  /** 新增或更新 ima 配置（client_id/api_key 留空=不改）。 */
+  upsertMyIMA: (data: UserIMAUpsert) =>
+    request<UserIMAConfig>(`/settings/ima`, { method: 'PUT', body: JSON.stringify(data) }),
+  /** 测试 ima 检索连通性（不落库）。 */
+  testMyIMA: (data: { client_id: string; api_key: string }) =>
+    request<IMATestResult>(`/settings/ima/test`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 
   // ── LLM provider 模板 / 模型拉取（feat/llm-config-redesign）──
   /** 内置 provider 模板列表（选模板自动填 base_url/model 等）。 */

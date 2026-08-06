@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Brain, ChevronRight, Wrench } from 'lucide-react'
+import { Brain, ChevronRight, Database, Wrench } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/dialog'
 import { LLMConfigRow } from '@/components/llm-config/LLMConfigRow'
 import { LLMConfigEditPanel } from '@/components/llm-config/LLMConfigEditPanel'
+import { IMAConfigPanel } from '@/components/ima-config/IMAConfigPanel'
 import { api } from '@/lib/api'
 import {
   clearChatDefaultSource,
@@ -31,6 +32,7 @@ import type {
   MyGrant,
   UserLLMConfig,
   UserLLMConfigUpdate,
+  UserIMAConfig,
 } from '@/types/api'
 
 export default function SettingsPage() {
@@ -56,6 +58,32 @@ export default function SettingsPage() {
   const currentChatDefault = getChatDefaultSource()
 
   const invalidateChat = () => qc.invalidateQueries({ queryKey: ['my-llm'] })
+
+  // ── ima 检索源（单配置）──
+  const [editingIma, setEditingIma] = useState(false)
+  const imaQuery = useQuery<UserIMAConfig>({
+    queryKey: ['my-ima'],
+    queryFn: api.getMyIMA,
+  })
+  const imaConfig: UserIMAConfig | undefined = imaQuery.data
+  const imaConfigured = !!imaConfig?.configured
+  const invalidateIma = () => qc.invalidateQueries({ queryKey: ['my-ima'] })
+
+  const upsertImaMut = useMutation({
+    mutationFn: (d: { client_id?: string; api_key?: string; enabled: boolean }) =>
+      api.upsertMyIMA(d),
+    onSuccess: () => {
+      invalidateIma()
+      toast.success('已保存')
+      setEditingIma(false)
+    },
+    onError: () => toast.error('保存失败'),
+  })
+  const toggleImaMut = useMutation({
+    mutationFn: (enabled: boolean) => api.upsertMyIMA({ enabled }),
+    onSuccess: () => invalidateIma(),
+    onError: () => toast.error('切换失败'),
+  })
 
   // ── chat mutations ──
   const createChatMut = useMutation({
@@ -193,6 +221,72 @@ export default function SettingsPage() {
         </section>
 
         {/* 嵌入模型：统一走 bge-m3 微服务，无需用户配置 */}
+
+        {/* ── 腾讯 ima 检索源 ── */}
+        <section className="space-y-4">
+          <div className="flex items-center justify-between px-1">
+            <h2 className="text-[15px] font-semibold">ima 知识库检索</h2>
+            {imaConfigured && (
+              <Button size="sm" variant="outline" onClick={() => setEditingIma(true)}>
+                编辑凭据
+              </Button>
+            )}
+          </div>
+
+          <div
+            className="overflow-hidden rounded-2xl border border-black/[0.07] bg-card dark:border-white/10"
+            style={{ boxShadow: 'var(--shadow-card)' }}
+          >
+            <div className="flex items-start justify-between gap-4 p-5">
+              <div className="flex items-start gap-3">
+                <div className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-black/[0.04] dark:bg-white/[0.06]">
+                  <Database className="size-[18px]" />
+                </div>
+                <div className="space-y-1">
+                  <p className="text-[13px] font-medium">
+                    把你的 ima 知识库作为检索源
+                  </p>
+                  <p className="text-[12px] leading-relaxed text-muted-foreground">
+                    开启后，每次章节对话会实时查询你的 ima 知识库并合并片段。
+                    这是实时检索（不导入文件），内容始终与 ima 同步。
+                  </p>
+                  {imaConfigured && (
+                    <p className="text-[11px] text-muted-foreground">
+                      Client ID：{imaConfig?.client_id_masked}
+                    </p>
+                  )}
+                </div>
+              </div>
+              {imaConfigured ? (
+                <Switch
+                  checked={!!imaConfig?.enabled}
+                  disabled={toggleImaMut.isPending}
+                  onCheckedChange={(v) => toggleImaMut.mutate(v)}
+                />
+              ) : (
+                <Button size="sm" onClick={() => setEditingIma(true)}>+ 配置</Button>
+              )}
+            </div>
+
+            {/* 编辑/新增面板 */}
+            {editingIma && (
+              <IMAConfigPanel
+                initial={imaConfigured ? {
+                  client_id_masked: imaConfig?.client_id_masked,
+                  api_key_masked: imaConfig?.api_key_masked,
+                } : null}
+                onCancel={() => setEditingIma(false)}
+                onSave={async (d) => {
+                  await upsertImaMut.mutateAsync({
+                    client_id: d.client_id || undefined,
+                    api_key: d.api_key || undefined,
+                    enabled: imaConfig?.enabled ?? false,
+                  })
+                }}
+              />
+            )}
+          </div>
+        </section>
 
         {/* 我的技能 — 入口卡片（普通用户从此进入技能管理） */}
         <Link
