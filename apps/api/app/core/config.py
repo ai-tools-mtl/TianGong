@@ -70,13 +70,15 @@ class Settings(BaseSettings):
     mineru_model_version: str = "vlm"  # vlm（高精度）/ pipeline（快）
 
     # 腾讯 ima 实时检索源（admin 全局配置，所有用户共享单源）
-    # 仅 search 端点可用，只返回 highlight 片段；凭据加密存 SystemSetting（ima_config）。
-    # 鉴权用 ima 官方自定义 header（ima-openapi-clientid/apikey），见 rag/ima_source.py。
+    # 两步检索：① search_knowledge_base 发现相关知识库（含订阅库，返回 kb_id）
+    #           ② search_knowledge 按 kb_id 检索文档片段（title/highlight_content）
+    # 凭据加密存 SystemSetting（ima_config）；鉴权用 ima 官方自定义 header。
     # env 仅兜底：admin 未在控制台配置时，可经这两个环境变量提供。
     ima_client_id: str = ""
     ima_api_key: str = ""
-    ima_search_base_url: str = "https://ima.qq.com/openapi/wiki/v1/search_knowledge_base"
-    ima_search_timeout: float = 5.0  # 外网不可靠，比 rerank(15s) 更短，超时即降级
+    ima_search_kb_url: str = "https://ima.qq.com/openapi/wiki/v1/search_knowledge_base"
+    ima_search_doc_url: str = "https://ima.qq.com/openapi/wiki/v1/search_knowledge"
+    ima_search_timeout: float = 8.0  # 外网 + 两步检索，给足时间；超时即降级
 
     # 文件上传（设计 13.2，附录 B：MVP 本地存储）
     upload_dir: str = "uploads"

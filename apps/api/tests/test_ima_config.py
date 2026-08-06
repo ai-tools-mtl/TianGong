@@ -105,23 +105,56 @@ def test_resolve_falls_back_to_env(db_session, monkeypatch):
 # ── search_ima：httpx mock ──
 
 def test_search_ima_success_returns_snippets():
-    """成功响应 → 返回统一片段结构。"""
+    """两步检索成功 → 返回文档片段（title/highlight）。
+
+    mock httpx.post 按调用顺序返回：① 列库响应 ② 文档检索响应。
+    """
     from app.rag.ima_source import search_ima
     from app.services.ima_config_service import ResolvedIMAConfig
 
     cfg = ResolvedIMAConfig(client_id="cid", api_key="sk", enabled=True)
-    fake_resp = _FakeResponse(
-        status=200, json_data={"results": [
-            {"title": "专利A", "highlight_content": "片段A", "url": "http://a"},
-            {"title": "专利B", "highlight_content": "片段B"},
-        ]},
-    )
-    with patch("app.rag.ima_source.httpx.post", return_value=fake_resp):
+    # 第 1 次调用：search_knowledge_base 列出库
+    kb_resp = _FakeResponse(status=200, json_data={
+        "code": 0, "msg": "success",
+        "data": {"info_list": [{"kb_id": "kb1", "kb_name": "专利库A"}]},
+    })
+    # 第 2 次调用：search_knowledge 文档片段
+    doc_resp = _FakeResponse(status=200, json_data={
+        "code": 0, "msg": "success",
+        "data": {"info_list": [{"title": "文档A", "highlight_content": "片段A"}]},
+    })
+    with patch("app.rag.ima_source.httpx.post", side_effect=[kb_resp, doc_resp]):
         hits = search_ima("query", cfg, top_k=2)
-    assert len(hits) == 2
+    assert len(hits) == 1
     assert hits[0]["content"] == "片段A"
-    assert hits[0]["title"] == "专利A"
-    assert hits[1]["url"] is None  # 第二条无 url
+    assert hits[0]["title"] == "文档A"
+    assert hits[0]["kb_name"] == "专利库A"
+
+
+def test_search_ima_falls_back_to_title_when_no_highlight():
+    """highlight_content 为空时，content 退化为 title（保证有可读内容）。"""
+    from app.rag.ima_source import search_ima
+    from app.services.ima_config_service import ResolvedIMAConfig
+
+    cfg = ResolvedIMAConfig(client_id="cid", api_key="sk", enabled=True)
+    kb_resp = _FakeResponse(200, {"code": 0, "data": {"info_list": [{"kb_id": "kb1", "kb_name": "库X"}]}})
+    doc_resp = _FakeResponse(200, {"code": 0, "data": {"info_list": [{"title": "仅标题无高亮", "highlight_content": ""}]}})
+    with patch("app.rag.ima_source.httpx.post", side_effect=[kb_resp, doc_resp]):
+        hits = search_ima("query", cfg)
+    assert len(hits) == 1
+    assert hits[0]["content"] == "仅标题无高亮"  # 退化为 title
+
+
+def test_search_ima_no_kb_returns_empty():
+    """第一步无可见库 → 返回空（不再调第二步）。"""
+    from app.rag.ima_source import search_ima
+    from app.services.ima_config_service import ResolvedIMAConfig
+
+    cfg = ResolvedIMAConfig(client_id="cid", api_key="sk", enabled=True)
+    kb_resp = _FakeResponse(200, {"code": 0, "data": {"info_list": []}})
+    with patch("app.rag.ima_source.httpx.post", return_value=kb_resp) as mock_post:
+        assert search_ima("query", cfg) == []
+        assert mock_post.call_count == 1  # 只调了列库，没调文档检索
 
 
 def test_search_ima_failure_returns_empty():
@@ -141,8 +174,9 @@ def test_search_ima_strict_raises_on_failure():
     from app.services.ima_config_service import ResolvedIMAConfig
 
     cfg = ResolvedIMAConfig(client_id="bad", api_key="bad", enabled=True)
-    fake_401 = _FakeResponse(status=401, json_data={"code": 200002, "msg": "skill auth failed"})
-    with patch("app.rag.ima_source.httpx.post", return_value=fake_401):
+    # 列库时鉴权失败（code 非 0）
+    fake_auth_err = _FakeResponse(status=200, json_data={"code": 200002, "msg": "skill auth failed"})
+    with patch("app.rag.ima_source.httpx.post", return_value=fake_auth_err):
         with pytest.raises(Exception):
             search_ima("query", cfg, strict=True)
 
@@ -199,9 +233,11 @@ def test_api_requires_admin(client, db_session):
 
 
 def test_api_test_endpoint_success(admin_client):
-    """POST /admin/console/ima/test → 测连通性（mock httpx 成功）。"""
-    fake_resp = _FakeResponse(200, {"results": [{"highlight_content": "x"}]})
-    with patch("app.rag.ima_source.httpx.post", return_value=fake_resp):
+    """POST /admin/console/ima/test → 测连通性（mock 两步检索成功）。"""
+    # 第 1 次：列库；第 2 次：文档片段
+    kb_resp = _FakeResponse(200, {"code": 0, "data": {"info_list": [{"kb_id": "kb1", "kb_name": "库X"}]}})
+    doc_resp = _FakeResponse(200, {"code": 0, "data": {"info_list": [{"title": "文档", "highlight_content": "片段"}]}})
+    with patch("app.rag.ima_source.httpx.post", side_effect=[kb_resp, doc_resp]):
         r = admin_client.post("/api/v1/admin/console/ima/test", json={
             "client_id": "cid", "api_key": "sk",
         })

@@ -462,7 +462,9 @@ def test_ima_config(
         client_id=payload.client_id, api_key=payload.api_key, enabled=True,
     )
     try:
-        hits = search_ima("测试", cfg, top_k=1, strict=True)
+        # 用领域通用词验证检索链路：鉴权通过 + 两步检索 + 能返回真实片段。
+        # 不用"测试"这类无意义词（命中率低，会误判为未连通）。
+        hits = search_ima("专利", cfg, top_k=3, strict=True)
         return {"ok": True, "hit_count": len(hits)}
     except Exception as e:
         return {"ok": False, "error": str(e), "hit_count": 0}
