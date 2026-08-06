@@ -22,15 +22,17 @@ logger = logging.getLogger(__name__)
 
 
 # ── 工具可见性白名单（按 agent 场景）──
-# init: 项目初始化阶段，仅保留 save_memory（沉淀画像/偏好），不检索知识库
-#       （项目尚未建立，rag_search 无意义且拖慢首屏回复）
+# init: 项目初始化对话，rag_search + save_memory 全保留——用户聊想法时参考
+#       历史案例/已有交底书完全合理（知识库的核心价值之一），且 init 助手也参与
+#       后续正文生成，检索能力不应缺失。（曾一度以「项目未建立、拖慢首屏」为由砍掉，
+#       后纠正：见 commit 021300f → 后续 revert）
 # section: 章节撰写/对话，全部内置工具可见（默认）
 #
 # 仅 BUILTIN_TOOLS 内的工具受白名单控制；MCP 工具（外部插件，按 server 启用）
 # 不受 scope 限制——启用即生效，与 agent 场景无关。
 BUILTIN_TOOLS: frozenset[str] = frozenset({"rag_search", "save_memory"})
 TOOL_WHITELIST: dict[str, frozenset[str] | None] = {
-    "init": frozenset({"save_memory"}),
+    "init": frozenset({"rag_search", "save_memory"}),
     "section": None,  # None = 不过滤，全部内置工具可见
 }
 
@@ -41,9 +43,9 @@ async def create_agent_tools(db: Any, user_id, *, scope: str = "section"):
     Args:
         db: SQLAlchemy Session（由 build_agent 传入，agent 生命周期内有效）。
         user_id: 当前用户 ID（限定检索/写入范围到本人）。
-        scope: agent 场景，控制内置工具白名单。"init" 仅 save_memory，
-            "section"（默认）全部内置工具可见。MCP 工具不受 scope 限制。
-            未知 scope 宽放（不过滤），等同 section。
+        scope: agent 场景，控制内置工具白名单。"init" / "section"（默认）
+            均保留全部内置工具（rag_search + save_memory）；scope 机制保留用于
+            未来按场景裁剪。MCP 工具不受 scope 限制。未知 scope 宽放（不过滤）。
 
     Returns:
         工具列表（含按 scope 过滤后的内置工具 + 全部 MCP 工具）——

@@ -7,8 +7,8 @@
 
 与 orchestrator.py 的区别：
 - orchestrator 是 section 粒度（单章对话/生成），强依赖 build_system_prompt 的章节策略。
-- init_orchestrator 是项目粒度：对话不绑定单 section（用 INIT_SYSTEM_PROMPT），
-  generate 时一次性循环 8 章（用 astream_llm 纯生成，不走 agent loop）。
+- init_orchestrator 是项目粒度：对话不绑定单 section（用 INIT_CHAT_SYSTEM_PROMPT / INIT_GENERATE_SYSTEM_PROMPT，
+  分别服务对话引导与正文生成两条链路），generate 时一次性循环 8 章（用 astream_llm 纯生成，不走 agent loop）。
 
 init chat 走 agent loop（build_init_agent → create_deep_agent，带 save_memory 工具），
 与普通助手 astream_chat 同构（事件遍历 + tool_call/tool_result SSE 透传）。
@@ -33,7 +33,12 @@ _OUTLINE_TITLES = [(s["key"], s["title"]) for s in DEFAULT_STRUCTURE]
 # 不绑定单 section；目标是引导用户把想法说清楚，为生成 8 章做准备。
 # 写作规范浓缩自 assets/skills/ 下的内置 skill（patent-de-ai / patent-writing-quality /
 # patent-effect-contrast）——让助手引导用户时即遵守这些规范。
-INIT_SYSTEM_PROMPT = """你是「天工」项目初始化助手。用户想新建一个专利交底书项目，但通常只有一个模糊的技术想法。你的任务是通过对话，帮用户把想法理清楚，为后续一键生成 8 章初稿做准备。
+#
+# 拆成对话版 / 生成版两条：
+# - 对话版走 agent loop，工具实际可调用 → 文案说明「可用工具」
+# - 生成版走裸 astream_llm，不带工具（RAG 片段由系统自动注入上下文）→ 不提「可用工具」，
+#   改说「相关知识库片段已注入」，避免模型干等一个它无法调用的工具入口。
+_INIT_COMMON = """你是「天工」项目初始化助手。用户想新建一个专利交底书项目，但通常只有一个模糊的技术想法。你的任务是通过对话，帮用户把想法理清楚，为后续一键生成 8 章初稿做准备。
 
 对话目标——逐步引导用户说清以下 5 个核心方面（不必一次问全，每轮聚焦一个方向，结合用户已说的内容追问）：
 1. 技术领域：这个发明属于什么领域？解决哪类问题？
@@ -54,15 +59,28 @@ INIT_SYSTEM_PROMPT = """你是「天工」项目初始化助手。用户想新�
    （生成期禁止臆测如「约 10μs」这类绝对值，所以引导时就要把依据类型问清楚）
 8. 帮用户把「缺点、技术问题、有益效果」对应起来——例如「您说的这个效果，是针对哪个现有技术缺点的？」
 
-可用工具：
-- save_memory：当用户透露跨项目稳定的画像信息（职业/专业水平/领域，如「我是做新能源的」「我是专利代理人」）
-  或明确表达长期偏好（「以后都用这种写法」）时调用，用 memory_type="profile" 保存画像、默认保存偏好。
-  临时性信息（如「我现在在写电池专利」）不要保存。
-
 写作规范（生成内容时也要遵守，此处作为对话引导的标尺）：
 - 去 AI 味：禁用「更为关键的是」「换言之」「值得注意的是」等套话转折词；避免超长句和三连排比
 - 英文术语首现必须带中文翻译，格式「中文译名（English Term）」
 - 技术效果用「现有技术短板→本方案做法→量化差异」三段式，不臆测绝对数值
+"""
+
+# 对话引导版：走 agent loop，rag_search / save_memory 实际可调用
+INIT_CHAT_SYSTEM_PROMPT = _INIT_COMMON + """
+可用工具：
+- save_memory：当用户透露跨项目稳定的画像信息（职业/专业水平/领域，如「我是做新能源的」「我是专利代理人」）
+  或明确表达长期偏好（「以后都用这种写法」）时调用，用 memory_type="profile" 保存画像、默认保存偏好。
+  临时性信息（如「我现在在写电池专利」）不要保存。
+- rag_search：当用户的想法涉及具体技术领域、需要参考历史案例或已有交底书的写法/结构时调用，
+  检索用户知识库。帮用户把想法讲清楚时，相关历史案例能提供有力的参照（如「这个领域的常见技术问题怎么表述」）。
+  查询用技术关键词或问题描述。
+"""
+
+# 正文生成版：走裸 astream_llm，不带工具调用入口——知识库片段由系统自动检索后注入上下文
+# （见 _retrieve_section_context）。此处不提「可用工具」，避免模型等待一个无法调用的工具。
+INIT_GENERATE_SYSTEM_PROMPT = _INIT_COMMON + """
+本章生成时，系统已根据对话要点自动检索用户知识库，命中的相关历史案例/已有交底书片段会作为
+上下文注入（如存在）。请参考其写法与技术细节，但勿照搬，需结合本项目实际。
 """
 
 
@@ -70,7 +88,7 @@ async def _build_init_chat_messages(
     history: list[Message], user_input: str, llm_config,
     *, meta_sink: dict | None = None,
 ) -> list:
-    """装配 init chat 消息：INIT_SYSTEM_PROMPT + 压缩后历史。
+    """装配 init chat 消息：INIT_CHAT_SYSTEM_PROMPT + 压缩后历史。
 
     历史先经 compress_history 压缩（压缩 spec），再转 LangChain 消息类型。
     meta_sink 非空时写入压缩 snapshot，供调用方记入 LLMCallLog.context_meta。
@@ -96,7 +114,7 @@ async def _build_init_chat_messages(
     if not snapshot.triggered:
         compressed.append({"role": "user", "content": user_input})
 
-    messages: list = [SystemMessage(content=INIT_SYSTEM_PROMPT)]
+    messages: list = [SystemMessage(content=INIT_CHAT_SYSTEM_PROMPT)]
     for m in compressed:
         if m["role"] == "user":
             messages.append(HumanMessage(content=m["content"]))
@@ -111,9 +129,9 @@ async def _astream_init_chat_agent(
 ) -> AsyncIterator[tuple[str, dict | str]]:
     """init chat 的 agent loop 主路径（带工具：save_memory / rag_search / MCP）。
 
-    与 orchestrator.astream_chat 同构：build_agent(system_prompt_override=INIT_SYSTEM_PROMPT)
+    与 orchestrator.astream_chat 同构：build_agent(system_prompt_override=INIT_CHAT_SYSTEM_PROMPT)
     → compress_history → agent.astream_events 事件遍历，yield (kind, payload) 元组。
-    init 特殊性：无 section，用 INIT_SYSTEM_PROMPT；user_id 直接是会话归属用户。
+    init 特殊性：无 section，用 INIT_CHAT_SYSTEM_PROMPT；user_id 直接是会话归属用户。
 
     usage_sink 不在此路径填充（agent loop 多步调用，与普通助手 astream_chat 一致，落 NULL）。
     """
@@ -125,7 +143,7 @@ async def _astream_init_chat_agent(
     logger.info("astream_init_chat: 构建 init agent（model=%s）", llm_config.model)
     agent = await build_agent(
         db, llm_config=llm_config, user_id=user_id,
-        system_prompt_override=INIT_SYSTEM_PROMPT,
+        system_prompt_override=INIT_CHAT_SYSTEM_PROMPT,
         tool_scope="init",
     )
     logger.info("astream_init_chat: init agent 构建完成，开始 agent loop")
@@ -261,11 +279,51 @@ def _format_brief_summary(outline: dict | None) -> str | None:
     return "以下是初始化对话中已确认的项目要点（brief），生成本章时请对齐这些信息：\n\n" + "\n\n".join(lines)
 
 
+def _retrieve_section_context(
+    db, user_id, *, brief_text: str | None, section_title: str,
+) -> str | None:
+    """为单章生成检索知识库片段，返回格式化后的注入文本（无命中/失败返回 None）。
+
+    query 用「brief 摘要 + 章节标题」组合——brief 提供项目技术语义（信号强于单标题），
+    章节标题锚定当前生成维度。检索失败（embedding 未配/异常）静默降级，不阻断生成
+    （与 rag_search 工具容错语义一致）。
+
+    此函数同步调用 retrieve（retrieve 内部是同步混合检索）；放在 _build_section_generate_messages
+    的 message 装配阶段一次性执行，不进入 agent loop。
+    """
+    if db is None or user_id is None:
+        return None
+    from loguru import logger
+    from app.rag.retriever import retrieve
+
+    query_parts = [p.strip() for p in (brief_text, section_title) if p and p.strip()]
+    if not query_parts:
+        return None
+    query = "\n".join(query_parts)
+    try:
+        results = retrieve(db, user_id=user_id, query=query)
+    except Exception as e:  # noqa: BLE001 — 检索失败绝不阻断生成
+        logger.warning("init generate RAG 检索失败（section={}），跳过注入: {}", section_title, e)
+        return None
+    if not results:
+        return None
+    snippets = []
+    for r in results:
+        title = f"（来源：{r.project_title}）" if r.project_title else ""
+        snippets.append(f"{r.content}{title}")
+    logger.info("init generate RAG 命中 {} 条（section={}）", len(results), section_title)
+    return (
+        "以下是检索到的相关知识库片段，生成本章时可参考其写法/结构/技术细节"
+        "（请勿照搬，需结合本项目实际）：\n\n" + "\n\n---\n\n".join(snippets)
+    )
+
+
 async def _build_section_generate_messages(
     section: Section, history: list[Message], llm_config,
     *, meta_sink: dict | None = None, outline: dict | None = None,
+    db=None, user_id=None,
 ) -> list:
-    """装配单章生成消息：INIT_SYSTEM_PROMPT + brief 摘要 + 压缩历史 + 本章生成指令。
+    """装配单章生成消息：INIT_GENERATE_SYSTEM_PROMPT + brief 摘要 + RAG 片段 + 压缩历史 + 本章生成指令。
 
     与 orchestrator.astream_generate 的区别：后者走 build_agent（章节策略进 system prompt），
     本函数走裸 astream_llm，故把章节策略揉进生成指令（user message）里。
@@ -273,6 +331,11 @@ async def _build_section_generate_messages(
 
     outline（draft_outline）注入成 brief 摘要（SystemMessage），让生成对齐已确认维度——
     这是 generate 链路消费 brief 的核心注入点。
+
+    RAG 注入（db + user_id 均提供时）：用「brief 摘要 + 本章标题」组合做 query 检索用户
+    知识库，命中片段作为 SystemMessage 注入，供生成参考。检索失败/无命中 → 静默跳过
+    （与 rag_search 工具的容错语义一致，绝不阻断生成）。
+
     meta_sink 非空时写入压缩 snapshot，供调用方记入 LLMCallLog.context_meta。
     """
     from loguru import logger
@@ -293,11 +356,15 @@ async def _build_section_generate_messages(
     if not snapshot.triggered:
         compressed.append({"role": "user", "content": instruction})
 
-    messages: list = [SystemMessage(content=INIT_SYSTEM_PROMPT)]
+    messages: list = [SystemMessage(content=INIT_GENERATE_SYSTEM_PROMPT)]
     # brief 摘要注入（generate 链路消费 draft_outline 的核心点）
     brief = _format_brief_summary(outline)
     if brief:
         messages.append(SystemMessage(content=brief))
+    # RAG 片段注入：brief 摘要 + 本章标题组合做 query（信号强于单标题，省于整段历史）
+    rag_snippet = _retrieve_section_context(db, user_id, brief_text=brief, section_title=section.title)
+    if rag_snippet:
+        messages.append(SystemMessage(content=rag_snippet))
     for m in compressed:
         if m["role"] == "user":
             messages.append(HumanMessage(content=m["content"]))
@@ -362,7 +429,8 @@ async def astream_init_generate(
         chapter_error = None
         try:
             messages = await _build_section_generate_messages(
-                section, history, llm_config, meta_sink=meta_sink, outline=outline
+                section, history, llm_config, meta_sink=meta_sink, outline=outline,
+                db=db, user_id=user.id,
             )
             async for token in astream_llm(messages, llm_config=llm_config, usage_sink=usage_sink):
                 full_md += token

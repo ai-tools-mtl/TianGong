@@ -179,11 +179,11 @@ def test_build_agent_assembly_args(db_session, monkeypatch):
     assert any(isinstance(m, ToolTimeoutMiddleware) for m in captured["middleware"])
 
 
-def test_build_agent_init_scope_excludes_rag_search(db_session, monkeypatch):
-    """[tool_scope=init] 时 tools 不含 rag_search，但保留 save_memory + MCP（如有）。
+def test_build_agent_init_scope_keeps_rag_search(db_session, monkeypatch):
+    """[tool_scope=init] 时 tools 保留 rag_search + save_memory（与 section 一致）。
 
-    init 场景白名单：仅 save_memory。rag_search 被过滤（项目初始化阶段
-    知识库检索无意义）。MCP 工具不在 BUILTIN_TOOLS 内，不受 scope 影响。
+    init 助手参与正文生成、对话引导也需要参考知识库历史案例，故 init 场景同样保留
+    全部内置工具。MCP 工具不在 BUILTIN_TOOLS 内，不受 scope 影响。
     """
     from app.ai import agent as agent_mod
     from app.services.llm_config_service import ResolvedChatConfig
@@ -211,7 +211,7 @@ def test_build_agent_init_scope_excludes_rag_search(db_session, monkeypatch):
 
     tool_names = [getattr(t, "name", None) for t in captured["tools"]]
     assert "save_memory" in tool_names
-    assert "rag_search" not in tool_names
+    assert "rag_search" in tool_names
 
 
 def test_build_agent_storebackend_namespace_is_valid(db_session, monkeypatch):

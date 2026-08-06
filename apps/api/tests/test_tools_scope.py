@@ -1,7 +1,7 @@
 """create_agent_tools 的 scope 白名单单元测试。
 
 直接测工厂函数（不走 build_agent / deepagents），隔离地验证工具可见性策略：
-- scope="init"：仅 save_memory（砍 rag_search）
+- scope="init"：rag_search + save_memory 全保留（init 助手参与正文生成，需检索能力）
 - scope="section"（默认）：rag_search + save_memory 全保留
 - 未知 scope：宽放（不过滤，等同 section）
 
@@ -27,14 +27,14 @@ def _tool_names(tools) -> set[str]:
 
 
 def test_create_agent_tools_init_scope(monkeypatch, db_session):
-    """scope='init' 仅返回 save_memory，砍掉 rag_search。"""
+    """scope='init' 返回 rag_search + save_memory（全保留，与 section 一致）。"""
     _mock_mcp_empty(monkeypatch)
     from app.ai.tools import create_agent_tools
 
     tools = asyncio.run(create_agent_tools(db_session, uuid.uuid4(), scope="init"))
     names = _tool_names(tools)
     assert "save_memory" in names
-    assert "rag_search" not in names
+    assert "rag_search" in names
 
 
 def test_create_agent_tools_section_scope_default(monkeypatch, db_session):
@@ -84,7 +84,7 @@ def test_create_agent_tools_mcp_not_filtered_by_scope(monkeypatch, db_session):
 
     tools = asyncio.run(tools_mod.create_agent_tools(db_session, uuid.uuid4(), scope="init"))
     names = _tool_names(tools)
-    # init 砍 rag_search，但 MCP 工具保留
+    # init 现保留全部内置工具 + MCP 工具
     assert "save_memory" in names
-    assert "rag_search" not in names
+    assert "rag_search" in names
     assert "fake_mcp_tool" in names
