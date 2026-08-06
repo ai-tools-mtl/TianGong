@@ -2,12 +2,15 @@
 
 from collections.abc import AsyncIterator, Iterator
 
+import asyncio
+
 from langchain_core.messages import HumanMessage
 from loguru import logger
 
 from app.ai.context_assembler import assemble_messages, get_project_summaries
 from app.ai.llm_client import astream_llm, extract_reasoning, stream_llm
 from app.ai.section_prompts import get_section_prompt
+from app.ai.tool_timeout import AGENT_LOOP_TOTAL_TIMEOUT
 from app.models import Message, Section
 from app.services.llm_config_service import ResolvedChatConfig
 
@@ -166,33 +169,39 @@ async def astream_chat(
     if not snapshot.triggered:
         messages.append({"role": "user", "content": user_input})
 
-    async for event in agent.astream_events(
-        {"messages": messages},
-        version="v2",
-    ):
-        evt = event["event"]
-        if evt == "on_chat_model_stream":
-            chunk = event["data"].get("chunk")
-            # 先透传思考过程（reasoning），再透传正文 token。思考片段在正文之前产出
-            # （GLM-4.x 思考模型先 think 后答），前端据此展示可折叠思考块。
-            reasoning = extract_reasoning(chunk)
-            if reasoning:
-                yield ("thinking", reasoning)
-            if chunk and chunk.content:
-                yield ("token", chunk.content)
-        elif evt == "on_tool_start":
-            yield ("tool_call", {
-                "name": event.get("name", ""),
-                "args": event.get("data", {}).get("input", {}),
-            })
-        elif evt == "on_tool_end":
-            result = event.get("data", {}).get("output")
-            # result 可能是各种类型（str / ToolMessage / dict），统一转 str 截断
-            result_str = str(result)[:500] if result is not None else ""
-            yield ("tool_result", {
-                "name": event.get("name", ""),
-                "result": result_str,
-            })
+    # 层 3：agent loop 总超时兜底，防极端情况（多步工具 + 生成）无限循环
+    try:
+        async with asyncio.timeout(AGENT_LOOP_TOTAL_TIMEOUT):
+            async for event in agent.astream_events(
+                {"messages": messages},
+                version="v2",
+            ):
+                evt = event["event"]
+                if evt == "on_chat_model_stream":
+                    chunk = event["data"].get("chunk")
+                    # 先透传思考过程（reasoning），再透传正文 token。思考片段在正文之前产出
+                    # （GLM-4.x 思考模型先 think 后答），前端据此展示可折叠思考块。
+                    reasoning = extract_reasoning(chunk)
+                    if reasoning:
+                        yield ("thinking", reasoning)
+                    if chunk and chunk.content:
+                        yield ("token", chunk.content)
+                elif evt == "on_tool_start":
+                    yield ("tool_call", {
+                        "name": event.get("name", ""),
+                        "args": event.get("data", {}).get("input", {}),
+                    })
+                elif evt == "on_tool_end":
+                    result = event.get("data", {}).get("output")
+                    # result 可能是各种类型（str / ToolMessage / dict），统一转 str 截断
+                    result_str = str(result)[:500] if result is not None else ""
+                    yield ("tool_result", {
+                        "name": event.get("name", ""),
+                        "result": result_str,
+                    })
+    except TimeoutError:
+        logger.warning("astream_chat: agent loop 总超时（%ss），强制结束", AGENT_LOOP_TOTAL_TIMEOUT)
+        yield ("token", "\n\n[系统提示：回复生成超时，已中止。请重试或简化问题。]")
 
 
 async def astream_generate(
@@ -251,33 +260,39 @@ async def astream_generate(
     if not snapshot.triggered:
         messages.append({"role": "user", "content": instruction})
 
-    async for event in agent.astream_events(
-        {"messages": messages},
-        version="v2",
-    ):
-        evt = event["event"]
-        if evt == "on_chat_model_stream":
-            chunk = event["data"].get("chunk")
-            # 先透传思考过程（reasoning），再透传正文 token。思考片段在正文之前产出
-            # （GLM-4.x 思考模型先 think 后答），前端据此展示可折叠思考块。
-            reasoning = extract_reasoning(chunk)
-            if reasoning:
-                yield ("thinking", reasoning)
-            if chunk and chunk.content:
-                yield ("token", chunk.content)
-        elif evt == "on_tool_start":
-            yield ("tool_call", {
-                "name": event.get("name", ""),
-                "args": event.get("data", {}).get("input", {}),
-            })
-        elif evt == "on_tool_end":
-            result = event.get("data", {}).get("output")
-            # result 可能是各种类型（str / ToolMessage / dict），统一转 str 截断
-            result_str = str(result)[:500] if result is not None else ""
-            yield ("tool_result", {
-                "name": event.get("name", ""),
-                "result": result_str,
-            })
+    # 层 3：agent loop 总超时兜底，防极端情况（多步工具 + 生成）无限循环
+    try:
+        async with asyncio.timeout(AGENT_LOOP_TOTAL_TIMEOUT):
+            async for event in agent.astream_events(
+                {"messages": messages},
+                version="v2",
+            ):
+                evt = event["event"]
+                if evt == "on_chat_model_stream":
+                    chunk = event["data"].get("chunk")
+                    # 先透传思考过程（reasoning），再透传正文 token。思考片段在正文之前产出
+                    # （GLM-4.x 思考模型先 think 后答），前端据此展示可折叠思考块。
+                    reasoning = extract_reasoning(chunk)
+                    if reasoning:
+                        yield ("thinking", reasoning)
+                    if chunk and chunk.content:
+                        yield ("token", chunk.content)
+                elif evt == "on_tool_start":
+                    yield ("tool_call", {
+                        "name": event.get("name", ""),
+                        "args": event.get("data", {}).get("input", {}),
+                    })
+                elif evt == "on_tool_end":
+                    result = event.get("data", {}).get("output")
+                    # result 可能是各种类型（str / ToolMessage / dict），统一转 str 截断
+                    result_str = str(result)[:500] if result is not None else ""
+                    yield ("tool_result", {
+                        "name": event.get("name", ""),
+                        "result": result_str,
+                    })
+    except TimeoutError:
+        logger.warning("astream_generate: agent loop 总超时（%ss），强制结束", AGENT_LOOP_TOTAL_TIMEOUT)
+        yield ("token", "\n\n[系统提示：草稿生成超时，已中止。请重试。]")
 
 
 async def astream_rewrite(

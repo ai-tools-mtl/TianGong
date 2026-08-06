@@ -133,10 +133,10 @@ def test_build_agent_assembly_args(db_session, monkeypatch):
             return None
 
     def _fake_create(model=None, tools=None, *, system_prompt=None, skills=None,
-                     backend=None, store=None, **kw):
+                     backend=None, store=None, middleware=None, **kw):
         captured.update(
             model=model, tools=tools or [], system_prompt=system_prompt,
-            skills=skills, backend=backend, store=store,
+            skills=skills, backend=backend, store=store, middleware=middleware or [],
         )
         return _Sentinel()
 
@@ -174,6 +174,9 @@ def test_build_agent_assembly_args(db_session, monkeypatch):
     assert isinstance(captured["backend"], StoreBackend)
     # system_prompt 非空（来自 context_assembler）
     assert captured["system_prompt"]
+    # middleware 含 ToolTimeoutMiddleware（工具级超时防护注入）
+    from app.ai.tool_timeout import ToolTimeoutMiddleware
+    assert any(isinstance(m, ToolTimeoutMiddleware) for m in captured["middleware"])
 
 
 def test_build_agent_init_scope_excludes_rag_search(db_session, monkeypatch):

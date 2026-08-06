@@ -16,6 +16,8 @@ init chat 走 agent loop（build_init_agent → create_deep_agent，带 save_mem
 """
 from collections.abc import AsyncIterator
 
+import asyncio
+
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.ai.llm_client import astream_llm, extract_reasoning
@@ -142,28 +144,36 @@ async def _astream_init_chat_agent(
     if not snapshot.triggered:
         compressed.append({"role": "user", "content": user_input})
 
-    async for event in agent.astream_events({"messages": compressed}, version="v2"):
-        evt = event["event"]
-        if evt == "on_chat_model_stream":
-            chunk = event["data"].get("chunk")
-            # 先透传思考过程（reasoning），再透传正文 token（与 orchestrator.astream_chat 同构）
-            reasoning = extract_reasoning(chunk)
-            if reasoning:
-                yield ("thinking", reasoning)
-            if chunk and chunk.content:
-                yield ("token", chunk.content)
-        elif evt == "on_tool_start":
-            yield ("tool_call", {
-                "name": event.get("name", ""),
-                "args": event.get("data", {}).get("input", {}),
-            })
-        elif evt == "on_tool_end":
-            result = event.get("data", {}).get("output")
-            result_str = str(result)[:500] if result is not None else ""
-            yield ("tool_result", {
-                "name": event.get("name", ""),
-                "result": result_str,
-            })
+    # 层 3：agent loop 总超时兜底（与 orchestrator.astream_chat 同构）
+    from app.ai.tool_timeout import AGENT_LOOP_TOTAL_TIMEOUT
+
+    try:
+        async with asyncio.timeout(AGENT_LOOP_TOTAL_TIMEOUT):
+            async for event in agent.astream_events({"messages": compressed}, version="v2"):
+                evt = event["event"]
+                if evt == "on_chat_model_stream":
+                    chunk = event["data"].get("chunk")
+                    # 先透传思考过程（reasoning），再透传正文 token（与 orchestrator.astream_chat 同构）
+                    reasoning = extract_reasoning(chunk)
+                    if reasoning:
+                        yield ("thinking", reasoning)
+                    if chunk and chunk.content:
+                        yield ("token", chunk.content)
+                elif evt == "on_tool_start":
+                    yield ("tool_call", {
+                        "name": event.get("name", ""),
+                        "args": event.get("data", {}).get("input", {}),
+                    })
+                elif evt == "on_tool_end":
+                    result = event.get("data", {}).get("output")
+                    result_str = str(result)[:500] if result is not None else ""
+                    yield ("tool_result", {
+                        "name": event.get("name", ""),
+                        "result": result_str,
+                    })
+    except TimeoutError:
+        logger.warning("init chat: agent loop 总超时（%ss），强制结束", AGENT_LOOP_TOTAL_TIMEOUT)
+        yield ("token", "\n\n[系统提示：回复生成超时，已中止。请重试或简化问题。]")
 
 
 async def _astream_init_chat_fallback(

@@ -8,6 +8,7 @@ user_id 与 db 由闭包绑定——LLM 无需（也无法）生成这些参数�
 生成 user_id/db_session，但 LLM 根本不知道这些值。闭包工厂在 build_agent
 时用已知 user_id + db 绑定，LLM 只需生成 query/content。
 """
+import asyncio
 import logging
 import uuid as _uuid
 from typing import Any
@@ -175,7 +176,13 @@ async def load_mcp_tools(db: Any) -> list:
         try:
             conn = _to_connection(s)
             client = MultiServerMCPClient({s["name"]: conn}, tool_name_prefix=True)
-            tools.extend(await client.get_tools())
+            # 工具发现阶段超时（层 2）：单个 server 拉工具列表最多等 15s，
+            # 慢/挂的 server 不阻塞 agent 构建（与层 1 工具执行超时正交）
+            server_tools = await asyncio.wait_for(client.get_tools(), timeout=15.0)
+            tools.extend(server_tools)
+        except asyncio.TimeoutError:
+            logger.warning("MCP server %s 工具发现超时（15s），跳过", s["name"])
+            continue
         except Exception as e:
             logger.warning("MCP server %s 加载失败，跳过: %s", s["name"], e)
             continue

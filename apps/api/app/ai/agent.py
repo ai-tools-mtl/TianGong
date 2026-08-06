@@ -26,6 +26,7 @@ from app.ai.context_assembler import SYSTEM_PROMPT
 from app.ai.llm_client import get_llm
 from app.ai.tools import create_agent_tools
 from app.ai.tool_support import ToolSupportError, check_tool_support
+from app.ai.tool_timeout import ToolTimeoutMiddleware
 from app.services.llm_config_service import ResolvedChatConfig
 from app.skills.storage import MinIOSkillStore
 from app.skills.visibility import build_agent_skill_sources
@@ -165,6 +166,7 @@ async def build_agent(
         skills=skill_sources if skill_sources else None,
         backend=backend,
         store=store,
+        middleware=[ToolTimeoutMiddleware()],  # 层 1：工具级超时防护，防工具挂起死等
     )
     logger.info("build_agent: agent 组装完成")
     return agent
