@@ -350,16 +350,32 @@ async def chat(
                 "coverage": coverage,
             })
         except asyncio.CancelledError:
+            # 客户端断连（含切会话 abort）：保留已生成内容，标 incomplete 供前端区分「正常结束」与「中断的半截」
             if full_response:
                 db.add(Message(conversation_id=conv.id, section_id=None, role="assistant",
-                               content=full_response, meta=stream_meta.build()))
+                               content=full_response,
+                               meta={**(stream_meta.build() or {}), "incomplete": True}))
                 db.commit()
             raise
         except Exception as e:
             from app.ai.llm_errors import friendly_llm_error
             err = str(e)
             status = "failed"
-            db.rollback()
+            # 异常兜底：保留已生成的部分内容（标 incomplete），不丢弃用户已看到的回复。
+            # rollback 先撤销中毒事务，再新建 Message 落库；落库失败不阻塞错误上报。
+            if full_response:
+                try:
+                    db.rollback()
+                    db.add(Message(
+                        conversation_id=conv.id, section_id=None, role="assistant",
+                        content=full_response,
+                        meta={**(stream_meta.build() or {}), "incomplete": True},
+                    ))
+                    db.commit()
+                except Exception:
+                    db.rollback()
+            else:
+                db.rollback()
             yield _sse_event("error", {"code": "llm_error", "message": friendly_llm_error(e)})
         finally:
             _log_llm_call(

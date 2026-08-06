@@ -186,6 +186,38 @@ def test_chat_writes_llm_call_log_on_failure(client, registered_user, db_session
     assert "boom" in log.error
 
 
+def test_chat_persists_partial_response_on_exception(client, registered_user, db_session, monkeypatch):
+    """异常兜底：流式 yield 几个 token 后抛异常，已生成的半截内容应落库（标 incomplete），而非丢弃。
+
+    旧实现 except 块直接 rollback，full_response 彻底丢失，表现为「有问无答」。
+    改后保留半截 + meta.incomplete=True，并仍向前端发 error 事件。
+    """
+    section = _make_logged_in_section(client, registered_user, db_session)
+
+    async def fake_astream_chat(db, sec, history, msg, **kwargs):
+        yield ("token", "这是已经")
+        yield ("token", "生成的半截")
+        raise RuntimeError("LLM 炸了")
+
+    monkeypatch.setattr("app.api.ai.astream_chat", fake_astream_chat)
+
+    res = client.post(f"/api/v1/sections/{section.id}/chat", json={"message": "hi"})
+    body = res.text
+    # 前端仍收到已 yield 的 token
+    assert "这是已经" in body
+    # 异常被友好化转发为 error 事件
+    assert "event: error" in body
+
+    # 关键断言：半截内容落库（不再丢），且标 incomplete
+    db_session.expire_all()
+    from app.models import Message as _Msg
+    msgs = db_session.query(_Msg).filter_by(section_id=section.id).all()
+    assert len(msgs) == 2  # user + assistant（半截）
+    ai_msg = next(m for m in msgs if m.role == "assistant")
+    assert "这是已经生成的半截" in ai_msg.content
+    assert ai_msg.meta.get("incomplete") is True
+
+
 # ── Fix 2: list_messages 必须按 conversation_id 隔离（防串历史）──
 
 def test_list_messages_requires_conversation_id(client, registered_user, db_session):

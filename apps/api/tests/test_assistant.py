@@ -198,6 +198,38 @@ def test_chat_propagates_tool_events(client, registered_user, db_session, monkey
     assert "已保存" in body
 
 
+def test_chat_persists_partial_response_on_exception(client, registered_user, db_session, monkeypatch):
+    """异常兜底：流式 yield 几个 token 后抛异常，已生成的半截内容应落库（标 incomplete），而非丢弃。
+
+    这是「丢对话」的核心防线——旧实现 except 块直接 rollback，full_response 彻底丢失，
+    表现为「有问无答」。改后保留半截 + meta.incomplete=True，并仍向前端发 error 事件。
+    """
+    _make_user_with_config(client, registered_user, db_session)
+    conv = client.post("/api/v1/assistant/conversations").json()
+
+    async def fake_stream_that_crashes(db, user_id, history, user_input, **kwargs):
+        yield ("token", "这是已经")
+        yield ("token", "生成的半截")
+        raise RuntimeError("LLM 炸了")
+
+    monkeypatch.setattr("app.api.assistant.astream_init_chat", fake_stream_that_crashes)
+
+    res = client.post(f"/api/v1/assistant/conversations/{conv['id']}/chat", json={"message": "hi"})
+    body = res.text
+    # 前端仍收到已 yield 的 token
+    assert "这是已经" in body
+    # 异常被友好化转发为 error 事件
+    assert "event: error" in body
+
+    # 关键断言：半截内容落库（不再丢），且标 incomplete
+    db_session.expire_all()
+    msgs = db_session.query(Message).filter_by(conversation_id=UUID(conv["id"])).all()
+    assert len(msgs) == 2  # user + assistant（半截）
+    ai_msg = next(m for m in msgs if m.role == "assistant")
+    assert "这是已经生成的半截" in ai_msg.content
+    assert ai_msg.meta.get("incomplete") is True
+
+
 # ── generate（mock）──────────────────────────────────────────────────
 
 def test_generate_creates_project_and_marks_conversation(client, registered_user, db_session, monkeypatch):

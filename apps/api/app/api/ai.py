@@ -311,9 +311,11 @@ async def chat(
                 "title": new_title,  # None 表示会话已是 active，标题未变
             })
         except asyncio.CancelledError:
+            # 客户端断连（含切会话 abort）：保留已生成内容，标 incomplete 供前端区分「正常结束」与「中断的半截」
             if full_response:
                 db.add(Message(section_id=section.id, conversation_id=conv.id, role="assistant",
-                               content=full_response, meta=stream_meta.build()))
+                               content=full_response,
+                               meta={**(stream_meta.build() or {}), "incomplete": True}))
                 db.commit()
             status = "failed"
             err = "client_cancelled"
@@ -322,6 +324,22 @@ async def chat(
             status = "failed"
             err = e
             logger.exception("SSE 流式端点异常（已友好化转发前端）")
+            # 异常兜底：保留已生成的部分内容（标 incomplete），不丢弃用户已看到的回复。
+            # rollback 先撤销中毒事务，再新建 Message 落库；落库失败不阻塞错误上报。
+            if full_response:
+                try:
+                    db.rollback()
+                    db.add(Message(
+                        section_id=section.id, conversation_id=conv.id, role="assistant",
+                        content=full_response,
+                        meta={**(stream_meta.build() or {}), "incomplete": True},
+                    ))
+                    db.commit()
+                except Exception:
+                    db.rollback()
+            else:
+                # 无内容可落时仍 rollback 确保 finally 块的 _log_llm_call 不因中毒事务二次失败
+                db.rollback()
             yield _sse_event("error", {"code": "llm_error", "message": _friendly_llm_error(e)})
         finally:
             # 防御：agent loop 内任何 DB 操作失败会让事务进入 aborted 状态。
