@@ -30,22 +30,25 @@ logger = logging.getLogger(__name__)
 #
 # 仅 BUILTIN_TOOLS 内的工具受白名单控制；MCP 工具（外部插件，按 server 启用）
 # 不受 scope 限制——启用即生效，与 agent 场景无关。
-BUILTIN_TOOLS: frozenset[str] = frozenset({"rag_search", "save_memory"})
+BUILTIN_TOOLS: frozenset[str] = frozenset({"rag_search", "save_memory", "generate_figure"})
 TOOL_WHITELIST: dict[str, frozenset[str] | None] = {
+    # init 阶段项目章节刚建/未成型，画图价值低；figure 仅 section 场景可见
     "init": frozenset({"rag_search", "save_memory"}),
     "section": None,  # None = 不过滤，全部内置工具可见
 }
 
 
-async def create_agent_tools(db: Any, user_id, *, scope: str = "section"):
+async def create_agent_tools(db: Any, user_id, *, scope: str = "section", section: Any = None):
     """构造绑定到当前用户的 agent 工具集合。
 
     Args:
         db: SQLAlchemy Session（由 build_agent 传入，agent 生命周期内有效）。
         user_id: 当前用户 ID（限定检索/写入范围到本人）。
-        scope: agent 场景，控制内置工具白名单。"init" / "section"（默认）
-            均保留全部内置工具（rag_search + save_memory）；scope 机制保留用于
-            未来按场景裁剪。MCP 工具不受 scope 限制。未知 scope 宽放（不过滤）。
+        scope: agent 场景，控制内置工具白名单。"init" / "section"（默认）。
+            generate_figure 仅 section 场景可见（init 阶段项目未成型，画图价值低）。
+            MCP 工具不受 scope 限制。未知 scope 宽放（不过滤）。
+        section: 当前 Section（章节 agent 场景传入）。generate_figure 工具据此
+            定位当前 project 的 drawings 章节；None 时该工具不装配（init 场景）。
 
     Returns:
         工具列表（含按 scope 过滤后的内置工具 + 全部 MCP 工具）——
@@ -145,7 +148,61 @@ async def create_agent_tools(db: Any, user_id, *, scope: str = "section"):
             db.rollback()
             return "未保存：写入失败，请稍后重试"
 
-    tools = [rag_search, save_memory]
+    @tool("generate_figure")
+    def generate_figure(prompt: str, diagram_type: str = "general") -> str:
+        """为专利交底书生成一张附图（流程图/架构图/框图等），自动存入「附图说明」章节。
+
+        何时调用：
+        - 用户明确要求画图：「画一下这个发明的系统框图」「帮我生成一张流程图」
+        - 撰写过程中需要配图说明结构：「这里配一张架构图更清楚」
+
+        何时不要调用：
+        - 用户只要文字说明、没要图
+        - 纯文字修改/重写（用普通对话即可）
+
+        Args:
+            prompt: 要画的图的内容描述，如「一种基于大模型的专利撰写流程：客户端→API网关→Agent→数据库」。
+                尽量具体列出关键部件和它们之间的关系。
+            diagram_type: 图类型。flowchart（流程图）/ architecture（系统架构图）/
+                sequence（时序图）/ block（模块框图）/ state（状态图）/ general（通用，默认）。
+
+        Returns:
+            操作结果（已生成并附图说明/生成失败原因）。生成的图会出现在
+            「附图说明」章节，用户可在那里预览并插入正文。
+        """
+        from app.core.storage import get_storage
+        from app.services import figure_service, section_service
+
+        # section 由闭包绑定（章节 agent 场景）；无 section（init）时工具不应被装配，
+        # 但防御性兜底：返回提示而非崩溃
+        if section is None:
+            return "未生成：当前会话无章节上下文，无法确定附图归属项目"
+
+        try:
+            # 从当前 section 取 project，再查该 project 的 drawings 章节——
+            # 无论 agent 当前在哪个章节对话，图都归到 drawings（与产品定位一致）
+            sections = section_service.list_sections(db, user_id=user_id, project_id=str(section.project_id))
+            drawings = next((s for s in sections if s.key == "drawings"), None)
+            if drawings is None:
+                return "未生成：当前项目无「附图说明」章节"
+
+            fig = figure_service.generate_figure(
+                db, storage=get_storage(), user_id=user_id,
+                section_id=str(drawings.id),
+                prompt=prompt, diagram_type=diagram_type, chat_source=None,
+            )
+            return f"已生成附图（id={fig.id}），已存入「附图说明」章节，用户可预览后插入正文"
+        except Exception as e:
+            # 工具是事务边界：DB/渲染失败必须 rollback，避免毒化 agent loop 后续查询
+            db.rollback()
+            msg = str(e)[:120]
+            return f"未生成：{msg}（可稍后重试）"
+
+    builtin = [rag_search, save_memory]
+    # generate_figure 仅在有 section 上下文时装配（init 场景 section=None 跳过）
+    if section is not None:
+        builtin.append(generate_figure)
+    tools = list(builtin)
     # 加载已启用的 MCP server 工具（逐 server try/except，失败跳过不阻塞 agent 构建）
     try:
         tools.extend(await load_mcp_tools(db))

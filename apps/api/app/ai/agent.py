@@ -155,7 +155,7 @@ async def build_agent(
     # 再触发——相当于一个极少生效的后备保险，而非活跃的第二套压缩。
     # 唯一代价：库的黑盒行为作为后备保留，可观测性略差；对正确性无损害。
     # （路径 B 的 §9 V1 明确接受此并存。）
-    agent_tools = await create_agent_tools(db, user_id, scope=tool_scope)
+    agent_tools = await create_agent_tools(db, user_id, scope=tool_scope, section=section)
     logger.info("build_agent: 调用 create_deep_agent（tools=%d skills=%d）",
                 len(agent_tools),
                 len(skill_sources) if skill_sources else 0)
