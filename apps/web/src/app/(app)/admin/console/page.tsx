@@ -1,6 +1,6 @@
 'use client'
 
-import { BarChart3, Database, FileText, Globe, Plug, ScanText, Search, Settings } from 'lucide-react'
+import { BarChart3, Database, FileText, Plug, ScanText, Search, Settings } from 'lucide-react'
 import Link from 'next/link'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
@@ -12,12 +12,6 @@ const CONSOLE_SECTIONS = [
     icon: Settings,
     title: 'LLM 配置',
     description: '全局对话模型凭据（嵌入统一走 bge-m3 微服务）',
-  },
-  {
-    href: '/admin/console/firecrawl',
-    icon: Globe,
-    title: 'Firecrawl 配置',
-    description: '网页摄入 API 凭据',
   },
   {
     href: '/admin/console/mineru',

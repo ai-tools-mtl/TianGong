@@ -90,6 +90,24 @@ def on_startup():
                 f"rerank 服务连通探测失败（不阻塞启动，检索将降级原序）：{e}"
             )
 
+        # Firecrawl 连通性探测(本地自部署):挂了网页摄入不可用,启动时告警让运维第一时间发现。
+        # 与 embedding/rerank 探活同级;firecrawl 是软依赖,不可达只 warning 不阻塞启动。
+        try:
+            from app.services.firecrawl_client import check_firecrawl_health
+
+            fc_base = settings.firecrawl_base_url
+            if check_firecrawl_health(fc_base):
+                loguru.logger.info(f"Firecrawl 服务连通正常（{fc_base}）")
+            else:
+                loguru.logger.warning(
+                    f"⚠️ Firecrawl 服务不可达（{fc_base}），"
+                    f"网页摄入(抓取网页)功能将不可用,用户调用时会报错。请检查 firecrawl 容器状态。"
+                )
+        except Exception as e:
+            loguru.logger.warning(
+                f"Firecrawl 服务连通探测失败（不阻塞启动，网页摄入将不可用）：{e}"
+            )
+
     # 恢复扫描：重启后重入队崩溃中断的解析任务（设计 P0 #6）
     try:
         from app.services.parse_service import recover_pending_jobs

@@ -33,8 +33,18 @@ def mock_admin():
 @pytest.fixture
 def fake_config():
     return ResolvedFirecrawlConfig(
-        api_key="fc-test", base_url="https://x", source="global",
+        api_key="fc-test", base_url="https://x",
     )
+
+
+@pytest.fixture(autouse=True)
+def mock_firecrawl_health():
+    """默认 mock firecrawl 连通性探活为 True(服务可达),避免 happy-path 测试真打 localhost:3002。
+
+    需要测试「服务不可达」的场景(test_rejects_service_unavailable)在用例内本地 patch 为 False。
+    """
+    with patch("app.services.web_ingestion_service.check_firecrawl_health", return_value=True):
+        yield
 
 
 # ── 入口校验 ─────────────────────────────────────────────────
@@ -48,11 +58,13 @@ def test_rejects_invalid_url(db_session, mock_user, fake_config):
                        mode="scrape", scope="personal")
 
 
-def test_rejects_unconfigured(db_session, mock_user):
-    """Firecrawl 未配置报错。"""
+def test_rejects_service_unavailable(db_session, mock_user, fake_config):
+    """Firecrawl 服务不可达报错(启动时已告警,此处给用户清晰报错)。"""
     with patch("app.services.web_ingestion_service.resolve_firecrawl_config",
-               return_value=None):
-        with pytest.raises(ValidationError, match="未配置"):
+               return_value=fake_config), \
+         patch("app.services.web_ingestion_service.check_firecrawl_health",
+               return_value=False):
+        with pytest.raises(ValidationError, match="不可用"):
             create_job(db_session, user=mock_user, url="https://x.com",
                        mode="scrape", scope="personal")
 

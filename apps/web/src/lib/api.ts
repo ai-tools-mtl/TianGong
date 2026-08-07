@@ -563,16 +563,6 @@ export const api = {
   }) =>
     request<import('@/types/api').GlobalLLMSettings>(`/admin/llm-config`, { method: 'PUT', body: JSON.stringify(data) }),
 
-  // ── Firecrawl 全局配置(admin)──
-  getFirecrawlConfig: () =>
-    request<import('@/types/api').FirecrawlSettings>('/admin/console/firecrawl'),
-
-  setFirecrawlConfig: (payload: import('@/types/api').FirecrawlConfigPayload) =>
-    request<{ ok: true }>('/admin/console/firecrawl', {
-      method: 'PUT',
-      body: JSON.stringify(payload),
-    }),
-
   // ── MinerU 全局配置(admin) — PDF→Markdown 云端解析 ──
   getMineruConfig: () =>
     request<import('@/types/api').MineruSettings>('/admin/console/mineru'),

@@ -298,49 +298,6 @@ def list_lite_models(
     return llm_config_service.list_provider_models(base_url=payload.base_url, api_key=payload.api_key, provider_template_id=payload.provider_template_id)
 
 
-# ── Firecrawl 配置(网页摄入)──────────────────────────────────
-
-
-class FirecrawlConfigRequest(BaseModel):
-    """admin 设置全局 Firecrawl 配置。
-
-    api_key 空串表示不修改(保留现有 key)。
-    base_url 为 None 表示不修改(保留现有 base_url),对齐 api_key 空串=不改的语义。
-    显式传值(含空串)才覆盖。
-    """
-
-    enabled: bool
-    api_key: str = ""
-    base_url: str | None = None
-
-
-@router.get("/admin/console/firecrawl")
-def get_firecrawl_config(
-    admin: User = Depends(require_admin),
-    db: Session = Depends(get_db),
-):
-    """读全局 Firecrawl 配置(api_key 脱敏)。"""
-    from app.services.firecrawl_client import get_firecrawl_settings
-
-    return get_firecrawl_settings(db)
-
-
-@router.put("/admin/console/firecrawl")
-def set_firecrawl_config(
-    payload: FirecrawlConfigRequest,
-    admin: User = Depends(require_admin),
-    db: Session = Depends(get_db),
-):
-    """写全局 Firecrawl 配置。"""
-    from app.services.firecrawl_client import set_firecrawl_settings
-
-    set_firecrawl_settings(
-        db, enabled=payload.enabled, api_key=payload.api_key,
-        base_url=payload.base_url, updated_by=admin.id,
-    )
-    return {"ok": True}
-
-
 # ── MinerU 配置（PDF→Markdown 解析）───────────────────────────
 
 

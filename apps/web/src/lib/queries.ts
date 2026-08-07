@@ -59,7 +59,6 @@ export const queryKeys = {
     llmConfig: ['admin', 'llm-config'] as const,
     // 轻量任务模型配置（会话标题/章节摘要，默认 GLM-4.7-Flash）
     liteConfig: ['admin', 'lite-config'] as const,
-    firecrawlConfig: ['admin', 'firecrawl-config'] as const,
     // MinerU 配置（PDF→Markdown 解析）
     mineruConfig: ['admin', 'mineru-config'] as const,
     // ima 检索源配置（腾讯 ima 知识库全局检索源）
@@ -700,26 +699,6 @@ export function useListLiteModels() {
       api_key: string
       provider_template_id?: string | null
     }) => api.listLiteModels(data),
-  })
-}
-
-// ── Firecrawl 全局配置(admin)──
-export function useFirecrawlConfig() {
-  return useQuery({
-    queryKey: queryKeys.admin.firecrawlConfig,
-    queryFn: () => api.getFirecrawlConfig(),
-  })
-}
-
-export function useSaveFirecrawlConfig() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (payload: import('@/types/api').FirecrawlConfigPayload) =>
-      api.setFirecrawlConfig(payload),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.admin.firecrawlConfig })
-      qc.invalidateQueries({ queryKey: queryKeys.admin.all })
-    },
   })
 }
 

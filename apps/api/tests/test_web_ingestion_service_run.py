@@ -46,7 +46,17 @@ def _make_page(i: int = 1) -> ScrapeResult:
 
 @pytest.fixture
 def fake_config():
-    return ResolvedFirecrawlConfig(api_key="x", base_url="x", source="global")
+    return ResolvedFirecrawlConfig(api_key="x", base_url="x")
+
+
+@pytest.fixture(autouse=True)
+def mock_firecrawl_health():
+    """默认 mock firecrawl 连通性探活为 True(服务可达),避免 run_job 真打 localhost:3002。
+
+    需要测试「服务不可达」的场景(test_run_job_marks_failed_on_unavailable)在用例内 patch 为 False。
+    """
+    with patch("app.services.web_ingestion_service.check_firecrawl_health", return_value=True):
+        yield
 
 
 def _create_running_job(db_session, user_id=None):
@@ -193,8 +203,8 @@ def test_run_job_filters_garbage_pages(
     assert len(job.file_ids) == 1   # 只入了一个
 
 
-def test_run_job_marks_failed_on_unconfigured(db_session):
-    """Firecrawl 配置丢失 → job.failed。"""
+def test_run_job_marks_failed_on_unavailable(db_session, fake_config):
+    """Firecrawl 服务不可达 → job.failed(启动时已告警,此处记录 job 错误)。"""
     from app.models import User
     user = User(username="test_run5", name="t5", password_hash="x",
                 email="test_run5@tiangong.dev")
@@ -203,12 +213,14 @@ def test_run_job_marks_failed_on_unconfigured(db_session):
     job = _create_running_job(db_session, user_id=user.id)
 
     with patch("app.services.web_ingestion_service.resolve_firecrawl_config",
-               return_value=None):
+               return_value=fake_config), \
+         patch("app.services.web_ingestion_service.check_firecrawl_health",
+               return_value=False):
         run_job(str(job.id))
 
     db_session.refresh(job)
     assert job.status == "failed"
-    assert "配置丢失" in (job.error_message or "")
+    assert "不可用" in (job.error_message or "")
 
 
 # ── 配额账本断言(防三重计数 / 防漏退款)──────────────────────────

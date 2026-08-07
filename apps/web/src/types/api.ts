@@ -683,20 +683,6 @@ export interface WebIngestRequest {
   max_pages?: number
 }
 
-// Firecrawl 全局配置(GET /admin/console/firecrawl)
-export interface FirecrawlSettings {
-  enabled: boolean
-  api_key_masked: string
-  base_url: string
-}
-
-// Firecrawl 配置 PUT 请求体
-export interface FirecrawlConfigPayload {
-  enabled: boolean
-  api_key: string
-  base_url: string | null
-}
-
 // MinerU 全局配置（GET /admin/console/mineru）— PDF→Markdown 云端解析
 export interface MineruSettings {
   enabled: boolean

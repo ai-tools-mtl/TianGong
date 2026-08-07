@@ -14,7 +14,7 @@ import { useMineruConfig, useSaveMineruConfig, useTestMineruConfig } from '@/lib
 /**
  * /admin/console/mineru — MinerU 全局配置页（PDF→Markdown 云端解析）。
  *
- * 镜像 Firecrawl 配置页，多一个 model_version 选项 + 测试连接按钮。
+ * enabled 开关 + api_token + base_url + model_version 选项 + 测试连接按钮。
  * 配置后，PDF 上传走 MinerU（保留表格/标题的结构化 Markdown，含 OCR）；
  * 未配置或关闭时降级到 pypdf 纯文本提取。
  */
