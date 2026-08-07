@@ -204,7 +204,8 @@ from app.models import KnowledgeFile  # noqa: E402
 from app.parsing.content_filter import filter_content  # noqa: E402
 from app.services import knowledge_service  # noqa: E402
 from app.services.firecrawl_client import (  # noqa: E402
-    FirecrawlClient, ResolvedFirecrawlConfig, resolve_firecrawl_config,
+    FirecrawlClient, ResolvedFirecrawlConfig, check_firecrawl_health,
+    resolve_firecrawl_config,
 )
 
 
@@ -225,10 +226,10 @@ def create_job(
     if scope == "global" and getattr(user, "role", None) != "admin":
         raise AuthorizationError("仅 admin 可入 global 库")
 
-    # ② 凭据(无配置直接报错,不静默)
-    config = resolve_firecrawl_config(db)
-    if config is None:
-        raise ValidationError("Firecrawl 未配置,请联系管理员")
+    # ② 凭据(纯 env,总有默认值) + 服务连通性探活(不可达直接报错,不静默等 SDK 超时)
+    config = resolve_firecrawl_config()
+    if not check_firecrawl_health(config.base_url):
+        raise ValidationError("网页摄入服务不可用,请联系管理员检查 Firecrawl 服务")
 
     # ③ 配额预扣(scrape 预扣 1 页,crawl 预扣 max_pages)
     _reserve_quota(db, user=user, mode=mode, max_pages=max_pages)
@@ -360,9 +361,9 @@ def run_job(job_id: str) -> None:
             job = db.get(WebIngestionJob, uuid.UUID(job_id))
         if job is None or job.status in ("completed", "failed"):
             return  # 幂等:已完成/失败的 job 重跑无副作用；被锁则跳过
-        config = resolve_firecrawl_config(db)
-        if config is None:
-            _mark_failed(db, job, "Firecrawl 配置丢失")
+        config = resolve_firecrawl_config()
+        if not check_firecrawl_health(config.base_url):
+            _mark_failed(db, job, "Firecrawl 服务不可用,请联系管理员检查 Firecrawl 服务")
             return
         client = FirecrawlClient(config.api_key, config.base_url)
         _poll_and_ingest(db, job=job, client=client, config=config)

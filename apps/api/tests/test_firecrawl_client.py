@@ -1,4 +1,4 @@
-"""FirecrawlClient + resolve_firecrawl_config + admin get/set 测试。
+"""FirecrawlClient + resolve_firecrawl_config + check_firecrawl_health 测试。
 
 客户端测试用 mock SDK,不真打 Firecrawl API。
 
@@ -9,22 +9,19 @@ SDK 探查结果(firecrawl-py 4.32.1,统一 Firecrawl 客户端 v2 推荐 API):
 - get_crawl_status(job_id) -> CrawlJob           # status: scraping/completed/failed/cancelled
 """
 
-import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from app.core.config import get_settings
-from app.models import SystemSetting
 from app.services.firecrawl_client import (
     CrawlJobHandle,
     CrawlStatus,
     FirecrawlClient,
     ResolvedFirecrawlConfig,
     ScrapeResult,
-    get_firecrawl_settings,
+    check_firecrawl_health,
     resolve_firecrawl_config,
-    set_firecrawl_settings,
 )
 
 
@@ -174,71 +171,58 @@ def test_sdk_import_resolves_to_v2_api():
     assert hasattr(_FirecrawlSDK, "get_crawl_status"), "_FirecrawlSDK 缺 get_crawl_status 方法"
 
 
-# ── resolve_firecrawl_config ─────────────────────────────────
+# ── resolve_firecrawl_config(纯 env)──────────────────────────
 
-def test_resolve_prefers_global(db_session, monkeypatch):
-    """全局配置优先于 env。"""
-    set_firecrawl_settings(db_session, enabled=True, api_key="fc-global",
-                           base_url="https://fc.example", updated_by=uuid.uuid4())
-    # get_settings 用 @lru_cache 缓存,直接 setattr 缓存对象的属性(不依赖 env)。
+def test_resolve_reads_from_env(monkeypatch):
+    """resolve 从 env 读配置(本地自部署微服务地址 + key),总返回 ResolvedFirecrawlConfig。"""
     settings = get_settings()
-    monkeypatch.setattr(settings, "firecrawl_api_key", "fc-env")
-    config = resolve_firecrawl_config(db_session)
-    assert config.api_key == "fc-global"
-    assert config.source == "global"
-    assert config.base_url == "https://fc.example"
+    monkeypatch.setattr(settings, "firecrawl_api_key", "fc-local-key")
+    monkeypatch.setattr(settings, "firecrawl_base_url", "http://localhost:3002")
+    config = resolve_firecrawl_config()
+    assert isinstance(config, ResolvedFirecrawlConfig)
+    assert config.api_key == "fc-local-key"
+    assert config.base_url == "http://localhost:3002"
+    # 纯 env 路径,无 source 字段(global/env 之分已随 DB 路径移除)
+    assert not hasattr(config, "source")
 
 
-def test_resolve_falls_back_to_env(db_session, monkeypatch):
-    """全局禁用时回落 env。"""
-    set_firecrawl_settings(db_session, enabled=False, api_key="fc-x", updated_by=uuid.uuid4())
-    settings = get_settings()
-    monkeypatch.setattr(settings, "firecrawl_api_key", "fc-env")
-    config = resolve_firecrawl_config(db_session)
-    assert config.api_key == "fc-env"
-    assert config.source == "env"
+# ── check_firecrawl_health ───────────────────────────────────
+
+def test_health_reachable_returns_true():
+    """服务可达(status < 500)返回 True。"""
+    with patch("app.services.firecrawl_client.httpx.get") as mock_get:
+        resp = MagicMock()
+        resp.status_code = 200
+        mock_get.return_value = resp
+        assert check_firecrawl_health("http://localhost:3002") is True
+        mock_get.assert_called_once()
+        # 确认拼了根路径探活端点
+        args, kwargs = mock_get.call_args
+        assert args[0] == "http://localhost:3002/"
 
 
-def test_resolve_returns_none_when_unconfigured(db_session, monkeypatch):
-    """都没配置返回 None。"""
-    settings = get_settings()
-    monkeypatch.setattr(settings, "firecrawl_api_key", "")
-    assert resolve_firecrawl_config(db_session) is None
+def test_health_5xx_returns_false():
+    """服务返回 5xx 视为不可达。"""
+    with patch("app.services.firecrawl_client.httpx.get") as mock_get:
+        resp = MagicMock()
+        resp.status_code = 503
+        mock_get.return_value = resp
+        assert check_firecrawl_health("http://localhost:3002") is False
 
 
-# ── get/set_firecrawl_settings ───────────────────────────────
-
-def test_set_then_get_roundtrip(db_session):
-    """set 后 get 返回脱敏 key。"""
-    set_firecrawl_settings(
-        db_session, enabled=True, api_key="fc-1234567890",
-        base_url="https://fc.x", updated_by=uuid.uuid4(),
-    )
-    result = get_firecrawl_settings(db_session)
-    assert result["enabled"] is True
-    assert result["base_url"] == "https://fc.x"
-    assert "fc-1234567890" not in result["api_key_masked"]  # 脱敏
-    assert "****" in result["api_key_masked"]
+def test_health_network_error_returns_false():
+    """连接异常(服务未起)返回 False,不抛。"""
+    with patch("app.services.firecrawl_client.httpx.get") as mock_get:
+        mock_get.side_effect = ConnectionError("refused")
+        assert check_firecrawl_health("http://localhost:3002") is False
 
 
-def test_set_preserves_key_when_empty(db_session):
-    """api_key 空串时保留已有 key(不覆盖)。"""
-    set_firecrawl_settings(
-        db_session, enabled=True, api_key="fc-orig",
-        base_url="https://x", updated_by=uuid.uuid4(),
-    )
-    set_firecrawl_settings(
-        db_session, enabled=False, api_key="",  # 空,不改 key
-        base_url="https://y", updated_by=uuid.uuid4(),
-    )
-    # key 应仍在 SystemSetting 里
-    cfg_setting = db_session.query(SystemSetting).filter_by(key="firecrawl_config").one()
-    assert cfg_setting.value.get("api_key_encrypted")  # key 还在
-
-
-def test_get_returns_defaults_when_unconfigured(db_session):
-    """未配置时 get 返回安全默认(enabled=False,空字符串)。"""
-    result = get_firecrawl_settings(db_session)
-    assert result["enabled"] is False
-    assert result["api_key_masked"] == ""
-    assert result["base_url"] == ""
+def test_health_strips_trailing_slash():
+    """base_url 带尾斜杠时拼接不重复斜杠。"""
+    with patch("app.services.firecrawl_client.httpx.get") as mock_get:
+        resp = MagicMock()
+        resp.status_code = 200
+        mock_get.return_value = resp
+        check_firecrawl_health("http://localhost:3002/")
+        args, _ = mock_get.call_args
+        assert args[0] == "http://localhost:3002/"

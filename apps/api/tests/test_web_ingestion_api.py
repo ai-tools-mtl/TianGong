@@ -52,9 +52,10 @@ def test_post_ingest_web_scrape_returns_file(logged_in_client, auth_user, db_ses
     """
     with patch("app.services.web_ingestion_service.FirecrawlClient") as mock_cls, \
          patch("app.services.web_ingestion_service.resolve_firecrawl_config") as mock_res, \
+         patch("app.services.web_ingestion_service.check_firecrawl_health", return_value=True), \
          patch("app.services.web_ingestion_service.filter_content") as mock_filter, \
          patch("app.services.knowledge_service._write_chunks_unembedded"):
-        mock_res.return_value = MagicMock(api_key="x", base_url="x", source="global")
+        mock_res.return_value = MagicMock(api_key="x", base_url="x")
         client_inst = MagicMock()
         mock_cls.return_value = client_inst
         client_inst.scrape.return_value = MagicMock(
@@ -79,8 +80,9 @@ def test_post_ingest_web_crawl_returns_job(logged_in_client, auth_user, db_sessi
     """POST /knowledge/ingest/web crawl 模式返回 {kind: job, job: {status: running}}。"""
     with patch("app.services.web_ingestion_service.spawn_background_task"), \
          patch("app.services.web_ingestion_service.FirecrawlClient") as mock_cls, \
-         patch("app.services.web_ingestion_service.resolve_firecrawl_config") as mock_res:
-        mock_res.return_value = MagicMock(api_key="x", base_url="x", source="global")
+         patch("app.services.web_ingestion_service.resolve_firecrawl_config") as mock_res, \
+         patch("app.services.web_ingestion_service.check_firecrawl_health", return_value=True):
+        mock_res.return_value = MagicMock(api_key="x", base_url="x")
         client_inst = MagicMock()
         mock_cls.return_value = client_inst
         client_inst.start_crawl.return_value = MagicMock(firecrawl_job_id="fc-x")

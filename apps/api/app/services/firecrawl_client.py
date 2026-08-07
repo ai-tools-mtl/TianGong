@@ -1,25 +1,20 @@
-"""Firecrawl 客户端封装 + 凭据解析 + admin 配置 get/set。
+"""Firecrawl 客户端封装 + 凭据解析 + 连通性探活。
 
 封装薄客户端,屏蔽 firecrawl-py SDK 细节,对上层只暴露领域语义方法。
 返回 dataclass(不返回 SDK 原始对象),换 SDK/供应商时只改本文件。
 
-凭据解析三级 fallback:全局 SystemSetting(firecrawl_enabled + firecrawl_config)
-→ env(FIRECRAWL_API_KEY)。无可用配置返回 None。
-
-spec: docs/superpowers/specs/2026-07-27-firecrawl-web-ingestion-design.md 第 4 节。
+配置走纯 env(FIRECRAWL_BASE_URL + FIRECRAWL_API_KEY),指向本地自部署 firecrawl 微服务
+(见 docker-compose.yml 的 firecrawl 服务)。与 embedding/rerank 同范式,无 admin 配置页。
+可用性 = 服务连通性,由 check_firecrawl_health 探活,启动时 main.py 调用告警。
 """
 
 from dataclasses import dataclass
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+import httpx
 
 from firecrawl.v2 import FirecrawlClient as _FirecrawlSDK
 
 from app.core.config import get_settings
-from app.core.security import decrypt_value, encrypt_value
-from app.models import SystemSetting
-from app.services.llm_config_service import _mask_key
 
 
 # ── dataclass ────────────────────────────────────────────────
@@ -59,10 +54,6 @@ class ResolvedFirecrawlConfig:
     """解析后的 Firecrawl 配置。"""
     api_key: str
     base_url: str
-    source: str   # "global" / "env"
-
-
-_DEFAULT_BASE_URL = "https://api.firecrawl.dev"
 
 
 # ── 客户端 ────────────────────────────────────────────────────
@@ -84,7 +75,7 @@ class FirecrawlClient:
     换 SDK / 供应商时只改本类内部映射。
     """
 
-    def __init__(self, api_key: str, base_url: str = _DEFAULT_BASE_URL):
+    def __init__(self, api_key: str, base_url: str = "http://localhost:3002"):
         # SDK 初始化参数是 api_url(不是 base_url)。本类对外仍叫 base_url,内部转换。
         # _FirecrawlSDK 在模块顶部 import(便于测试 patch app.services.firecrawl_client._FirecrawlSDK)。
         self._sdk = _FirecrawlSDK(api_key=api_key, api_url=base_url)
@@ -151,107 +142,34 @@ class FirecrawlClient:
         return cls._get(cls._get(doc, "metadata"), name, default)
 
 
-# ── 凭据解析 ─────────────────────────────────────────────────
+# ── 凭据解析(纯 env)─────────────────────────────────────────
 
-def resolve_firecrawl_config(db: Session) -> ResolvedFirecrawlConfig | None:
-    """三级 fallback:全局 SystemSetting → env。无可用配置返回 None。
+def resolve_firecrawl_config() -> ResolvedFirecrawlConfig:
+    """从 env 读 firecrawl 配置(本地自部署微服务地址 + key)。
 
-    全局条件:firecrawl_enabled.value.enabled is True AND
-              firecrawl_config.value.api_key_encrypted 非空。
+    env 总有默认值(base_url=localhost:3002, api_key=fc-local-default-key),
+    故总返回 ResolvedFirecrawlConfig。可用性由 check_firecrawl_health 判断。
     """
-    # 1) 全局 SystemSetting
-    enabled_setting = db.scalar(
-        select(SystemSetting).where(SystemSetting.key == "firecrawl_enabled")
-    )
-    if enabled_setting and enabled_setting.value.get("enabled") is True:
-        cfg_setting = db.scalar(
-            select(SystemSetting).where(SystemSetting.key == "firecrawl_config")
-        )
-        if cfg_setting and cfg_setting.value.get("api_key_encrypted"):
-            api_key = decrypt_value(cfg_setting.value["api_key_encrypted"])
-            base_url = cfg_setting.value.get("base_url") or _DEFAULT_BASE_URL
-            return ResolvedFirecrawlConfig(
-                api_key=api_key, base_url=base_url, source="global",
-            )
-    # 2) env 兜底
     s = get_settings()
-    if s.firecrawl_api_key:
-        return ResolvedFirecrawlConfig(
-            api_key=s.firecrawl_api_key,
-            base_url=s.firecrawl_base_url or _DEFAULT_BASE_URL,
-            source="env",
-        )
-    return None
-
-
-# ── admin 配置 get/set ───────────────────────────────────────
-
-def get_firecrawl_settings(db: Session) -> dict:
-    """读全局配置(api_key 脱敏)。未配置时返回安全默认值。"""
-    enabled_setting = db.scalar(
-        select(SystemSetting).where(SystemSetting.key == "firecrawl_enabled")
+    return ResolvedFirecrawlConfig(
+        api_key=s.firecrawl_api_key,
+        base_url=s.firecrawl_base_url,
     )
-    cfg_setting = db.scalar(
-        select(SystemSetting).where(SystemSetting.key == "firecrawl_config")
-    )
-    api_key_masked = ""
-    if cfg_setting and cfg_setting.value.get("api_key_encrypted"):
-        try:
-            api_key_masked = _mask_key(decrypt_value(cfg_setting.value["api_key_encrypted"]))
-        except Exception:
-            api_key_masked = ""
-    return {
-        "enabled": bool(enabled_setting and enabled_setting.value.get("enabled")),
-        "api_key_masked": api_key_masked,
-        "base_url": cfg_setting.value.get("base_url", "") if cfg_setting else "",
-    }
 
 
-def set_firecrawl_settings(
-    db: Session, *,
-    enabled: bool,
-    api_key: str = "",
-    base_url: str | None = None,
-    updated_by=None,
-) -> None:
-    """upsert 全局配置。
+# ── 连通性探活 ───────────────────────────────────────────────
 
-    - enabled:总是写。
-    - api_key 空串表示不修改现有 key(保留)。
-    - base_url 为 None 表示不改;非 None(含空串)则覆盖。
-    - 仅当 api_key 或 base_url 至少一项被显式提供时,才写 firecrawl_config 行。
+def check_firecrawl_health(base_url: str | None = None) -> bool:
+    """探测 firecrawl 服务是否可达。可达返回 True,不可达/异常返回 False。
+
+    供启动时探活(main.py)和摄入前校验(web_ingestion_service)调用。
+    timeout 3s(与 rerank 探活同级),异常一律视为不可达,不抛。
     """
-    # 1) enabled 开关
-    enabled_setting = db.scalar(
-        select(SystemSetting).where(SystemSetting.key == "firecrawl_enabled")
-    )
-    if enabled_setting:
-        enabled_setting.value = {"enabled": enabled}
-    else:
-        db.add(SystemSetting(
-            key="firecrawl_enabled", value={"enabled": enabled},
-            updated_by=updated_by,
-        ))
-
-    # 2) config 行(api_key / base_url)
-    if api_key or base_url is not None:
-        cfg_setting = db.scalar(
-            select(SystemSetting).where(SystemSetting.key == "firecrawl_config")
-        )
-        current = cfg_setting.value if cfg_setting else {}
-        new_value = {
-            "base_url": base_url if base_url is not None
-            else current.get("base_url", _DEFAULT_BASE_URL),
-        }
-        if api_key:
-            new_value["api_key_encrypted"] = encrypt_value(api_key)
-        elif current.get("api_key_encrypted"):
-            # 保留已有 key(不覆盖)
-            new_value["api_key_encrypted"] = current["api_key_encrypted"]
-        if cfg_setting:
-            cfg_setting.value = new_value
-        else:
-            db.add(SystemSetting(
-                key="firecrawl_config", value=new_value, updated_by=updated_by,
-            ))
-    db.commit()
+    if base_url is None:
+        base_url = get_settings().firecrawl_base_url
+    try:
+        # firecrawl 根路径返回 200(状态页),作为轻量探活端点。
+        r = httpx.get(base_url.rstrip("/") + "/", timeout=3.0)
+        return r.status_code < 500
+    except Exception:
+        return False

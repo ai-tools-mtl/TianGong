@@ -58,10 +58,12 @@ class Settings(BaseSettings):
     memory_grace_days: int = 7                    # 新记忆豁免期（天）
     nli_base_url: str = "http://localhost:7999"   # NLI 矛盾判断服务地址
 
-    # Firecrawl (web ingestion;全局 key 存 SystemSetting,env 仅兜底)
-    firecrawl_api_key: str = ""
-    firecrawl_base_url: str = "https://api.firecrawl.dev"
-    firecrawl_enabled: bool = False
+    # Firecrawl（网页摄入,本地自部署微服务,与 embedding/rerank 同范式）。
+    # 由 docker-compose.yml 的 firecrawl 服务提供(api+worker + playwright + redis)。
+    # 纯 env 配置（无 admin 配置页）：base_url 指本地服务,api_key 需与 firecrawl 容器一致。
+    # 可用性 = 服务连通性,启动时由 main.py 探活告警,无 enabled 开关。
+    firecrawl_api_key: str = "fc-local-default-key"
+    firecrawl_base_url: str = "http://localhost:3002"
 
     # MinerU（PDF→Markdown 云端解析;全局 token 存 SystemSetting,env 仅兜底）
     # 未配置时 PDF 解析降级到 pypdf 纯文本提取。

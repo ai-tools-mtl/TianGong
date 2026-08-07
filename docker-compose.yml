@@ -163,6 +163,55 @@ services:
       start_period: 90s
     restart: unless-stopped
 
+  # Firecrawl 自部署(网页摄入):api+worker 同进程镜像 + playwright 渲染 + redis 队列。
+  # 官方自部署是 7 容器重栈(rabbitmq/foundationdb/nuq-postgres 等),本项目精简为 3 容器:
+  # firecrawl 镜像内置 worker 同进程,队列用 redis,页面渲染委托给 playwright-service。
+  # 后端通过 FIRECRAWL_BASE_URL 访问:本地开发 http://localhost:3002,
+  # 容器内(api 容器)http://firecrawl:3002。与 embedding/rerank 同属本地微服务,纯 env 配置。
+  # 软依赖:天工 api 不 depends_on firecrawl(同 nli 设计),挂了只影响网页摄入,不阻塞 api 启动。
+  firecrawl:
+    image: ghcr.io/firecrawl/firecrawl:latest
+    container_name: tiangong-firecrawl
+    environment:
+      REDIS_URL: redis://firecrawl-redis:6379
+      PLAYWRIGHT_MICROSERVICE_URL: http://firecrawl-playwright:3000
+      USE_DB_AUTHENTICATION: "false"   # 不用 firecrawl 自带 PG 鉴权(我们只调 scrape/crawl API)
+      USE_KEY_AUTH: "true"             # 启用 API key 鉴权,key 见下,需与天工 FIRECRAWL_API_KEY 一致
+      FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-fc-local-default-key}
+      PORT: "3002"
+      HOST: "0.0.0.0"
+    ports:
+      - "3002:3002"
+    depends_on:
+      - firecrawl-redis
+      - firecrawl-playwright
+    healthcheck:
+      # firecrawl 镜像基于 node,含 wget;根路径 / 即健康探针(返回 200/HTML)。
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3002/ >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      # 首次启动需连 redis + playwright 就绪,稍留宽限
+      start_period: 60s
+    restart: unless-stopped
+
+  # Playwright 渲染服务(firecrawl 依赖):headless 浏览器渲染 JS 重页面。
+  # 无 host 端口映射,仅 firecrawl 容器经服务名 http://firecrawl-playwright:3000 访问。
+  firecrawl-playwright:
+    image: ghcr.io/firecrawl/playwright-service:latest
+    container_name: tiangong-firecrawl-playwright
+    environment:
+      PORT: "3000"
+      BLOCK_MEDIA: "false"
+    restart: unless-stopped
+
+  # Firecrawl 队列存储(firecrawl 依赖):job 队列 + crawl 临时结果。
+  # 无 host 端口,仅 firecrawl 容器经服务名 redis://firecrawl-redis:6379 访问。
+  firecrawl-redis:
+    image: redis:alpine
+    container_name: tiangong-firecrawl-redis
+    restart: unless-stopped
+
   # ---- 以下为全栈部署服务,仅在 --profile full 时启动 ----
 
   api:
@@ -208,6 +257,11 @@ services:
       # 容器间用服务名 nli:7999;本地开发用 localhost:7999(在 apps/api/.env 配)。
       # 软依赖:故障时 judge_relation 降级 neutral 走合并,故 api 不 depends_on nli。
       NLI_BASE_URL: ${NLI_BASE_URL:-http://nli:7999}
+      # Firecrawl(网页摄入,本地自部署微服务,见本 compose 的 firecrawl 服务)。
+      # 与 embedding/rerank 同款纯 env 配置(无 admin 配置页);容器间用服务名 firecrawl:3002。
+      # FIRECRAWL_API_KEY 需与 firecrawl 容器的 FIRECRAWL_API_KEY 一致(鉴权用)。
+      FIRECRAWL_BASE_URL: ${FIRECRAWL_BASE_URL:-http://firecrawl:3002}
+      FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-fc-local-default-key}
       # 首个 admin 账号(entrypoint 跑 init_db 时读取,已存在则跳过)
       INIT_ADMIN_USERNAME: ${INIT_ADMIN_USERNAME:-admin}
       INIT_ADMIN_PASSWORD: ${INIT_ADMIN_PASSWORD}
