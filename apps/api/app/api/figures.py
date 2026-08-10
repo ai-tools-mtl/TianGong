@@ -29,12 +29,14 @@ class GenerateRequest(BaseModel):
     prompt: str = Field(..., min_length=1, max_length=2000, description="附图描述")
     diagram_type: str | None = Field(None, description="图类型：flowchart/architecture/sequence/...")
     chat_source: str | None = Field(None, description="LLM 源（前端 getChatDefaultSource 返回值）")
+    style: str = Field("patent-bw", description="风格预设：patent-bw/clean-color/technical")
 
 
 class RegenerateRequest(BaseModel):
     """重新生成附图请求。prompt 缺省时复用原 prompt。"""
     prompt: str | None = Field(None, max_length=2000)
     chat_source: str | None = None
+    style: str | None = Field(None, description="风格预设，None 时复用原值")
 
 
 @router.post("/sections/{section_id}/figures/generate", status_code=201)
@@ -48,6 +50,7 @@ def generate(
     fig = figure_service.generate_figure(
         db, storage=get_storage(), user_id=current_user.id, section_id=section_id,
         prompt=payload.prompt, diagram_type=payload.diagram_type, chat_source=payload.chat_source,
+        style=payload.style,
     )
     return figure_service._to_figure_out(fig, project_id=str(fig.project_id))
 
@@ -87,7 +90,7 @@ def regenerate(
     """重新生成附图（替换 PNG，更新 XML 源与 prompt）。"""
     fig = figure_service.regenerate_figure(
         db, storage=get_storage(), user_id=current_user.id, figure_id=figure_id,
-        prompt=payload.prompt, chat_source=payload.chat_source,
+        prompt=payload.prompt, chat_source=payload.chat_source, style=payload.style,
     )
     return figure_service._to_figure_out(fig, project_id=str(fig.project_id))
 

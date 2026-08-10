@@ -35,6 +35,7 @@ def _to_figure_out(fig: Figure, *, project_id: str) -> dict:
         "attachment_id": str(fig.attachment_id) if fig.attachment_id else None,
         "prompt": fig.prompt,
         "diagram_type": fig.diagram_type,
+        "style": fig.style,
         "created_at": fig.created_at.isoformat(),
         "updated_at": fig.updated_at.isoformat(),
     }
@@ -77,6 +78,7 @@ def _store_png(
 def generate_figure(
     db: Session, *, storage: Storage, user_id, section_id: str,
     prompt: str, diagram_type: str | None, chat_source: str | None,
+    style: str | None = None,
 ) -> Figure:
     """生成一张专利附图（LLM 出 XML → 渲染 PNG → 落库）。"""
     from langchain_core.messages import HumanMessage
@@ -95,8 +97,10 @@ def generate_figure(
         raise ValidationError("未配置 LLM 源，请先在设置中选择")
 
     # 3. LLM 生成 drawio XML（同步一次性调用，照 summary_service）
+    from app.ai.figure_presets import get_preset
+    preset = get_preset(style)
     llm = get_llm(llm_config)
-    user_msg = build_figure_prompt(prompt, diagram_type)
+    user_msg = build_figure_prompt(prompt, diagram_type, style=style)
     start = time.monotonic()
     log_status, log_err = "success", None
     try:
@@ -122,8 +126,9 @@ def generate_figure(
     if "<mxfile" not in drawio_xml:
         raise ValidationError("LLM 未返回有效的 drawio XML，请重试或调整描述")
 
-    # 4. 渲染 PNG（失败抛 ServiceUnavailableError，不落库）
-    png = drawio_client.render(drawio_xml, fmt="png", scale=2, embed=True)
+    # 4. 渲染 PNG（失败抛 ServiceUnavailableError，不落库）；scale/border 随预设
+    r = preset["render"]
+    png = drawio_client.render(drawio_xml, fmt="png", scale=r["scale"], embed=True, border=r["border"])
 
     # 5. 存 MinIO + 建 Attachment + 建 Figure（单事务）
     name = f"{(prompt[:20] or '附图')}.drawio.png"
@@ -139,6 +144,7 @@ def generate_figure(
         prompt=prompt,
         drawio_xml=drawio_xml,
         diagram_type=diagram_type,
+        style=preset["id"],
     )
     db.add(fig)
     db.commit()
@@ -148,11 +154,14 @@ def generate_figure(
 
 def regenerate_figure(
     db: Session, *, storage: Storage, user_id, figure_id: str,
-    prompt: str | None, chat_source: str | None,
+    prompt: str | None, chat_source: str | None, style: str | None = None,
 ) -> Figure:
     """用新/旧 prompt 重新生成某张附图，替换其 PNG（保留 XML 源更新）。"""
     fig = get_figure(db, user_id=user_id, figure_id=figure_id)
     new_prompt = prompt or fig.prompt
+    # style 复用：未传则沿用原 figure 的 style（对齐 prompt 的复用模式）
+    from app.ai.figure_presets import get_preset
+    preset = get_preset(style or fig.style)
 
     from langchain_core.messages import HumanMessage
 
@@ -166,7 +175,7 @@ def regenerate_figure(
     llm = get_llm(llm_config)
     start = time.monotonic()
     try:
-        resp = llm.invoke([HumanMessage(content=build_figure_prompt(new_prompt, fig.diagram_type))])
+        resp = llm.invoke([HumanMessage(content=build_figure_prompt(new_prompt, fig.diagram_type, style=preset["id"]))])
     except Exception as e:
         log_chat_call(
             db, user_id=user_id, project_id=fig.project_id, action="figure",
@@ -185,7 +194,8 @@ def regenerate_figure(
     if "<mxfile" not in drawio_xml:
         raise ValidationError("LLM 未返回有效的 drawio XML，请重试或调整描述")
 
-    png = drawio_client.render(drawio_xml, fmt="png", scale=2, embed=True)
+    r = preset["render"]
+    png = drawio_client.render(drawio_xml, fmt="png", scale=r["scale"], embed=True, border=r["border"])
 
     # 替换 Attachment：删旧 PNG 对象，存新 PNG。旧 Attachment 记录由 SET NULL 不级联。
     old_attachment_id = fig.attachment_id
@@ -198,6 +208,7 @@ def regenerate_figure(
     fig.attachment_id = att.id
     fig.prompt = new_prompt
     fig.drawio_xml = drawio_xml
+    fig.style = preset["id"]
 
     # 删旧 Attachment（若有）
     if old_attachment_id:

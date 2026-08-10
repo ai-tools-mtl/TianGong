@@ -62,14 +62,15 @@ def test_render_http_error_raises():
             drawio_client.render("<mxfile/>")
 
 
-def test_render_passes_format_and_scale():
-    """参数透传到请求 body。"""
+def test_render_passes_format_scale_and_border():
+    """参数透传到请求 body（含 border 页边距）。"""
     from app.services import drawio_client
 
     with patch("app.services.drawio_client.httpx.post", return_value=_fake_png()) as mock_post:
-        drawio_client.render("<mxfile/>", fmt="svg", scale=3, embed=False)
+        drawio_client.render("<mxfile/>", fmt="svg", scale=3, embed=False, border=25)
 
     _, kwargs = mock_post.call_args
     assert kwargs["json"]["format"] == "svg"
     assert kwargs["json"]["scale"] == 3
+    assert kwargs["json"]["border"] == 25
     assert kwargs["json"]["embed"] is False

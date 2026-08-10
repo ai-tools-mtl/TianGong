@@ -509,7 +509,7 @@ export const api = {
   // ── 附图生成（drawio 渲染）──
   generateFigure: (
     sectionId: string,
-    body: { prompt: string; diagram_type?: string | null; chat_source?: string | null },
+    body: { prompt: string; diagram_type?: string | null; chat_source?: string | null; style?: string | null },
   ) =>
     request<import('@/types/api').Figure>(`/sections/${sectionId}/figures/generate`, {
       method: 'POST',
@@ -524,7 +524,7 @@ export const api = {
 
   regenerateFigure: (
     figureId: string,
-    body: { prompt?: string; chat_source?: string | null },
+    body: { prompt?: string; chat_source?: string | null; style?: string | null },
   ) =>
     request<import('@/types/api').Figure>(`/figures/${figureId}/regenerate`, {
       method: 'POST',
@@ -533,6 +533,21 @@ export const api = {
 
   deleteFigure: (figureId: string) =>
     request<void>(`/figures/${figureId}`, { method: 'DELETE' }),
+
+  // ── 附图风格预设（admin console）──
+  getFigurePresets: () =>
+    request<{ presets: Record<string, import('@/types/api').FigurePreset> }>(
+      '/admin/console/figure-presets',
+    ),
+
+  setFigurePreset: (
+    presetId: string,
+    body: { font_family?: string; font_size?: number; line_width?: number },
+  ) =>
+    request<import('@/types/api').FigurePreset>(
+      `/admin/console/figure-presets/${presetId}`,
+      { method: 'PUT', body: JSON.stringify(body) },
+    ),
 
   // ── 审查 ──
   runReview: (projectId: string) =>

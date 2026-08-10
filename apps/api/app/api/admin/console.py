@@ -425,3 +425,44 @@ def test_ima_config(
         return {"ok": True, "hit_count": len(hits)}
     except Exception as e:
         return {"ok": False, "error": str(e), "hit_count": 0}
+
+
+# ── 附图风格预设 ───────────────────────────────────────────────────────────────
+
+
+class FigurePresetUpdate(BaseModel):
+    """admin 微调单个预设的可调字段（白名单内）。"""
+    font_family: str | None = None
+    font_size: int | None = None
+    line_width: float | None = None
+
+
+@router.get("/admin/console/figure-presets")
+def get_figure_presets(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """读取 3 个预设的生效参数（内置默认 + admin 微调合并）。"""
+    from app.services.figure_preset_service import get_figure_presets as _get
+    return {"presets": _get(db)}
+
+
+@router.put("/admin/console/figure-presets/{preset_id}")
+def set_figure_preset(
+    preset_id: str,
+    payload: FigurePresetUpdate,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """微调单个预设（仅 font_family/font_size/line_width 生效，其余忽略）。写审计。"""
+    from app.services import admin_service
+    from app.services.figure_preset_service import set_figure_preset as _set
+
+    overrides = {k: v for k, v in payload.model_dump().items() if v is not None}
+    updated = _set(db, preset_id=preset_id, overrides=overrides, updated_by=admin.id)
+    admin_service._audit(
+        db, actor=admin, action="set_figure_preset",
+        target_type="system_setting", target_id="figure_style_presets",
+        detail={"preset_id": preset_id, **overrides},
+    )
+    return updated

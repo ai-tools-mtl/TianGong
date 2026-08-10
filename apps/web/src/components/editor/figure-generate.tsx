@@ -27,10 +27,24 @@ const DIAGRAM_TYPES = [
   { value: 'state', label: '状态图' },
 ]
 
+const STYLE_OPTIONS = [
+  { value: 'patent-bw', label: '专利黑白' },
+  { value: 'clean-color', label: '清晰彩色' },
+  { value: 'technical', label: '技术灰度' },
+]
+const DEFAULT_STYLE = 'patent-bw'
+const STYLE_STORAGE_KEY = 'tg_figure_style'
+
+function readStoredStyle(): string {
+  if (typeof window === 'undefined') return DEFAULT_STYLE
+  return window.localStorage.getItem(STYLE_STORAGE_KEY) || DEFAULT_STYLE
+}
+
 export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGenerateProps) {
   const [phase, setPhase] = useState<Phase>('idle')
   const [prompt, setPrompt] = useState('')
   const [diagramType, setDiagramType] = useState('')
+  const [style, setStyle] = useState<string>(readStoredStyle)
   const [figure, setFigure] = useState<Figure | null>(null)
 
   // 进入组件时拉取该章节已有的最近一张附图（支持继续操作：插入/重生成/删除）
@@ -40,6 +54,11 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
       if (mine.length > 0) setFigure(mine[0]) // 列表按创建时间倒序，第一个最新
     }).catch(() => {})
   }, [projectId, sectionId])
+
+  function changeStyle(v: string) {
+    setStyle(v)
+    if (typeof window !== 'undefined') window.localStorage.setItem(STYLE_STORAGE_KEY, v)
+  }
 
   async function handleGenerate() {
     const source = getChatDefaultSource()
@@ -53,6 +72,7 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
         prompt,
         diagram_type: diagramType || null,
         chat_source: source,
+        style,
       })
       setFigure(fig)
       setPhase('preview')
@@ -76,6 +96,7 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
       const fig = await api.regenerateFigure(figure.id, {
         prompt: prompt || undefined,
         chat_source: source,
+        style,
       })
       setFigure(fig)
       setPhase('preview')
@@ -128,6 +149,16 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
           >
             {DIAGRAM_TYPES.map((t) => (
               <option key={t.value} value={t.value}>{t.label}</option>
+            ))}
+          </select>
+          <select
+            value={style}
+            onChange={(e) => changeStyle(e.target.value)}
+            className="h-8 rounded border bg-background px-2 text-sm"
+            title="风格预设（专利黑白符合专利局正式申请标准）"
+          >
+            {STYLE_OPTIONS.map((s) => (
+              <option key={s.value} value={s.value}>{s.label}</option>
             ))}
           </select>
           <Button

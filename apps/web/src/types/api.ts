@@ -211,6 +211,7 @@ export interface Figure {
   attachment_id: string | null
   prompt: string
   diagram_type: string | null
+  style: string  // patent-bw / clean-color / technical
   created_at: string
   updated_at: string
 }
@@ -218,6 +219,18 @@ export interface Figure {
 /** 附图详情（含 drawio XML 源）。 */
 export interface FigureDetail extends Figure {
   drawio_xml: string
+}
+
+/** 附图风格预设（patent-bw/clean-color/technical）。 */
+export interface FigurePreset {
+  id: string
+  label: string
+  colors: Record<string, string>  // 形状 -> style 片段
+  font_family: string
+  font_size: number
+  line_width: number
+  extra_constraints?: string
+  render: { scale: number; border: number }
 }
 
 // ── 管理 ──

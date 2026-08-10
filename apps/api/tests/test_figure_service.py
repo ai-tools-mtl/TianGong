@@ -70,12 +70,47 @@ def test_generate_figure_success(db_session, registered_user):
 
     assert fig.prompt == "画一个客户端服务端流程图"
     assert fig.diagram_type == "flowchart"
+    assert fig.style == "patent-bw"  # 默认 style
     assert "<mxfile" in fig.drawio_xml
     assert fig.attachment_id is not None
     # Attachment 落库
     att = db_session.get(Attachment, fig.attachment_id)
     assert att is not None
     assert att.mime_type == "image/png"
+
+
+def test_generate_figure_render_uses_preset_params(db_session, registered_user):
+    """render 调用收到预设的 scale/border 参数（patent-bw: scale=3, border=20）。"""
+    from app.services import figure_service
+
+    user, drawings = _setup_user_and_project(db_session, registered_user)
+
+    with patch("app.ai.llm_client.get_llm", return_value=_mock_llm_invoke()), \
+         patch("app.services.figure_service.drawio_client.render", return_value=_FAKE_PNG) as mock_render:
+        figure_service.generate_figure(
+            db_session, storage=MagicMock(), user_id=user.id,
+            section_id=str(drawings.id), prompt="测试", diagram_type=None, chat_source=None,
+            style="patent-bw",
+        )
+    _, kwargs = mock_render.call_args
+    assert kwargs["scale"] == 3
+    assert kwargs["border"] == 20
+
+
+def test_generate_figure_style_recorded(db_session, registered_user):
+    """传 style=clean-color 后 Figure.style 落库为 clean-color。"""
+    from app.services import figure_service
+
+    user, drawings = _setup_user_and_project(db_session, registered_user)
+
+    with patch("app.ai.llm_client.get_llm", return_value=_mock_llm_invoke()), \
+         patch("app.services.figure_service.drawio_client.render", return_value=_FAKE_PNG):
+        fig = figure_service.generate_figure(
+            db_session, storage=MagicMock(), user_id=user.id,
+            section_id=str(drawings.id), prompt="彩色测试", diagram_type=None, chat_source=None,
+            style="clean-color",
+        )
+    assert fig.style == "clean-color"
 
 
 def test_generate_figure_render_failure_no_db_record(db_session, registered_user):

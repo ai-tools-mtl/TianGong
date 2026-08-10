@@ -28,3 +28,4 @@ class Figure(Base, IdMixin, TimestampMixin):
     prompt: Mapped[str] = mapped_column(Text)  # 生成时的用户描述
     drawio_xml: Mapped[str] = mapped_column(Text)  # 可编辑源文件
     diagram_type: Mapped[str | None] = mapped_column(String(50), nullable=True)  # flowchart/architecture/...
+    style: Mapped[str] = mapped_column(String(30), default="patent-bw")  # patent-bw/clean-color/technical

@@ -1,6 +1,6 @@
 'use client'
 
-import { BarChart3, Database, FileText, Plug, ScanText, Search, Settings } from 'lucide-react'
+import { BarChart3, Database, FileText, ImageIcon, Plug, ScanText, Search, Settings } from 'lucide-react'
 import Link from 'next/link'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
@@ -24,6 +24,12 @@ const CONSOLE_SECTIONS = [
     icon: Database,
     title: 'ima 检索源',
     description: '腾讯 ima 知识库全局检索源凭据',
+  },
+  {
+    href: '/admin/console/figure-presets',
+    icon: ImageIcon,
+    title: '附图风格预设',
+    description: '专利附图配色与渲染规格（黑白/彩色/灰度）',
   },
   {
     href: '/admin/console/stats',

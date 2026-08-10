@@ -86,16 +86,19 @@ class RenderRequest(BaseModel):
     """渲染请求：drawio XML + 目标格式。
 
     scale 仅对 PNG/JPG 生效（SVG/PDF 是矢量）。width 为目标像素宽度（与 scale 互斥）。
+    border 为页边距像素（白色留白，对应 drawio CLI -b，专利附图标准要求留白）。
     """
     xml: str = Field(..., min_length=1, description="drawio 图 XML（<mxfile>...</mxfile> 或 <mxGraphModel>...）")
     format: str = Field("png", description="导出格式：png / svg / pdf / jpg")
-    scale: int | None = Field(None, ge=1, le=4, description="缩放倍率（PNG/JPG），默认 2")
+    scale: int | None = Field(None, ge=1, le=4, description="缩放倍率（PNG/JPG），默认 3≈300DPI")
     width: int | None = Field(None, ge=100, le=4000, description="目标宽度像素（PNG/JPG，与 scale 互斥）")
     embed: bool = Field(True, description="是否嵌入 XML（-e，导出文件可回 draw.io 编辑）")
+    border: int = Field(20, ge=0, le=100, description="页边距像素（白色留白），默认 20")
 
 
 def _run_drawio_export(
     in_path: str, out_path: str, fmt_val: str, *, scale: int | None, width: int | None, embed: bool,
+    border: int = 20,
 ) -> None:
     """调 drawio CLI 导出。非零退出抛 RuntimeError。
 
@@ -111,14 +114,16 @@ def _run_drawio_export(
         elif scale is not None:
             cmd += ["-s", str(scale)]
         else:
-            cmd += ["-s", "2"]  # 默认 2 倍，专利附图需要清晰度
+            cmd += ["-s", "3"]  # 默认 3 倍≈300DPI，专利附图高分辨率
+    if border > 0:
+        cmd += ["-b", str(border)]  # 页边距，必须在 --no-sandbox 之前
     # Chromium 在 docker 内 /dev/shm 默认仅 64MB，易致渲染崩溃，必须禁用 shm
     cmd += ["--disable-gpu", "--disable-dev-shm-usage"]
     cmd.append(in_path)
     cmd.append("--no-sandbox")  # 必须在输入文件之后（末尾）
 
     logger.info("drawio cmd: %s", " ".join(cmd))
-    proc = subprocess.run(cmd, capture_output=True, timeout=90)
+    proc = subprocess.run(cmd, capture_output=True, timeout=120)
     if proc.returncode != 0:
         stderr = proc.stderr.decode("utf-8", errors="replace")[:500]
         raise RuntimeError(f"drawio 退出码 {proc.returncode}: {stderr}")
@@ -139,7 +144,7 @@ def _do_render(req: "RenderRequest") -> tuple[bytes, str]:
         try:
             _run_drawio_export(
                 in_path, out_path, fmt_val,
-                scale=req.scale, width=req.width, embed=req.embed,
+                scale=req.scale, width=req.width, embed=req.embed, border=req.border,
             )
         except subprocess.TimeoutExpired as e:
             raise HTTPException(status_code=504, detail="drawio 渲染超时") from e

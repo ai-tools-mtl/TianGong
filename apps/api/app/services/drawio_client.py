@@ -15,14 +15,15 @@ from app.core.config import get_settings
 from app.core.exceptions import ServiceUnavailableError
 
 
-def render(xml: str, *, fmt: str = "png", scale: int = 2, embed: bool = True) -> bytes:
+def render(xml: str, *, fmt: str = "png", scale: int = 3, embed: bool = True, border: int = 20) -> bytes:
     """调 drawio 渲染服务把 XML 导出为图片字节。
 
     参数：
         xml: drawio 图 XML（<mxfile>...</mxfile> 或 <mxGraphModel>...）
         fmt: 导出格式 png/svg/pdf/jpg（默认 png）
-        scale: 缩放倍率（PNG/JPG，默认 2，专利附图需要清晰度）
+        scale: 缩放倍率（PNG/JPG，默认 3≈300DPI，专利附图高分辨率）
         embed: 是否嵌入 XML（-e，默认 True，导出文件可回 draw.io 编辑）
+        border: 页边距像素（默认 20，白色留白，对应 drawio CLI -b）
 
     返回：图片字节。
 
@@ -32,8 +33,8 @@ def render(xml: str, *, fmt: str = "png", scale: int = 2, embed: bool = True) ->
     try:
         resp = httpx.post(
             f"{base_url}/render",
-            json={"xml": xml, "format": fmt, "scale": scale, "embed": embed},
-            timeout=120.0,  # Chromium 渲染含冷启可能 10-60s；留足余量
+            json={"xml": xml, "format": fmt, "scale": scale, "embed": embed, "border": border},
+            timeout=120.0,  # Chromium 渲染含冷启可能 10-60s；scale=3 渲染更慢，留足余量
         )
         resp.raise_for_status()
         return resp.content
