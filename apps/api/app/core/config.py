@@ -104,6 +104,11 @@ class Settings(BaseSettings):
     # NoDecode 阻止 pydantic-settings 把字符串当 JSON 解析，交给下面的 validator 切分
     cors_origins: Annotated[List[str], NoDecode] = ["http://localhost:3000"]
 
+    # 日志（见 app/core/logging.py）。env 可控。
+    log_level: str = "INFO"            # DEBUG/INFO/WARNING/ERROR
+    log_dir: str = "logs"              # 文件 sink 目录（容器挂 volume）
+    log_file_enabled: bool = True      # 是否落盘；测试可设 False 关掉
+
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_cors_origins(cls, v: object) -> object:

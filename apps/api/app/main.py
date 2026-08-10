@@ -5,14 +5,25 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.router import api_router
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
+from app.core.logging import setup_logging
+from app.core.middleware import RequestIDMiddleware
 
 settings = get_settings()
+
+# 装配日志系统：必须在 FastAPI 实例化前，否则 uvicorn 的日志来不及被接管。
+# 统一 loguru 为单一出口，标准库 logging（含 uvicorn/sqlalchemy/httpx）经
+# InterceptHandler 桥接进来。详见 app/core/logging.py。
+setup_logging(settings)
 
 app = FastAPI(
     title="TianGong API",
     description="AI 驱动的专利交底书撰写智能体",
     version="0.1.0",
 )
+
+# request-id 中间件：最先注册（Starlette 后进先出，实际最外层执行），
+# 确保所有后续中间件/路由都在 request_id 上下文内。
+app.add_middleware(RequestIDMiddleware)
 
 # CORS（前端跨域）
 app.add_middleware(

@@ -27,6 +27,10 @@ Thumbs.db
 uploads/
 storage/
 
+# 运行时日志（loguru 文件 sink 落盘，见 app/core/logging.py）
+logs/
+*.log
+
 # 预下载的 ML 模型（bge-m3 等，~2.3GB，用户本地准备，勿提交）
 # 注意：前导 / 锚定项目根，避免误伤 apps/api/app/models（ORM 数据模型目录）
 /models/

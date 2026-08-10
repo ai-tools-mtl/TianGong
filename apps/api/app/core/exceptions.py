@@ -52,13 +52,52 @@ class ServiceUnavailableError(AppError):
 
 
 def register_exception_handlers(app) -> None:
-    """注册全局异常处理器，统一错误响应格式 {code, message}。"""
+    """注册全局异常处理器，统一错误响应格式 {code, message}。
+
+    所有异常都会落日志（之前 AppError handler 不记日志，未捕获异常走 FastAPI
+    默认 500 无 traceback）：
+    - AppError：4xx warning、5xx error，记 code/message/request_id。
+    - 其他 Exception：exception 级打完整 traceback，返回统一 internal_error，
+      生产响应体不泄露堆栈（服务端日志有完整记录）。
+    """
     from fastapi import Request
     from fastapi.responses import JSONResponse
 
+    from app.core.logging import get_request_id, get_logger
+    logger = get_logger(__name__)
+
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError):
+        # 4xx 记 warning（客户端错误，非服务故障）；5xx 记 error（服务端问题）
+        log = logger.warning if exc.status_code < 500 else logger.error
+        log(
+            "AppError {code} {status} {method} {path} | {msg}",
+            code=exc.code, status=exc.status_code,
+            method=request.method, path=request.url.path,
+            msg=exc.message,
+        )
         return JSONResponse(
             status_code=exc.status_code,
             content={"code": exc.code, "message": exc.message},
+            headers={"X-Request-ID": get_request_id()},
+        )
+
+    @app.exception_handler(Exception)
+    async def unhandled_exception_handler(request: Request, exc: Exception):
+        # 兜底：所有非 AppError 异常。logger.exception 打完整 traceback（含 from cause 链）。
+        logger.exception(
+            "未捕获异常 {method} {path} | {exc}",
+            method=request.method, path=request.url.path, exc=exc,
+        )
+        # 生产不泄露内部堆栈给前端；request_id 写响应体方便用户报错时定位。
+        # 注意：异常走此 handler 时中间件已 raise，无法给 response 写 header，
+        # 故在此补 X-Request-ID（前端/调用方仍能从响应头拿到）。
+        return JSONResponse(
+            status_code=500,
+            content={
+                "code": "internal_error",
+                "message": "服务器内部错误，请稍后重试",
+                "request_id": get_request_id(),
+            },
+            headers={"X-Request-ID": get_request_id()},
         )
