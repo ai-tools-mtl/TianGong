@@ -1,14 +1,39 @@
 """导出 image 节点渲染测试。"""
 
 
-def test_tiptap_to_markdown_renders_image():
+def test_tiptap_to_markdown_renders_image(db_session):
     from app.services.export_service import _tiptap_to_markdown
 
     doc_json = {"type": "doc", "content": [
         {"type": "image", "attrs": {"src": "/api/v1/x/file", "alt": "图 1 示意图"}}
     ]}
-    md = _tiptap_to_markdown(doc_json)
+    md = _tiptap_to_markdown(db_session, doc_json)
+    # src 无效 UUID → _fetch_image_bytes 返回 None → 走 fallback 输出原 URL
     assert "![图 1 示意图](/api/v1/x/file)" in md
+
+
+def test_markdown_export_inlines_image_as_base64(db_session):
+    """有效 attachment 的 src 转 base64 data URI（Markdown 导出自包含可移植）。"""
+    from sqlalchemy import select
+
+    from app.core.security import hash_password
+    from app.core.storage import get_storage
+    from app.models import Attachment, Project, User
+    from app.services.export_service import _tiptap_to_markdown
+
+    u = User(username="mdimg", email="mdimg@example.com", password_hash=hash_password("P1!"), name="M")
+    db_session.add(u); db_session.flush()
+    p = Project(user_id=u.id, title="t"); db_session.add(p); db_session.flush()
+    att = Attachment(project_id=p.id, filename="f.png", storage_path="attachments/md/y.png",
+                     mime_type="image/png", size=8)
+    db_session.add(att); db_session.commit()
+    get_storage().put("personal", "attachments/md/y.png", b"\x89PNG\r\n\x1a\n", "image/png")
+
+    src = f"/api/v1/projects/{p.id}/attachments/{att.id}/file"
+    doc_json = {"type": "doc", "content": [{"type": "image", "attrs": {"src": src, "alt": "图1"}}]}
+    md = _tiptap_to_markdown(db_session, doc_json)
+    assert "data:image/png;base64," in md  # 转成了 base64 内联
+    assert src not in md                    # 原鉴权 URL 不再出现
 
 
 def test_render_tiptap_to_docx_handles_image(db_session, monkeypatch):

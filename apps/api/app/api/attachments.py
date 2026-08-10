@@ -3,6 +3,8 @@
 存储改造(T3):下载从 FileResponse(本地路径)改为 Response(minio 字节流)。
 """
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, UploadFile
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
@@ -74,9 +76,13 @@ def download(
         content = get_storage().get("personal", att.storage_path)
     except Exception:
         raise NotFoundError("文件不存在")
+    # Content-Disposition 用 RFC 5987 编码 filename（中文等非 ASCII 字符在 HTTP 头里
+    # 不合法，直接放会 500）。inline 让浏览器内联显示图片而非触发下载。
+    quoted = quote(att.filename)
+    disposition = f"inline; filename*=UTF-8''{quoted}"
     return Response(
         content=content, media_type=att.mime_type,
-        headers={"Content-Disposition": f'attachment; filename="{att.filename}"'},
+        headers={"Content-Disposition": disposition},
     )
 
 

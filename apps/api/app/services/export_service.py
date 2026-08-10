@@ -30,7 +30,7 @@ def export_markdown(db: Session, *, project: Project) -> str:
     for s in sections:
         lines.append(f"\n## {s.title}\n")
         if s.content:
-            lines.append(_tiptap_to_markdown(s.content))
+            lines.append(_tiptap_to_markdown(db, s.content))
         lines.append("")
     return "\n".join(lines)
 
@@ -71,7 +71,7 @@ def _get_ordered_sections(db: Session, project: Project) -> list[Section]:
     ))
 
 
-def _tiptap_to_markdown(doc_json: dict) -> str:
+def _tiptap_to_markdown(db: Session, doc_json: dict) -> str:
     """Tiptap JSON → Markdown 纯文本。"""
     parts: list[str] = []
 
@@ -97,7 +97,19 @@ def _tiptap_to_markdown(doc_json: dict) -> str:
             elif ntype == "image":
                 src = node.get("attrs", {}).get("src", "")
                 alt = node.get("attrs", {}).get("alt", "")
-                parts.append(f"\n\n![{alt}]({src})\n\n")
+                # 鉴权 URL 无法在外部 Markdown 阅读器显示，转 base64 data URI 自包含
+                img_bytes = _fetch_image_bytes(db, src)
+                if img_bytes:
+                    import base64
+                    b64 = base64.b64encode(img_bytes).decode("ascii")
+                    mime = "image/png"
+                    if ".jp" in src:
+                        mime = "image/jpeg"
+                    elif ".gif" in src:
+                        mime = "image/gif"
+                    parts.append(f"\n\n![{alt}](data:{mime};base64,{b64})\n\n")
+                else:
+                    parts.append(f"\n\n![{alt}]({src})\n\n")
             elif ntype in ("bulletList", "orderedList"):
                 for child in node.get("content", []):
                     walk(child)

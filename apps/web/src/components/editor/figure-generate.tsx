@@ -7,6 +7,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
 import { getChatDefaultSource } from '@/lib/llm-source'
+import { useAuthImage } from '@/lib/use-auth-image'
 import type { Figure } from '@/types/api'
 
 interface FigureGenerateProps {
@@ -46,6 +47,10 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
   const [diagramType, setDiagramType] = useState('')
   const [style, setStyle] = useState<string>(readStoredStyle)
   const [figure, setFigure] = useState<Figure | null>(null)
+
+  // 鉴权图片加载：fetch + credentials 转 blob URL，绕过 <img> 跨端口 cookie 限制
+  const imgUrl = figure?.attachment_id ? api.attachmentUrl(projectId, figure.attachment_id) : null
+  const authedImgUrl = useAuthImage(imgUrl)
 
   // 进入组件时拉取该章节已有的最近一张附图（支持继续操作：插入/重生成/删除）
   useEffect(() => {
@@ -189,12 +194,19 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
   return (
     <div className="flex flex-col gap-2 rounded-md border p-2">
       {figure?.attachment_id && (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={api.attachmentUrl(projectId, figure.attachment_id)}
-          alt={figure.prompt}
-          className="max-h-[300px] w-full rounded border object-contain"
-        />
+        authedImgUrl ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={authedImgUrl}
+            alt={figure.prompt}
+            className="max-h-[300px] w-full rounded border object-contain"
+          />
+        ) : (
+          <div className="flex h-[120px] items-center justify-center rounded border bg-muted/30 text-xs text-muted-foreground">
+            <Loader2 className="mr-2 size-4 animate-spin" />
+            图片加载中...
+          </div>
+        )
       )}
       <textarea
         value={prompt}

@@ -100,8 +100,10 @@ async function _refreshAndRetry(path: string, options: RequestInit): Promise<Res
  * 所有走后端的 fetch（JSON / 上传 / SSE 初始请求）都应通过它，确保 access 过期时自动续期。
  * 返回原始 Response；错误解析仍由各调用方负责。
  */
-async function authFetch(path: string, options: RequestInit = {}): Promise<Response> {
-  const res = await fetch(`${BASE}/api/v1${path}`, { credentials: 'include', ...options })
+export async function authFetch(path: string, options: RequestInit = {}): Promise<Response> {
+  // 完整 URL（含 http 前缀，如 attachmentUrl 拼出的）直接用；相对路径拼 BASE/api/v1
+  const url = path.startsWith('http') ? path : `${BASE}/api/v1${path}`
+  const res = await fetch(url, { credentials: 'include', ...options })
   if (res.status === 401) {
     const retried = await _refreshAndRetry(path, options)
     if (retried) return retried
