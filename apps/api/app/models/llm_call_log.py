@@ -20,6 +20,9 @@ class LLMCallLog(Base, IdMixin):
     action: Mapped[str] = mapped_column(String(50))  # chat/generate/rewrite/review/embed
     model: Mapped[str] = mapped_column(String(100))
     provider: Mapped[str] = mapped_column(String(20))  # user/global
+    # 请求链路追踪：由 RequestIDMiddleware 写入 contextvar，helper 落库。
+    # 可空（历史数据 / 非请求上下文的后台任务）。实现「日志 ↔ LLM 调用记录」跨表关联。
+    request_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     token_prompt: Mapped[int | None] = mapped_column(Integer, nullable=True)
     token_completion: Mapped[int | None] = mapped_column(Integer, nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
