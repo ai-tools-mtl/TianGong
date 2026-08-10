@@ -89,7 +89,7 @@ def generate_figure(
     # 1. 校验章节归属（复用 section_service 的资源级授权）
     section = section_service.get_section(db, user_id=user_id, section_id=section_id)
     if section.key != "drawings":
-        raise ValidationError("附图生成仅限「附图说明」章节")
+        raise ValidationError("附图生成仅限「附图」章节")
 
     # 2. 解析 chat 配置（无配置抛 403，由全局异常处理器转响应）
     llm_config = llm_config_service.resolve_chat_config(db, user_id=user_id, chat_source=chat_source)

@@ -2,7 +2,7 @@ from app.ai.section_prompts import SECTION_PROMPTS, get_section_prompt
 
 
 def test_all_standard_keys_exist():
-    expected = {"name", "field", "background", "problem", "solution", "effect", "drawings", "embodiment", "custom"}
+    expected = {"name", "field", "background", "problem", "solution", "effect", "drawings", "key_points", "custom"}
     assert expected.issubset(SECTION_PROMPTS.keys())
 
 

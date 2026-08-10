@@ -701,7 +701,7 @@ async def caption_figures(
     section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
     # 仅附图章节可用
     if section.key != "drawings":
-        raise ValidationError("图注润色仅限附图说明章节")
+        raise ValidationError("图注润色仅限附图章节")
 
     from langchain_core.messages import HumanMessage, SystemMessage
 

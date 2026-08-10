@@ -142,4 +142,4 @@ def test_generate_figure_tool_no_drawings_section(monkeypatch, db_session, regis
     gen_tool = next(t for t in tools if t.name == "generate_figure")
 
     result = gen_tool.invoke({"prompt": "测试", "diagram_type": "general"})
-    assert "无「附图说明」章节" in result
+    assert "无「附图」章节" in result

@@ -152,7 +152,7 @@ async def create_agent_tools(db: Any, user_id, *, scope: str = "section", sectio
 
     @tool("generate_figure")
     def generate_figure(prompt: str, diagram_type: str = "general") -> str:
-        """为专利交底书生成一张附图（流程图/架构图/框图等），自动存入「附图说明」章节。
+        """为专利交底书生成一张附图（流程图/架构图/框图等），自动存入「附图」章节。
 
         何时调用：
         - 用户明确要求画图：「画一下这个发明的系统框图」「帮我生成一张流程图」
@@ -169,8 +169,8 @@ async def create_agent_tools(db: Any, user_id, *, scope: str = "section", sectio
                 sequence（时序图）/ block（模块框图）/ state（状态图）/ general（通用，默认）。
 
         Returns:
-            操作结果（已生成并附图说明/生成失败原因）。生成的图会出现在
-            「附图说明」章节，用户可在那里预览并插入正文。
+            操作结果（已生成附图/生成失败原因）。生成的图会出现在
+            「附图」章节，用户可在那里预览并插入正文。
         """
         from app.core.storage import get_storage
         from app.services import figure_service, section_service
@@ -186,14 +186,14 @@ async def create_agent_tools(db: Any, user_id, *, scope: str = "section", sectio
             sections = section_service.list_sections(db, user_id=user_id, project_id=str(section.project_id))
             drawings = next((s for s in sections if s.key == "drawings"), None)
             if drawings is None:
-                return "未生成：当前项目无「附图说明」章节"
+                return "未生成：当前项目无「附图」章节"
 
             fig = figure_service.generate_figure(
                 db, storage=get_storage(), user_id=user_id,
                 section_id=str(drawings.id),
                 prompt=prompt, diagram_type=diagram_type, chat_source=None,
             )
-            return f"已生成附图（id={fig.id}），已存入「附图说明」章节，用户可预览后插入正文"
+            return f"已生成附图（id={fig.id}），已存入「附图」章节，用户可预览后插入正文"
         except Exception as e:
             # 工具是事务边界：DB/渲染失败必须 rollback，避免毒化 agent loop 后续查询
             db.rollback()

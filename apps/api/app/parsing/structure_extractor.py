@@ -16,8 +16,14 @@ TITLE_KEY_MAP = {
     "发明内容": "solution",
     "有益效果": "effect",
     "附图说明": "drawings",
-    "具体实施方式": "embodiment",
-    "实施方式": "embodiment",
+    "附图": "drawings",
+    "关键点": "key_points",
+    "保护点": "key_points",
+    "保护范围": "key_points",
+    "欲保护": "key_points",
+    # 兼容旧版模板的「具体实施方式」标题（旧文档导入时仍能识别，但新模板已用 key_points）
+    "具体实施方式": "key_points",
+    "实施方式": "key_points",
 }
 
 # 中文序号模式："一、"/"二、" 等
@@ -105,7 +111,7 @@ def _extract_by_text_patterns(doc) -> list[dict]:
         # 不是顶层章节，降为 L2
         if level == 1 and re.match(r"^.{2,10}：.{10,}", text):
             # 但不是主章节关键词（名称/技术领域等）
-            is_main = any(kw in text[:8] for kw in ("名称", "技术领域", "背景技术", "发明内容", "有益效果", "附图", "实施方式"))
+            is_main = any(kw in text[:8] for kw in ("名称", "技术领域", "背景技术", "发明内容", "有益效果", "附图", "关键点", "保护点", "实施方式"))
             if not is_main:
                 level = 2
 

@@ -72,10 +72,10 @@ def test_missing_one_core_not_ready():
 
 
 def test_edge_dimensions_do_not_affect_ready():
-    """边缘维度(name/drawings/embodiment)填不填都不影响 ready。"""
+    """边缘维度(name/drawings/key_points)填不填都不影响 ready。"""
     cov = compute_coverage(_outline(
         field="领域", background="缺点", problem="问题", solution="方案", effect="效果",
-        name="发明名称", drawings="图1", embodiment="实施例",
+        name="发明名称", drawings="图1", key_points="保护点",
     ))
     assert cov.ready is True
     assert cov.core_filled == (5, 5)
@@ -125,7 +125,7 @@ def test_is_core_and_dimension_title():
     """辅助函数：is_core + dimension_title。"""
     assert is_core("field") is True
     assert is_core("name") is False
-    assert dimension_title("field") == "技术领域"
+    assert dimension_title("field") == "所属技术领域"
     assert dimension_title("unknown_key") == "unknown_key"
 
 

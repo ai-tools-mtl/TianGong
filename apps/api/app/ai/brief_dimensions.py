@@ -15,7 +15,7 @@
 （注释标明对齐关系，单一来源是这里）。
 
 设计取舍：
-- 核心 vs 边缘：name/drawings/embodiment 不卡 ready（drawings/embodiment 往往要
+- 核心 vs 边缘：name/drawings/key_points 不卡 ready（drawings/key_points 往往要
   到生成期才能补全，init 阶段强行要求会逼用户编造）。
 - 对齐检查是「软」的：缺点/问题/效果条数偏差 ≤ ALIGN_TOLERANCE 即放行，不强制
   精确等数（init 阶段信息粒度粗，精确等数太苛刻）。
@@ -34,8 +34,8 @@ from app.services.seed_service import DEFAULT_STRUCTURE
 CORE_DIMENSIONS: list[str] = ["field", "background", "problem", "solution", "effect"]
 
 # 边缘维度：参与展示（OutlinePreview 右栏），但不卡 ready 判断。
-# drawings/embodiment 通常生成期才补全；name 是衍生信息（从 field+solution 即可提炼）。
-EDGE_DIMENSIONS: list[str] = ["name", "drawings", "embodiment"]
+# drawings/key_points 通常生成期才补全；name 是衍生信息（从 field+solution 即可提炼）。
+EDGE_DIMENSIONS: list[str] = ["name", "drawings", "key_points"]
 
 # 参与「对齐检查」的三方：缺点 / 问题 / 效果。
 # patent-disclosure-pro 五方对齐的核心可量化指标——这三方数量应大致一致。

@@ -31,14 +31,14 @@ interface OutlinePreviewProps {
 
 // 8 章 key + 顺序（与后端 seed_service.DEFAULT_STRUCTURE 一致，单一来源对齐）
 const CHAPTERS: { key: string; title: string }[] = [
-  { key: 'name', title: '发明名称' },
-  { key: 'field', title: '技术领域' },
+  { key: 'name', title: '名称' },
+  { key: 'field', title: '所属技术领域' },
   { key: 'background', title: '背景技术' },
-  { key: 'problem', title: '发明目的与技术问题' },
-  { key: 'solution', title: '技术方案' },
+  { key: 'problem', title: '技术问题' },
+  { key: 'solution', title: '发明内容' },
   { key: 'effect', title: '有益效果' },
-  { key: 'drawings', title: '附图说明' },
-  { key: 'embodiment', title: '具体实施方式' },
+  { key: 'key_points', title: '关键点与保护范围' },
+  { key: 'drawings', title: '附图' },
 ]
 
 // 核心维度（与后端 brief_dimensions.CORE_DIMENSIONS 一致——决定 ready 判断的 5 维）。
