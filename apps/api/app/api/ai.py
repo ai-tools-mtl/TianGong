@@ -152,6 +152,7 @@ def _log_llm_call(
     context_meta（spec §5.1）：可选 dict，上下文压缩 Snapshot 序列化。
     """
     try:
+        from app.core.logging import get_request_id
         log = LLMCallLog(
             user_id=user_id,
             project_id=project_id,
@@ -164,6 +165,7 @@ def _log_llm_call(
             status=status,
             error=(str(error)[:500] if error else None),
             context_meta=context_meta,
+            request_id=get_request_id(),
         )
         db.add(log)
         db.commit()

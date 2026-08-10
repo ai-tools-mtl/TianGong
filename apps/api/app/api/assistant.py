@@ -208,6 +208,7 @@ def _log_llm_call(db: Session, *, user_id, action: str, model: str, provider: st
     只存元数据不存内容（设计 8.3 红线）。工具是事务边界，失败必 rollback。
     """
     from app.models import LLMCallLog
+    from app.core.logging import get_request_id
     try:
         log = LLMCallLog(
             user_id=user_id, project_id=None, action=action,
@@ -215,6 +216,7 @@ def _log_llm_call(db: Session, *, user_id, action: str, model: str, provider: st
             token_prompt=tokens.get("prompt") if tokens else None,
             token_completion=tokens.get("completion") if tokens else None,
             duration_ms=duration_ms, error=error, context_meta=context_meta,
+            request_id=get_request_id(),
         )
         db.add(log)
         db.commit()

@@ -10,6 +10,7 @@ action="embed" 的日志，让 admin 调用统计能区分 chat / embedding（D7
 
 from sqlalchemy.orm import Session
 
+from app.core.logging import get_request_id
 from app.models import LLMCallLog
 
 
@@ -44,6 +45,7 @@ def log_embed_call(
                 status=status,
                 duration_ms=duration_ms,
                 error=error,
+                request_id=get_request_id(),
             ))
     except Exception:
         # 日志失败不影响主流程；begin_nested 已回滚 savepoint，session 仍可用
@@ -82,6 +84,7 @@ def log_chat_call(
                 duration_ms=duration_ms,
                 status=status,
                 error=(str(error)[:500] if error else None),
+                request_id=get_request_id(),
             ))
     except Exception:
         pass
@@ -112,6 +115,7 @@ def log_firecrawl_call(
                 provider=source,             # global/env
                 token_completion=pages,
                 status=status,
+                request_id=get_request_id(),
             ))
     except Exception:
         pass
