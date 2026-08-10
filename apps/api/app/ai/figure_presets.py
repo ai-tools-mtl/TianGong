@@ -126,18 +126,16 @@ def _color_block(colors: dict) -> str:
 def _example_xml(colors: dict) -> str:
     """生成最小示例 XML（配色随预设，避免 LLM 照彩色示例产出彩色图）。
 
-    示例刻意展示「文字-尺寸自适应」：短标签「客户端」用 120×60 够；
-    长标签「API 请求&#xa;处理模块」拆 2 行 + 加宽加高（160×70），示范防溢出。
+    示例展示「文字精简」：标签为核心词（客户端/API网关 20），≤6字 + 编号。
     """
     return (
         f'<?xml version="1.0" encoding="UTF-8"?>\n'
         f'<mxfile host="drawio" version="26.0.0"><diagram name="示例"><mxGraphModel><root>'
         f'<mxCell id="0"/><mxCell id="1" parent="0"/>'
-        f'<mxCell id="2" value="客户端" style="rounded=1;whiteSpace=wrap;html=1;{colors["rounded"]}" vertex="1" parent="1">'
-        f'<mxGeometry x="80" y="80" width="120" height="60" as="geometry"/></mxCell>'
-        # 长标签示例：拆 2 行（&#xa;），框加宽到 160、加高到 70 装下两行
-        f'<mxCell id="3" value="API 请求&#xa;处理模块" style="rounded=1;whiteSpace=wrap;html=1;{colors["rounded"]}" vertex="1" parent="1">'
-        f'<mxGeometry x="70" y="220" width="160" height="70" as="geometry"/></mxCell>'
+        f'<mxCell id="2" value="客户端 10" style="rounded=1;whiteSpace=wrap;html=1;{colors["rounded"]}" vertex="1" parent="1">'
+        f'<mxGeometry x="80" y="80" width="120" height="50" as="geometry"/></mxCell>'
+        f'<mxCell id="3" value="API网关 20" style="rounded=1;whiteSpace=wrap;html=1;{colors["rounded"]}" vertex="1" parent="1">'
+        f'<mxGeometry x="80" y="200" width="120" height="50" as="geometry"/></mxCell>'
         f'<mxCell id="4" value="请求" style="edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth=1.5;" edge="1" parent="1" source="2" target="3">'
         f'<mxGeometry relative="1" as="geometry"/></mxCell>'
         f'</root></mxGraphModel></diagram></mxfile>'
