@@ -15,7 +15,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import NotFoundError, ValidationError
+from app.core.exceptions import NotFoundError, ServiceUnavailableError, ValidationError
 from app.core.storage import Storage
 from app.models import Attachment, Figure, Section
 from app.services import drawio_client, llm_config_service, section_service
@@ -108,7 +108,9 @@ def generate_figure(
             model=llm_config.model or "", provider=llm_config.source,
             status="failed", duration_ms=int((time.monotonic() - start) * 1000), error=e,
         )
-        raise
+        # LLM provider 异常（余额不足/Key 失效/网络等）转友好错误，避免裸 500
+        from app.ai.llm_errors import friendly_llm_error
+        raise ServiceUnavailableError(friendly_llm_error(e)) from e
     log_chat_call(
         db, user_id=user_id, project_id=section.project_id, action="figure",
         model=llm_config.model or "", provider=llm_config.source,
@@ -171,7 +173,8 @@ def regenerate_figure(
             model=llm_config.model or "", provider=llm_config.source,
             status="failed", duration_ms=int((time.monotonic() - start) * 1000), error=e,
         )
-        raise
+        from app.ai.llm_errors import friendly_llm_error
+        raise ServiceUnavailableError(friendly_llm_error(e)) from e
     log_chat_call(
         db, user_id=user_id, project_id=fig.project_id, action="figure",
         model=llm_config.model or "", provider=llm_config.source,

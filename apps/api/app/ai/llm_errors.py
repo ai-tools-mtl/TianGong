@@ -20,6 +20,9 @@ def friendly_llm_error(e: Exception) -> str:
     # 1214：model 为空（含上游 get_llm 的 ValueError「缺少 model」）
     if "1214" in msg or "model code cannot be empty" in msg or "缺少 model" in msg:
         return "LLM 配置缺少模型名，请前往设置补全「模型」字段"
+    # 429 / 余额不足 / 配额耗尽（智谱 1113 / 通用 RateLimit）
+    if "429" in msg or "RateLimit" in type(e).__name__ or "余额不足" in msg or "无可用资源包" in msg:
+        return "LLM 账户余额不足或调用频次超限，请充值或稍后重试"
     # 1002 / key 非法 / 401
     if "1002" in msg or "Authorization" in msg or "API Key" in msg or "Invalid API Key" in msg:
         return "API Key 无效或已过期，请前往设置检查密钥"
