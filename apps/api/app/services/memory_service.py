@@ -3,6 +3,7 @@ import uuid as _uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from loguru import logger
 from sqlalchemy import func, select, text, update
 from sqlalchemy.orm import Session
 
@@ -82,6 +83,9 @@ def _try_embed(db: Session, user_id, text: str) -> list[float] | None:
     try:
         return embed_text(text, embed_config=embed_config)
     except Exception:
+        # 降级为 NULL embedding——无 embedding 的记忆从此检索不到，用户无感。
+        # 补 warning 让运维能发现 embedding 链路异常（否则记忆静默失效）。
+        logger.warning("记忆 embedding 生成失败，降级为无向量（该记忆将无法被检索）", exc_info=True)
         return None
 
 
@@ -155,6 +159,8 @@ def _bump_hit_counts(db: Session, memory_ids: list) -> None:
         )
         db.flush()
     except Exception:
+        # 热度回写失败不阻断检索（rollback 防事务毒化）。补 warning 留痕。
+        logger.warning("记忆热度计数回写失败", exc_info=True)
         db.rollback()  # 防 PG 事务中毒化后续查询
 
 

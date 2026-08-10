@@ -11,6 +11,7 @@
 from dataclasses import dataclass
 
 import httpx
+from loguru import logger
 
 from firecrawl.v2 import FirecrawlClient as _FirecrawlSDK
 
@@ -86,6 +87,9 @@ class FirecrawlClient:
             doc = self._sdk.scrape(url, formats=["markdown"])
             return self._doc_to_result(doc, url=url)
         except Exception:
+            # 转成 fetch_failed=True 由上层决定（不抛）。补 warning 留痕——
+            # 否则上层无法区分「真失败」vs「正常空结果」，且无原因可查。
+            logger.warning("Firecrawl scrape 失败 url={url}", url=url, exc_info=True)
             return ScrapeResult(
                 url=url, title="", markdown="", status_code=0, fetch_failed=True,
             )
@@ -172,4 +176,5 @@ def check_firecrawl_health(base_url: str | None = None) -> bool:
         r = httpx.get(base_url.rstrip("/") + "/", timeout=3.0)
         return r.status_code < 500
     except Exception:
+        logger.warning("Firecrawl 探活失败 base_url={url}", url=base_url, exc_info=True)
         return False

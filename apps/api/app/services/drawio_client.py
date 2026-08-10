@@ -9,6 +9,7 @@ ServiceUnavailableError，不降级、不留半成品。原因：figure 生成�
 渲染失败就没有可交付的图，必须让用户重试，而不是存一个空壳 Figure 记录。
 """
 import httpx
+from loguru import logger
 
 from app.core.config import get_settings
 from app.core.exceptions import ServiceUnavailableError
@@ -37,6 +38,11 @@ def render(xml: str, *, fmt: str = "png", scale: int = 2, embed: bool = True) ->
         resp.raise_for_status()
         return resp.content
     except Exception as e:
+        # fail-closed：抛 ServiceUnavailableError 让用户重试（见模块 docstring）。
+        # 补 logger.exception 留完整 traceback——否则 drawio 渲染微服务为何挂
+        # （容器没起 / Chromium 崩 / XML 非法 / 超时）在日志里完全看不见，
+        # 只有 from e 的 cause 链留在异常对象上，而全局处理器原本不打印异常。
+        logger.exception("drawio 渲染失败 base_url={url}", url=base_url)
         raise ServiceUnavailableError(
             "附图渲染服务暂不可用，请稍后重试"
         ) from e

@@ -91,6 +91,8 @@ def render_report(report: EvalReport) -> str:
 if __name__ == "__main__":
     # CLI 入口：配好环境变量后跑 `python -m app.eval.runner`
     import sys
+    from loguru import logger
+
     from app.core.database import SessionLocal
     from app.services.llm_config_service import resolve_chat_config
 
@@ -99,7 +101,7 @@ if __name__ == "__main__":
         # 用环境/全局配置作为 judge（eval 需稳定，不建议用用户自配）
         cfg = resolve_chat_config(db, user_id=None)
         if cfg is None:
-            print("错误：未配置 LLM，无法运行 eval。请先配置全局/环境 LLM。", file=sys.stderr)
+            logger.error("未配置 LLM，无法运行 eval。请先配置全局/环境 LLM。")
             sys.exit(1)
         rpt = run_eval(cfg)
         print(render_report(rpt))

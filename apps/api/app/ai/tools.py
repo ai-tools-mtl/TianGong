@@ -73,6 +73,7 @@ async def create_agent_tools(db: Any, user_id, *, scope: str = "section", sectio
         try:
             results = retrieve(db, user_id=user_id, query=query)
         except Exception:
+            logger.warning("rag_search 工具检索失败，降级返回空", exc_info=True)
             db.rollback()
             return []
         return [
@@ -145,6 +146,7 @@ async def create_agent_tools(db: Any, user_id, *, scope: str = "section", sectio
             db.commit()
             return "已保存"
         except Exception:
+            logger.warning("save_memory 工具写入失败", exc_info=True)
             db.rollback()
             return "未保存：写入失败，请稍后重试"
 

@@ -11,9 +11,13 @@ conlist(str)），不支持 NLI 必需的句子对配对输入。
 核心安全阀：服务不可用/超时/异常一律返回 "neutral"（降级为相似补充，走原合并逻辑），
 绝不误判矛盾导致误删。失败必须向安全方向倾斜。
 """
+import logging
+
 import httpx
 
 from app.core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 # 矛盾覆盖总开关。默认 True：自建 NLI 微服务（apps/nli/）已就绪，支持真实句子对推理。
 # 关闭时 judge_relation 直接返回 neutral，save_memory 退回纯合并不删。
@@ -40,4 +44,7 @@ def judge_relation(premise: str, hypothesis: str) -> str:
         # 自建微服务返回扁平 {"label": "...", "score": ...}
         return resp.json()["label"]   # contradiction / entailment / neutral
     except Exception:
-        return "neutral"      # 降级：绝不误判矛盾
+        # 降级 neutral（绝不误判矛盾）。补 warning 留痕——否则 NLI 微服务挂了
+        # 系统静默退回纯合并，运维以为矛盾覆盖还在生效却无从察觉。
+        logger.warning("NLI 服务不可用，降级为 neutral", exc_info=True)
+        return "neutral"

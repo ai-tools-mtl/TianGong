@@ -7,6 +7,7 @@
 """
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from loguru import logger
 from sqlalchemy import select
 
 from app.ai.section_prompts import get_section_prompt
@@ -188,6 +189,7 @@ def _search_user_memories(db, user_id, query: str):
         from app.services.memory_service import search_memories
         return search_memories(db, user_id=user_id, query=query)
     except Exception:
+        logger.warning("记忆检索失败，降级返回空（不阻断 prompt 装配）", exc_info=True)
         db.rollback()
         return []
 
@@ -202,6 +204,7 @@ def _get_profile_memories(db, user_id):
         from app.services.memory_service import list_memories
         return list_memories(db, user_id=user_id, source="profile")
     except Exception:
+        logger.warning("画像记忆读取失败，降级返回空", exc_info=True)
         db.rollback()
         return []
 
@@ -267,10 +270,12 @@ def _retrieve_knowledge_for_section(
         try:
             knowledge.extend(_retrieve_ima_for_section(db, query))
         except Exception:
+            logger.warning("ima 外部检索失败，降级只用本地结果", exc_info=True)
             db.rollback()
 
         return knowledge if knowledge else None
     except Exception:
+        logger.warning("知识预检索失败，降级不注入相关知识（不阻断生成）", exc_info=True)
         db.rollback()
         return None
 
