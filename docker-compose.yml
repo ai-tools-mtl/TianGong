@@ -194,9 +194,10 @@ services:
         limits:
           memory: 2g
 
-  # Firecrawl 自部署(网页摄入):api+worker 同进程镜像 + playwright 渲染 + redis 队列。
-  # 官方自部署是 7 容器重栈(rabbitmq/foundationdb/nuq-postgres 等),本项目精简为 3 容器:
-  # firecrawl 镜像内置 worker 同进程,队列用 redis,页面渲染委托给 playwright-service。
+  # Firecrawl 自部署(网页摄入):api+worker 同进程镜像 + playwright 渲染 + redis 队列 + nuq-postgres。
+  # firecrawl 镜像启动时会探测 docker/podman 想自起 nuq-postgres,但容器内没有 docker CLI,
+  # 故必须显式提供 NUQ_DATABASE_URL(指向下面的 firecrawl-postgres),跳过 docker-in-docker。
+  # RabbitMQ:POSTGRES_HOST != localhost 时 harness 自动跳过(走内置内存队列)。
   # 后端通过 FIRECRAWL_BASE_URL 访问:本地开发 http://localhost:3002,
   # 容器内(api 容器)http://firecrawl:3002。与 embedding/rerank 同属本地微服务,纯 env 配置。
   # 软依赖:天工 api 不 depends_on firecrawl(同 nli 设计),挂了只影响网页摄入,不阻塞 api 启动。
@@ -205,10 +206,19 @@ services:
     container_name: tiangong-firecrawl
     environment:
       REDIS_URL: redis://firecrawl-redis:6379
+      REDIS_RATE_LIMIT_URL: redis://firecrawl-redis:6379
+      REDIS_EVICT_URL: redis://firecrawl-redis:6379
       PLAYWRIGHT_MICROSERVICE_URL: http://firecrawl-playwright:3000
       USE_DB_AUTHENTICATION: "false"   # 不用 firecrawl 自带 PG 鉴权(我们只调 scrape/crawl API)
       USE_KEY_AUTH: "true"             # 启用 API key 鉴权,key 见下,需与天工 FIRECRAWL_API_KEY 一致
       FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY:-fc-local-default-key}
+      # NUQ(firecrawl 内部 job 存储)指向专用 nuq-postgres,跳过容器内 docker-in-docker
+      # nuq-postgres 镜像预建了 nuq schema + 全部队列表,普通 postgres 会缺 schema
+      NUQ_DATABASE_URL: postgresql://postgres:firecrawl@firecrawl-postgres:5432/postgres
+      NUQ_DATABASE_URL_LISTEN: postgresql://postgres:firecrawl@firecrawl-postgres:5432/postgres
+      POSTGRES_HOST: firecrawl-postgres   # != localhost,触发 harness 跳过 RabbitMQ 自管
+      # RabbitMQ(firecrawl extract-worker 等子进程硬性要求 NUQ_RABBITMQ_URL)
+      NUQ_RABBITMQ_URL: amqp://firecrawl-rabbitmq:5672
       PORT: "3002"
       HOST: "0.0.0.0"
     ports:
@@ -216,14 +226,47 @@ services:
     depends_on:
       - firecrawl-redis
       - firecrawl-playwright
+      - firecrawl-postgres
+      - firecrawl-rabbitmq
     healthcheck:
       # firecrawl 镜像基于 node,含 wget;根路径 / 即健康探针(返回 200/HTML)。
       test: ["CMD-SHELL", "wget -qO- http://localhost:3002/ >/dev/null 2>&1 || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10
-      # 首次启动需连 redis + playwright 就绪,稍留宽限
-      start_period: 60s
+      # 首次启动需连 redis + playwright + nuq-postgres 就绪,留足宽限
+      start_period: 90s
+    restart: unless-stopped
+
+  # Firecrawl NUQ PostgreSQL(firecrawl 内部 job 存储后端)。
+  # 必须用官方 nuq-postgres 镜像(预建 nuq schema + queue_* 表),普通 postgres 会缺 schema。
+  # firecrawl 镜像启动时探测 docker CLI 想自起这个容器,容器内无 docker 故必须显式提供 NUQ_DATABASE_URL。
+  # 无 host 端口,仅 firecrawl 容器经服务名 firecrawl-postgres:5432 访问。
+  firecrawl-postgres:
+    image: ghcr.io/firecrawl/nuq-postgres:latest
+    container_name: tiangong-firecrawl-postgres
+    environment:
+      POSTGRES_PASSWORD: firecrawl
+    volumes:
+      - firecrawlpgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Firecrawl RabbitMQ(firecrawl extract-worker 等子进程硬性要求 NUQ_RABBITMQ_URL)。
+  # 无 host 端口,仅 firecrawl 容器经服务名 amqp://firecrawl-rabbitmq:5672 访问。
+  firecrawl-rabbitmq:
+    image: rabbitmq:3-alpine
+    container_name: tiangong-firecrawl-rabbitmq
+    healthcheck:
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q check_running 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
     restart: unless-stopped
 
   # Playwright 渲染服务(firecrawl 依赖):headless 浏览器渲染 JS 重页面。
@@ -349,3 +392,4 @@ volumes:
   miniodata:
   embdata:
   rerankdata:
+  firecrawlpgdata:
