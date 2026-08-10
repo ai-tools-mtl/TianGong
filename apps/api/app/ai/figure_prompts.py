@@ -66,11 +66,17 @@ def build_figure_prompt(user_prompt: str, diagram_type: str | None, style: str |
 1. `id="0"` 和 `id="1"` 是必需的根 cell，不可省略、不可复用。
 2. 用户形状 id 从 `"2"` 起递增（"2","3","4"...），所有形状 `parent="1"`。
 3. 每个形状用 `<mxGeometry x y width height as="geometry" />` 给出明确坐标，自上而下、自左而右布局。
-4. **每个连线（edge）的 mxCell 必须包含子元素 `<mxGeometry relative="1" as="geometry" />`**，否则不渲染。禁止自闭合的 edge cell。
-5. 所有文字 style 里加 `html=1;whiteSpace=wrap;` 以正确换行。
-6. 多行文字用 `&#xa;`（不是字面 \\n）。
-7. 连线 style 用 `edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth={preset['line_width']};` 实现智能避让路由。
-8. {font_hint}
+4. **【防文字超框·最重要】形状的 width/height 必须按标签文字长度计算，确保文字完整装在框内**：
+   - 单字宽度 ≈ fontSize + 2 = {preset['font_size'] + 2}px（中文宋体）。标签 N 个字单行所需宽度 ≈ N × {preset['font_size'] + 2} + 16（左右 padding）。
+   - **框 width 必须 ≥ 标签单行所需宽度**。若标签较长（>7 字），优先**加宽框**（width = 字数 × {preset['font_size'] + 2} + 16），不要让文字溢出。
+   - 若标签确实太长（>12 字），用 `&#xa;` 拆成 2 行，同时**加大框 height**（每行 +{preset['font_size'] + 6}px）。例如标签 14 字 → 拆 2 行各 7 字，width ≈ 7 × {preset['font_size'] + 2} + 16，height ≈ {preset['font_size'] * 2 + 24}。
+   - 框最小尺寸：矩形/圆角矩形 width ≥ 100、height ≥ 50；椭圆 width ≥ 100、height ≥ 60；菱形 width ≥ 120、height ≥ 80（菱形内空间小，标签要短，≤6 字）。
+   - 连线标签也要短（≤4 字），长标签会盖住连线。
+5. **每个连线（edge）的 mxCell 必须包含子元素 `<mxGeometry relative="1" as="geometry" />`**，否则不渲染。禁止自闭合的 edge cell。
+6. 所有文字 style 里加 `html=1;whiteSpace=wrap;` 以正确换行（配合规则 4 的尺寸）。
+7. 多行文字用 `&#xa;`（不是字面 \\n）。
+8. 连线 style 用 `edgeStyle=orthogonalEdgeStyle;rounded=1;orthogonalLoop=1;jettySize=auto;html=1;strokeWidth={preset['line_width']};` 实现智能避让路由。
+9. {font_hint}
 
 {color_section}
 
