@@ -130,10 +130,10 @@ async def astream_chat(
     全部透传给 SSE 层（thinking 由 ReasoningChatOpenAI 回填进 chunk.additional_kwargs，
     extract_reasoning 读出）。
 
-    注意：usage_sink 在 agent loop 路径下**不会被填充**——token 用量
-    需从 agent 的最终 message 的 usage_metadata 提取（agent loop 多步调用，
-    简单累加 usage_sink 较复杂），Task 13 暂留空。旧 astream_llm 路径
-    （astream_rewrite 仍在用）仍正确填充 usage_sink。
+    注意：usage_sink 在 agent loop 路径下**会被填充**——P0-2 修复后，on_chat_model_stream
+    分支捕获 chunk 的 usage_metadata（agent.py 的 get_llm(stream_usage=True) 已开启回填）。
+    agent loop 多步调用时 completion 累加，prompt 取 last-wins。旧 astream_llm 路径
+    （astream_rewrite 仍在用）也正确填充 usage_sink。
     """
     from app.ai.agent import build_agent
     from app.ai.intent import classify_intent
@@ -186,6 +186,17 @@ async def astream_chat(
                         yield ("thinking", reasoning)
                     if chunk and chunk.content:
                         yield ("token", chunk.content)
+                    # P0-2：捕获 token 用量。usage_metadata 仅在 stream_usage=True 时由
+                    # provider 在最后一块 chunk 回填（见 agent.py 的 get_llm(stream_usage=True)）。
+                    # agent loop 多步调用（先 tool_call 再生成），on_chat_model_stream 会触发
+                    # 多次，故 completion 用累加而非覆盖；prompt 取 last-wins（每次调用的
+                    # input_tokens 包含完整上下文，最后一次最准）。
+                    _usage = getattr(chunk, "usage_metadata", None) if chunk else None
+                    if _usage and usage_sink is not None:
+                        usage_sink["prompt"] = _usage.get("input_tokens")
+                        usage_sink["completion"] = (
+                            usage_sink.get("completion", 0) + (_usage.get("output_tokens") or 0)
+                        )
                 elif evt == "on_tool_start":
                     yield ("tool_call", {
                         "name": event.get("name", ""),
@@ -221,10 +232,10 @@ async def astream_generate(
     全部透传给 SSE 层（thinking 由 ReasoningChatOpenAI 回填进 chunk.additional_kwargs，
     extract_reasoning 读出）。
 
-    注意：usage_sink 在 agent loop 路径下**不会被填充**——token 用量
-    需从 agent 的最终 message 的 usage_metadata 提取（agent loop 多步调用，
-    简单累加 usage_sink 较复杂），Task 13 暂留空。旧 astream_llm 路径
-    （astream_rewrite 仍在用）仍正确填充 usage_sink。
+    注意：usage_sink 在 agent loop 路径下**会被填充**——P0-2 修复后，on_chat_model_stream
+    分支捕获 chunk 的 usage_metadata（agent.py 的 get_llm(stream_usage=True) 已开启回填）。
+    agent loop 多步调用时 completion 累加，prompt 取 last-wins。旧 astream_llm 路径
+    （astream_rewrite 仍在用）也正确填充 usage_sink。
     """
     from app.ai.agent import build_agent
 
@@ -277,6 +288,17 @@ async def astream_generate(
                         yield ("thinking", reasoning)
                     if chunk and chunk.content:
                         yield ("token", chunk.content)
+                    # P0-2：捕获 token 用量。usage_metadata 仅在 stream_usage=True 时由
+                    # provider 在最后一块 chunk 回填（见 agent.py 的 get_llm(stream_usage=True)）。
+                    # agent loop 多步调用（先 tool_call 再生成），on_chat_model_stream 会触发
+                    # 多次，故 completion 用累加而非覆盖；prompt 取 last-wins（每次调用的
+                    # input_tokens 包含完整上下文，最后一次最准）。
+                    _usage = getattr(chunk, "usage_metadata", None) if chunk else None
+                    if _usage and usage_sink is not None:
+                        usage_sink["prompt"] = _usage.get("input_tokens")
+                        usage_sink["completion"] = (
+                            usage_sink.get("completion", 0) + (_usage.get("output_tokens") or 0)
+                        )
                 elif evt == "on_tool_start":
                     yield ("tool_call", {
                         "name": event.get("name", ""),

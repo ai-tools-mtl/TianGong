@@ -114,7 +114,11 @@ async def build_agent(
     logger.debug("build_agent: skill_sources=%s", skill_sources)
 
     # 4. LLM + 工具
-    llm = get_llm(llm_config, streaming=True)
+    # stream_usage=True（P0-2）：让 provider 在流的最后一块 AIMessageChunk 回填
+    # usage_metadata（input_tokens/output_tokens），供 orchestrator 的 on_chat_model_stream
+    # 分支捕获记入 LLMCallLog。agent loop 要求模型支持 tool calling，能进 agent loop 的
+    # provider（GLM/OpenAI/DeepSeek）均已验证支持 stream_options，故此处安全开启。
+    llm = get_llm(llm_config, streaming=True, stream_usage=True)
     logger.info("build_agent: LLM 实例已构造，开始装配 system prompt + tools")
 
     # [L1][L4][前文直注入] section 非 None 时装配动态 system prompt（spec §3.2）

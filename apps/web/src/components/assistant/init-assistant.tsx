@@ -411,7 +411,7 @@ export function InitAssistant() {
             {/* 创建扳机：agent 标记 ready 时 */}
             {showReadyButton && (
               <div className="flex justify-center">
-                <Button onClick={() => handleGenerate(false)} className="apple-lift gap-1.5" style={{ boxShadow: 'var(--shadow-cta)' }}>
+                <Button onClick={() => handleGenerate(false)} disabled={generating} className="apple-lift gap-1.5" style={{ boxShadow: 'var(--shadow-cta)' }}>
                   <Sparkles className="size-3.5" /> 信息已理清，创建项目
                 </Button>
               </div>
