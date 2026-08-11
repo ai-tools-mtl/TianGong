@@ -19,6 +19,7 @@ import type {
   ShareLink,
   ShareLinkCreate,
   SharedInfo,
+  SharedProject,
   Skill,
   SkillCreate,
   SkillDetail,
@@ -948,6 +949,10 @@ export const api = {
 
   getSharedInfo: (token: string) =>
     request<SharedInfo>(`/shared/${token}`),
+
+  // 游客浏览：凭分享 token 取项目全篇章节（只读，图片已 inline 为 data URI）
+  getSharedProject: (token: string) =>
+    request<SharedProject>(`/shared/${token}/sections`),
 
   // ── Agent Skills（spec 合规）──
   listGlobalSkills: () => request<Skill[]>('/admin/skills'),

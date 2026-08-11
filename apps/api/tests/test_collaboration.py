@@ -592,3 +592,149 @@ def test_shared_info_expired_token_404(db_session, client):
     client.cookies.clear()
     res = client.get(f"/api/v1/shared/{link.token}")
     assert res.status_code == 404
+
+
+# ── API: 公开 /shared/{token}/sections（游客浏览，无 cookie 鉴权）──
+
+def _make_shared_section(db, project, *, order=1, key="drawings", title="附图说明", content=None):
+    """造一个 section（游客浏览测试用，不依赖模板，可控 content）。"""
+    from app.models import Section
+
+    s = Section(
+        project_id=project.id,
+        template_section_id="test-ts",
+        order=order,
+        key=key,
+        title=title,
+        content=content,
+    )
+    db.add(s)
+    db.commit()
+    return s
+
+
+def _make_attachment(db, project, *, storage_path="attachments/test/x.png", mime="image/png"):
+    """造一个 attachment 并把图片字节存进 fake storage。"""
+    from app.core.storage import get_storage
+    from app.models import Attachment
+
+    att = Attachment(
+        project_id=project.id,
+        filename="x.png",
+        storage_path=storage_path,
+        mime_type=mime,
+        size=8,
+    )
+    db.add(att)
+    db.commit()
+    get_storage().put("personal", storage_path, b"\x89PNG\r\n\x1a\n", mime)
+    return att
+
+
+def test_shared_project_returns_sections(db_session, client):
+    """GET /shared/{token}/sections 返回项目章节，按 order 排序，permissions 透传。"""
+    owner = _make_user(db_session, email="owner@tiangong.dev", name="所有者")
+    project = _make_project(db_session, owner, title="游客项目")
+    _make_shared_section(db_session, project, order=2, key="summary", title="摘要")
+    _make_shared_section(db_session, project, order=1, key="field", title="技术领域")
+    link = share_service.create_share_link(db_session, project.id, owner.id, "readonly", None)
+
+    client.cookies.clear()
+    res = client.get(f"/api/v1/shared/{link.token}/sections")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["title"] == "游客项目"
+    assert body["permissions"] == "readonly"
+    # 按 order 排序
+    keys = [s["key"] for s in body["sections"]]
+    assert keys == ["field", "summary"]
+
+
+def test_shared_project_inlines_images_as_data_uri(db_session, client):
+    """section content 里 image 节点的 src 改写为 base64 data URI，原鉴权 URL 消失。"""
+    owner = _make_user(db_session, email="owner@tiangong.dev", name="所有者")
+    project = _make_project(db_session, owner, title="带图项目")
+    att = _make_attachment(db_session, project)
+    src = f"/api/v1/projects/{project.id}/attachments/{att.id}/file"
+    content = {"type": "doc", "content": [{"type": "image", "attrs": {"src": src, "alt": "图1"}}]}
+    _make_shared_section(db_session, project, key="drawings", title="附图说明", content=content)
+    link = share_service.create_share_link(db_session, project.id, owner.id, "comment", None)
+
+    client.cookies.clear()
+    res = client.get(f"/api/v1/shared/{link.token}/sections")
+    assert res.status_code == 200, res.text
+    img_node = res.json()["sections"][0]["content"]["content"][0]
+    assert img_node["attrs"]["src"].startswith("data:image/png;base64,")
+    assert src not in img_node["attrs"]["src"]  # 原 URL 不再出现
+
+
+def test_shared_project_empty_sections(db_session, client):
+    """无 section 的项目返回空 sections 列表。"""
+    owner = _make_user(db_session, email="owner@tiangong.dev", name="所有者")
+    project = _make_project(db_session, owner, title="空项目")
+    link = share_service.create_share_link(db_session, project.id, owner.id, "readonly", None)
+
+    client.cookies.clear()
+    res = client.get(f"/api/v1/shared/{link.token}/sections")
+    assert res.status_code == 200
+    assert res.json()["sections"] == []
+
+
+def test_shared_project_invalid_token_404(db_session, client):
+    """不存在的 token → 404。"""
+    client.cookies.clear()
+    res = client.get(f"/api/v1/shared/{uuid.uuid4().hex}/sections")
+    assert res.status_code == 404
+
+
+def test_shared_project_expired_token_404(db_session, client):
+    """过期 token → 404。"""
+    owner = _make_user(db_session, email="owner@tiangong.dev", name="所有者")
+    project = _make_project(db_session, owner)
+    link = ShareLink(
+        project_id=project.id,
+        token=uuid.uuid4().hex,
+        permissions="readonly",
+        expires_at=datetime.now(timezone.utc) - timedelta(days=1),
+        created_by=owner.id,
+    )
+    db_session.add(link)
+    db_session.commit()
+    client.cookies.clear()
+    res = client.get(f"/api/v1/shared/{link.token}/sections")
+    assert res.status_code == 404
+
+
+def test_shared_project_cross_project_image_skipped(db_session, client):
+    """安全：content 里塞别项目的 attachment URL，src 应被置空（不泄露他人附图）。"""
+    owner = _make_user(db_session, email="owner@tiangong.dev", name="所有者")
+    project = _make_project(db_session, owner, title="游客项目")
+    # 另一个用户的另一项目 + 其 attachment
+    other = _make_user(db_session, email="other@tiangong.dev", name="他人")
+    other_project = _make_project(db_session, other, title="他人项目")
+    other_att = _make_attachment(db_session, other_project, storage_path="attachments/other/y.png")
+    # 把他人 attachment 的 src 塞进本项目的 section content（模拟越权尝试）
+    malicious_src = f"/api/v1/projects/{other_project.id}/attachments/{other_att.id}/file"
+    content = {"type": "doc", "content": [{"type": "image", "attrs": {"src": malicious_src, "alt": "越权图"}}]}
+    _make_shared_section(db_session, project, key="drawings", title="附图说明", content=content)
+    link = share_service.create_share_link(db_session, project.id, owner.id, "readonly", None)
+
+    client.cookies.clear()
+    res = client.get(f"/api/v1/shared/{link.token}/sections")
+    assert res.status_code == 200
+    img_node = res.json()["sections"][0]["content"]["content"][0]
+    assert img_node["attrs"]["src"] == ""  # 跨项目图被置空，未返回他人附图字节
+    assert "base64" not in img_node["attrs"]["src"]
+
+
+def test_shared_project_no_cookie_required(db_session, client):
+    """端点不依赖 cookie：完全不登录也能访问。"""
+    owner = _make_user(db_session, email="owner@tiangong.dev", name="所有者")
+    project = _make_project(db_session, owner, title="公开项目")
+    _make_shared_section(db_session, project, key="field", title="技术领域")
+    link = share_service.create_share_link(db_session, project.id, owner.id, "readonly", None)
+
+    client.cookies.clear()
+    res = client.get(f"/api/v1/shared/{link.token}/sections")
+    assert res.status_code == 200
+    assert len(res.json()["sections"]) == 1

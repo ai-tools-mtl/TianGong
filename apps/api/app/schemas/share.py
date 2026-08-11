@@ -57,3 +57,20 @@ class SharedInfo(BaseModel):
     project_id: str
     # 前端用此 token 调 /shared/{token}/collabora-url（保持与 token 一致）
     share_token: str
+
+
+class SharedSection(BaseModel):
+    """游客浏览：单个章节的只读视图（不暴露 id/版本/时间戳，减少攻击面）。"""
+    order: int
+    key: str
+    title: str
+    content: dict | None = None  # Tiptap JSON，图片 src 已改写为 data URI
+    status: str
+
+
+class SharedProject(BaseModel):
+    """GET /shared/{token}/sections 公开端点响应：项目全篇章节只读视图。"""
+    title: str
+    permissions: str  # comment / readonly，供前端决定 UI
+    sections: list[SharedSection]
+    metadata: dict | None = None

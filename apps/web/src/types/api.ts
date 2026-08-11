@@ -591,6 +591,22 @@ export interface SharedInfo {
   share_token: string
 }
 
+// 游客浏览：GET /shared/{token}/sections 只读视图
+export interface SharedSection {
+  order: number
+  key: string
+  title: string
+  content: Record<string, unknown> | null
+  status: string
+}
+
+export interface SharedProject {
+  title: string
+  permissions: string
+  sections: SharedSection[]
+  metadata: Record<string, unknown> | null
+}
+
 // ── AI 会话 ──
 
 export interface Conversation {
