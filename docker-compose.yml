@@ -237,15 +237,13 @@ services:
       HOST: "0.0.0.0"
     ports:
       - "3002:3002"
+    # depends_on 用短格式（只等容器启动，不等 healthy）——避免某个依赖 healthcheck
+    # 配置问题阻塞 firecrawl 启动。firecrawl 内部有重试逻辑处理依赖未就绪。
     depends_on:
-      firecrawl-redis:
-        condition: service_healthy
-      firecrawl-playwright:
-        condition: service_healthy
-      firecrawl-postgres:
-        condition: service_healthy
-      firecrawl-rabbitmq:
-        condition: service_healthy
+      - firecrawl-redis
+      - firecrawl-playwright
+      - firecrawl-postgres
+      - firecrawl-rabbitmq
     healthcheck:
       # firecrawl 镜像基于 node,含 wget;根路径 / 即健康探针(返回 200/HTML)。
       test: ["CMD-SHELL", "wget -qO- http://localhost:3002/ >/dev/null 2>&1 || exit 1"]
@@ -293,17 +291,16 @@ services:
     restart: unless-stopped
 
   # Playwright 渲染服务(firecrawl 依赖):headless 浏览器渲染 JS 重页面。
-  # 暴露 3000 到宿主机：本地开发可直接 curl 测试渲染服务是否正常。
+  # 仅 firecrawl 容器经服务名 http://firecrawl-playwright:3000 访问，不暴露到宿主机
+  # （宿主机 3000 端口是前端 dev server 用的，冲突）。
   firecrawl-playwright:
     image: ghcr.io/firecrawl/playwright-service:latest
     container_name: tiangong-firecrawl-playwright
     environment:
       PORT: "3000"
       BLOCK_MEDIA: "false"
-    ports:
-      - "3000:3000"
-    healthcheck:  # P0-9 补齐：playwright 暴露 /health 端点
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ >/dev/null 2>&1 || exit 1"]
+    healthcheck:  # P0-9 补齐：playwright 是 node 镜像（无 wget/curl），用 node 发请求探活
+      test: ["CMD-SHELL", "node -e \"require('http').get('http://localhost:3000/',r=>{process.exit(r.statusCode<500?0:1)}).on('error',()=>process.exit(1))\""]
       interval: 15s
       timeout: 5s
       retries: 10
