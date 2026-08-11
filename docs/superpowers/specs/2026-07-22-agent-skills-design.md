@@ -30,8 +30,6 @@ Agent Skills 开放标准 · 两档可见性（admin 全局 / 用户个人）· 
 
 ### 1.3 非目标（本契约范围外）
 
-- 移动端 / 平板 UI（沿用现有 PC 端统一面板布局）。
-- 多租户组织级 skill（`org_admin` 角色预留但不在本模块实现）。
 - skill 市场 / 发布流程（grill Q17-b 正式撤回 Q7-iii，只有两档可见性，无 public 档）。
 
 ---
@@ -244,9 +242,6 @@ MinIO 布局：`skills/<scope>/<owner_or_global>/<name>/{SKILL.md, scripts/, ref
 
 - skill 版本管理（v1 只存当前版本，历史版本留 v2）。
 - skill 跨用户分享 / 导入导出。
-- 移动端 UI。
-- `org_admin` 多租户。
-- skill 执行的资源计费 / 配额。
 
 ---
 
