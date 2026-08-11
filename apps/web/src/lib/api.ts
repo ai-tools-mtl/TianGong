@@ -35,6 +35,8 @@ import type {
   IMASettings,
   IMAConfigPayload,
   IMATestResult,
+  WritingProfile,
+  WritingProfileUpdate,
 } from '@/types/api'
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -997,6 +999,12 @@ export const api = {
     request<Memory>(`/memories/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteMemory: (id: string) =>
     request<{ ok: boolean }>(`/memories/${id}`, { method: 'DELETE' }),
+
+  // ── 写作画像（/settings/profile）──
+  getWritingProfile: () =>
+    request<WritingProfile>('/settings/profile'),
+  updateWritingProfile: (data: WritingProfileUpdate) =>
+    request<WritingProfile>('/settings/profile', { method: 'PUT', body: JSON.stringify(data) }),
 }
 
 /**

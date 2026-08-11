@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.deps import get_current_user
 from app.models import User
-from app.services import admin_service, llm_config_service
+from app.schemas.profile import WritingProfileOut, WritingProfileUpdate
+from app.services import admin_service, llm_config_service, profile_service
 
 router = APIRouter(tags=["admin"])  # tag 保持 admin 与原一致，避免 OpenAPI 文档分组变化
 
@@ -156,3 +157,31 @@ def test_my_llm(
         base_url=payload.base_url, api_key=payload.api_key,
         model=payload.model, scope="chat",
     )
+
+
+# ── 写作画像（/settings/profile，一对一 upsert）──
+
+
+@router.get("/settings/profile", response_model=WritingProfileOut)
+def get_my_profile(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """读取当前用户的写作画像。无记录返回全 None 字段。"""
+    profile = profile_service.get_profile(db, user_id=current_user.id)
+    if profile is None:
+        return WritingProfileOut()
+    return WritingProfileOut.model_validate(profile)
+
+
+@router.put("/settings/profile", response_model=WritingProfileOut)
+def update_my_profile(
+    payload: WritingProfileUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """新建或更新写作画像（upsert，全字段可选，仅提供才改）。"""
+    profile = profile_service.upsert_profile(
+        db, user_id=current_user.id, data=payload
+    )
+    return WritingProfileOut.model_validate(profile)
