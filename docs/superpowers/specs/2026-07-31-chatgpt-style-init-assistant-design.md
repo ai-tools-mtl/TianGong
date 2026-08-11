@@ -6,7 +6,7 @@
 
 ## 1. 背景与目标
 
-当前「项目初始化助手」（commit `ccfd9ec`~`1fd0513`，详见 `docs/superpowers/plans/2026-07-30-init-assistant.md`）是一个塞在项目列表页 `PageHeader` 里的 shadcn `Dialog` 弹窗，三阶段（输入描述 → 对话 → 生成）。问题：
+当前「项目初始化助手」（commit `ccfd9ec`~`1fd0513`，详见 `docs/superpowers/plans/archive/2026-07-30-init-assistant.md`）是一个塞在项目列表页 `PageHeader` 里的 shadcn `Dialog` 弹窗，三阶段（输入描述 → 对话 → 生成）。问题：
 
 - **不是正常入口**：弹窗形态局促，刷新丢状态，无法作为独立功能入口被感知。
 - **首轮就建项目**：用户第一条消息后端就 `create_project` + 8 空章节，聊两句不合适也留下了垃圾项目。

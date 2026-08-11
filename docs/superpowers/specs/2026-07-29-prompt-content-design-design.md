@@ -357,7 +357,7 @@ ChatRequest{                  orchestrator.astream_chat      build_system_prompt
 
 ## 9. 落地计划骨架（批准后另起 plan）
 
-每个阶段独立 plan，参考 `docs/superpowers/plans/` 的 TDD 结构。
+每个阶段独立 plan，参考 `docs/superpowers/plans/archive/` 的 TDD 结构。
 
 - **Plan S1**（1-2 天）：激活 completion_criteria + 强化 section_prompts
 - **Plan S2**（1 周）：章节状态注入 + 意图识别 + 画像机制

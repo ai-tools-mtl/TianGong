@@ -51,7 +51,7 @@ TianGong/
 ├── docs/
 │   ├── superpowers/
 │   │   ├── specs/              # 设计文档
-│   │   └── plans/              # 实施计划
+│   │   └── plans/archive/      # 已归档的实施计划（TDD 记录）
 │   └── GOTCHAS.md              # 踩坑记录 ⚠️
 ├── docker-compose.yml          # 数据层(PG+MinIO)+ 全栈部署(profile=full)
 ├── .env.production.example     # 内网部署配置模板
@@ -218,7 +218,7 @@ docker compose --env-file .env.production --profile full up -d --build
 - [内网部署指南](docs/deploy-internal.md) —— 全容器化部署、cookie 排错、运维、备份
 - [踩坑记录](docs/GOTCHAS.md) —— ⚠️ 开发前必读
 - [项目指引](AGENTS.md) —— 新会话/新开发者上手指南
-- [实施计划](docs/superpowers/plans/) —— 按子系统拆分的 TDD 计划
+- [实施计划归档](docs/superpowers/plans/archive/) —— 已完成功能按子系统拆分的 TDD 计划记录
 
 ## License
 

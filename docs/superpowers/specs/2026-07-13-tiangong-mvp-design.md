@@ -1467,7 +1467,7 @@ Word 的自动编号（1. / 1.1 / 1.1.1）是**渲染时由 Word 计算**的，d
 阶段 13: 稳定性验证（跨对话复现性测试）+ 打磨与联调（E2E）          
 ```
 
-> ℹ️ **实际落地说明**：MVP 按 `docs/superpowers/plans/` 下的计划 1–7b 拆分实施，全部已完成（见 README 进度表）。其中：
+> ℹ️ **实际落地说明**：MVP 按 `docs/superpowers/plans/archive/` 下的计划 1–7b 拆分实施，全部已完成（见 README 进度表）。其中：
 > - 阶段 4「撰写状态图」实际用 **LangChain + 手搓编排器**（`app/ai/orchestrator.py`）实现，未用 LangGraph StateGraph/Checkpoint/HITL
 > - 阶段 9「知识库 RAG」实际用 **LangChain Embedding + pgvector**，未用 LlamaIndex（GOTCHAS E3）
 > - 阶段 10「审查引擎」用 `services/review_service.py` 确定性管线实现，未用 ReviewGraph 框架

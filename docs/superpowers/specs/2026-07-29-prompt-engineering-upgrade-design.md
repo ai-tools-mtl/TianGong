@@ -20,7 +20,7 @@
 
 **本文档原为「现状诊断 + 升级路线图」，聚焦工程治理（JSON 解析/观测/eval/版本）。** 经评审，此为提示词工程的支撑层而非主线。主线（内容设计）见顶部链接。下方原文保留，对应主线附录 A 的 P1/P2/P3 部分。
 
-落地实施请另起 plan（参考 `docs/superpowers/plans/` 现有计划的 TDD 结构）。本文档经评审、决策点确认后，再决定是否进入实现。
+落地实施请另起 plan（参考 `docs/superpowers/plans/archive/` 现有计划的 TDD 结构）。本文档经评审、决策点确认后，再决定是否进入实现。
 
 ---
 
@@ -328,7 +328,7 @@ Deep Agents 的 plan-and-execute + 虚拟文件系统 + subagent 隔离上下文
 
 ## 8. 落地计划骨架（批准后另起 plan）
 
-> 参考 `docs/superpowers/plans/` 现有计划的 TDD 结构。每个阶段独立 plan。
+> 参考 `docs/superpowers/plans/archive/` 现有计划的 TDD 结构。每个阶段独立 plan。
 
 ### Phase P0（1-2 天，单 plan）
 - T1: 新增 `apps/api/app/ai/schemas/review_schema.py`（`DimensionScore` Pydantic）—— TDD：先写 schema 校验单测

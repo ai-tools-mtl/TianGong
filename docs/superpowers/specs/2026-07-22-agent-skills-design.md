@@ -1,7 +1,7 @@
 # 天工 Agent Skill 管理模块 — 设计契约（grill 结论）
 
 > 本文档由 `/grill-me` 设计访谈产生（2026-07-22，6 轮质询），记录「Agent Skill 管理模块」的全部架构决定与回溯依据。
-> **实施记录详见：** `plans/2026-07-22-agent-skills.md`
+> **实施记录详见：** `plans/archive/2026-07-22-agent-skills.md`
 > **前置阅读：** `AGENTS.md` · `docs/GOTCHAS.md` · 设计文档 §7.4（旧 skill 定义，将被取代）
 
 ---
