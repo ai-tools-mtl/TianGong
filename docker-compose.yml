@@ -22,8 +22,10 @@ services:
       POSTGRES_USER: tiangong
       POSTGRES_PASSWORD: tiangong
       POSTGRES_DB: tiangong
-    ports:
-      - "5432:5432"
+    # 生产安全（P0-9）：postgres 不应暴露到宿主机，仅容器间访问。
+    # 本地开发需调试时取消下面 ports 注释。生产部署注释保持。
+    # ports:
+    #   - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -31,6 +33,12 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped  # P0-8：数据层崩后自愈（此前缺失）
+    logging: &default-logging  # P0-9：日志限制防磁盘撑满
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   minio:
     image: quay.io/minio/minio:latest
@@ -38,9 +46,11 @@ services:
     environment:
       MINIO_ROOT_USER: tiangong
       MINIO_ROOT_PASSWORD: tiangong12345
-    ports:
-      - "9000:9000"
-      - "9001:9001"
+    # 生产安全（P0-9）：minio API 端口不应暴露到宿主机。
+    # 本地开发需访问 console 调试时取消下面注释。生产保持注释（仅容器间访问）。
+    # ports:
+    #   - "9000:9000"
+    #   - "9001:9001"
     command: server /data --console-address ":9001"
     volumes:
       - miniodata:/data
@@ -49,6 +59,9 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped  # P0-8：对象存储崩后自愈（此前缺失）
+    logging:
+      <<: *default-logging
 
   # Embedding 微服务:Infinity 跑 BAAI/bge-m3,暴露 OpenAI 兼容 /v1/embeddings。
   # 后端通过 EMBEDDING_BASE_URL 访问:本地开发用 http://localhost:7997/v1,

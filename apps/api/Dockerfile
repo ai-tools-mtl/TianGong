@@ -36,6 +36,12 @@ COPY . .
 # 这里强制转 LF(幂等,已经是 LF 也无妨)。
 RUN sed -i 's/\r$//' entrypoint.sh && chmod +x entrypoint.sh
 
+# P0-10：非 root 运行（安全加固，与 web Dockerfile 对齐）。
+# 创建 app 用户并接管 /app 目录（含 logs/ 供 loguru 写文件）。
+RUN addgroup --system app && adduser --system --ingroup app app \
+    && chown -R app:app /app
+USER app
+
 # venv 进 PATH,直接用 python/uvicorn(不再经 uv run,省一层)
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
