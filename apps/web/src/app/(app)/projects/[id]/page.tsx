@@ -323,6 +323,15 @@ export default function ProjectDetailPage() {
                       导出 Word
                     </a>
                   </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <a
+                      href={api.exportPdfUrl(projectId)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      导出 PDF
+                    </a>
+                  </DropdownMenuItem>
                   <DropdownMenuItem onClick={() => setVersionOpen(true)}>
                     <History className="size-3.5" />
                     版本

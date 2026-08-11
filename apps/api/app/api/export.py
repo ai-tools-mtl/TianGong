@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.deps import get_current_user
 from app.models import User
-from app.services import export_service, project_service
+from app.services import export_service, pdf_service, project_service
 
 router = APIRouter(tags=["export"])
 
@@ -59,4 +59,23 @@ def export_docx(
         docx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": "attachment; filename=project.docx"},
+    )
+
+
+@router.get("/projects/{project_id}/export/pdf")
+def export_pdf(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """导出为 PDF（weasyprint，Tiptap JSON → HTML → PDF）。
+
+    需系统库 pango/cairo（Dockerfile apt 装），缺失时 weasyprint import 即报错 → 500。
+    """
+    project = project_service.get_project(db, user=current_user, project_id=project_id)
+    pdf_bytes = pdf_service.export_pdf(db, project=project)
+    return Response(
+        pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{project.title}.pdf"},
     )
