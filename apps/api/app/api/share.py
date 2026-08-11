@@ -24,8 +24,9 @@ from app.deps import get_current_user
 from app.models import User
 from app.schemas.share import (
     MemberAdd, MemberOut, ShareLinkCreate, ShareLinkOut, SharedInfo,
+    SharedProject, SharedSection,
 )
-from app.services import project_service, share_service
+from app.services import export_service, project_service, share_service
 
 router = APIRouter(tags=["share"])
 
@@ -175,4 +176,33 @@ def get_shared_info(token: str, db: Session = Depends(get_db)):
         permissions=link.permissions,
         project_id=str(project.id),
         share_token=link.token,
+    )
+
+
+@router.get("/shared/{token}/sections", response_model=SharedProject)
+def get_shared_project(token: str, db: Session = Depends(get_db)):
+    """公开端点：访客凭分享 token 取项目全篇章节（只读，图片已 inline 为 data URI）。
+
+    无需登录。token 不存在/过期/项目不存在 → 404（统一防探测）。
+    图片 src 在响应阶段就改写为 base64 data URI，前端游客页无需鉴权即可显示附图。
+    """
+    link, project = share_service.verify_share_link(db, token)
+    sections = export_service._get_ordered_sections(db, project)
+    out = [
+        SharedSection(
+            order=s.order,
+            key=s.key,
+            title=s.title,
+            status=s.status,
+            content=export_service.inline_share_images(db, s.content, project.id)
+            if s.content
+            else None,
+        )
+        for s in sections
+    ]
+    return SharedProject(
+        title=project.title,
+        permissions=link.permissions,
+        sections=out,
+        metadata=project.metadata_,
     )

@@ -269,6 +269,70 @@ def _fetch_image_bytes(db: Session, src: str) -> bytes | None:
         return None
 
 
+def fetch_image_bytes_for_project(
+    db: Session, src: str, project_id: uuid.UUID
+) -> tuple[bytes, str] | None:
+    """从 Tiptap image src 反查 attachment，校验项目归属后返回 (字节, mime)。
+
+    与 _fetch_image_bytes 的区别：增加 att.project_id == project_id 归属校验，
+    用于游客浏览等公开场景，防止持有某项目 token 的访客枚举其他项目的附图。
+    跨项目 / 外部 URL / 取不到字节 → 一律 None（调用方按需置空，不泄露）。
+    """
+    if not src:
+        return None
+    m = _ATT_URL_RE.search(src)
+    if not m:
+        return None
+    try:
+        att_id = uuid.UUID(m.group(1))
+    except ValueError:
+        return None
+    att = db.get(Attachment, att_id)
+    if att is None or not att.storage_path:
+        return None
+    # 归属校验（安全红线）：str 比较兼容 sqlite 字符串存储
+    if str(att.project_id) != str(project_id):
+        return None
+    try:
+        from app.core.storage import get_storage
+
+        data = get_storage().get("personal", att.storage_path)
+        return data, att.mime_type or "image/png"
+    except Exception:
+        return None
+
+
+def inline_share_images(db: Session, content: dict, project_id: uuid.UUID) -> dict:
+    """把 Tiptap JSON 里 image 节点的 src 改写为 base64 data URI（游客浏览用）。
+
+    深拷贝后遍历，不修改入参。跨项目 / 取不到字节的图片 src 置空（不泄露、不阻断）。
+    """
+    import base64
+    import copy
+
+    result = copy.deepcopy(content)
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            if node.get("type") == "image":
+                attrs = node.setdefault("attrs", {})
+                fetched = fetch_image_bytes_for_project(db, attrs.get("src", ""), project_id)
+                if fetched:
+                    data, mime = fetched
+                    b64 = base64.b64encode(data).decode("ascii")
+                    attrs["src"] = f"data:{mime};base64,{b64}"
+                else:
+                    attrs["src"] = ""  # 跨项目/失败：置空，不泄露他人项目附图
+            for child in node.get("content", []):
+                walk(child)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(result)
+    return result
+
+
 def _get_text(node: dict) -> str:
     if node.get("type") == "text":
         return node.get("text", "")
