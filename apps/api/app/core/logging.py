@@ -11,6 +11,7 @@
 3. 控制台 + 文件双 sink：终端彩色看实时，文件轮转留 30 天翻历史。
 """
 import logging
+import multiprocessing
 import sys
 from contextvars import ContextVar
 from typing import Any
@@ -99,19 +100,46 @@ def setup_logging(settings: Any) -> None:
     # 文件 sink（轮转 + 压缩，留底）。测试环境可关。
     if getattr(settings, "log_file_enabled", True):
         import os
-        log_dir = getattr(settings, "log_dir", "logs")
-        os.makedirs(log_dir, exist_ok=True)
-        logger.add(
-            os.path.join(log_dir, "api.log"),
-            format=_LOG_FORMAT,
-            level="DEBUG",  # 文件全量留底，便于排查
-            rotation="10 MB",
-            retention="30 days",
-            compression="zip",
-            encoding="utf-8",
-            backtrace=True,
-            diagnose=False,  # P0-7：同上，禁止打印本地变量值防泄漏
+
+        # Windows + uvicorn --reload 多进程冲突修复：
+        # reload 模式下 reloader（父进程）和 worker（子进程，SpawnProcess-N）都 import
+        # main.py，都调 setup_logging，都打开同一个 api.log。文件轮转 os.rename 时因
+        # 另一进程持有句柄失败（WinError 32），无限重试刷屏。
+        #
+        # 修复策略：reloader 进程不配置文件 sink。识别依据：
+        # - uvicorn reload 父进程是主进程（multiprocessing parent），sys.argv 含 --reload
+        # - worker 子进程由 uvicorn 经 multiprocessing spawn，其 process name 是 SpawnProcess-N
+        #   且没有 --reload 参数（它只是被 import 后 serve）
+        #
+        # 检测：当前进程名以 SpawnProcess 开头 → 是 worker → 开文件 sink；
+        # 否则（主进程/reloader，或非 uvicorn 场景如脚本/测试）→ 也开（测试环境已用
+        # log_file_enabled=False 关闭）。但 uvicorn reload 的主进程会重复开——为彻底
+        # 避免冲突，reload 场景下：只有 worker（SpawnProcess）开文件 sink，主进程只 stderr。
+        _is_mp_worker = (
+            multiprocessing.current_process().name != "MainProcess"
         )
+        _is_uvicorn_reload = any("--reload" in str(a) for a in sys.argv)
+
+        if _is_uvicorn_reload and not _is_mp_worker:
+            # uvicorn --reload 的父进程（reloader）：只 stderr，不碰文件
+            pass
+        else:
+            log_dir = getattr(settings, "log_dir", "logs")
+            os.makedirs(log_dir, exist_ok=True)
+            logger.add(
+                os.path.join(log_dir, "api.log"),
+                format=_LOG_FORMAT,
+                level="DEBUG",  # 文件全量留底，便于排查
+                rotation="10 MB",
+                retention="30 days",
+                compression="zip",
+                encoding="utf-8",
+                backtrace=True,
+                diagnose=False,  # P0-7：同上，禁止打印本地变量值防泄漏
+                # enqueue=True：写操作交后台线程串行化（多线程安全 + 性能）。
+                # 配合上面的 reloader 跳过，彻底消除 Windows 下文件轮转竞争。
+                enqueue=True,
+            )
 
     # 桥接标准库 logging → loguru
     logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
