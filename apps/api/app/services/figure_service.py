@@ -84,7 +84,7 @@ def generate_figure(
     from langchain_core.messages import HumanMessage
 
     from app.ai.figure_prompts import build_figure_prompt, extract_xml
-    from app.ai.llm_client import get_llm
+    from app.ai.llm_client import invoke_llm
 
     # 1. 校验章节归属（复用 section_service 的资源级授权）
     section = section_service.get_section(db, user_id=user_id, section_id=section_id)
@@ -96,15 +96,14 @@ def generate_figure(
     if llm_config is None:
         raise ValidationError("未配置 LLM 源，请先在设置中选择")
 
-    # 3. LLM 生成 drawio XML（同步一次性调用，照 summary_service）
+    # 3. LLM 生成 drawio XML（同步一次性调用，走 invoke_llm 带 P0-3 timeout + P0-4 重试）
     from app.ai.figure_presets import get_preset
     preset = get_preset(style)
-    llm = get_llm(llm_config)
     user_msg = build_figure_prompt(prompt, diagram_type, style=style)
     start = time.monotonic()
     log_status, log_err = "success", None
     try:
-        resp = llm.invoke([HumanMessage(content=user_msg)])
+        resp = invoke_llm(llm_config, [HumanMessage(content=user_msg)])
     except Exception as e:
         log_status, log_err = "failed", e
         log_chat_call(
@@ -166,16 +165,15 @@ def regenerate_figure(
     from langchain_core.messages import HumanMessage
 
     from app.ai.figure_prompts import build_figure_prompt, extract_xml
-    from app.ai.llm_client import get_llm
+    from app.ai.llm_client import invoke_llm
 
     llm_config = llm_config_service.resolve_chat_config(db, user_id=user_id, chat_source=chat_source)
     if llm_config is None:
         raise ValidationError("未配置 LLM 源，请先在设置中选择")
 
-    llm = get_llm(llm_config)
     start = time.monotonic()
     try:
-        resp = llm.invoke([HumanMessage(content=build_figure_prompt(new_prompt, fig.diagram_type, style=preset["id"]))])
+        resp = invoke_llm(llm_config, [HumanMessage(content=build_figure_prompt(new_prompt, fig.diagram_type, style=preset["id"]))])
     except Exception as e:
         log_chat_call(
             db, user_id=user_id, project_id=fig.project_id, action="figure",

@@ -6,10 +6,35 @@ from typing import Any
 
 from langchain_core.messages import AIMessageChunk, BaseMessage
 from langchain_openai import ChatOpenAI
+from openai import (
+    APIConnectionError,
+    InternalServerError,
+    RateLimitError,
+)
 
 from app.services.llm_config_service import ResolvedChatConfig
 
 logger = logging.getLogger("tiangong.llm")
+
+
+# ── P0-3/P0-4：超时与重试策略 ──────────────────────────────────────────
+# 单次 HTTP 请求超时（秒）。与 AGENT_LOOP_TOTAL_TIMEOUT=120 对齐；
+# figure（同步 llm.invoke）和 rewrite（裸 astream_llm）也走此值，不再用 SDK 默认的 600s。
+LLM_REQUEST_TIMEOUT = 120
+
+# 可重试的瞬时错误类型：连接错误（含超时，APITimeoutError 是其子类）、限流、服务端 5xx。
+# 注意：余额不足（智谱 1113）是 APIStatusError 的子类但不在列表里，不重试（重试也是徒劳）。
+_RETRYABLE_EXCEPTIONS = (
+    APIConnectionError,   # 含 APITimeoutError（子类）、连接重置、DNS 失败
+    RateLimitError,       # 429 限流（指数退避后通常可恢复）
+    InternalServerError,  # 5xx 服务端临时故障
+)
+
+# 重试配置：最多 3 次（含首次），指数退避 1→2→4s，上限 8s。
+_RETRY_ATTEMPTS = 3
+_RETRY_MULTIPLIER = 1
+_RETRY_MIN_WAIT = 1
+_RETRY_MAX_WAIT = 8
 
 
 def extract_reasoning(chunk: Any) -> str | None:
@@ -114,11 +139,20 @@ def get_llm(
         streaming=streaming,
         stream_usage=stream_usage,
         temperature=0.7,
+        # P0-3：显式 request_timeout，替代 openai SDK 默认的 600s。
+        # 与 AGENT_LOOP_TOTAL_TIMEOUT=120 对齐；figure（同步 invoke）/ rewrite（裸 astream）也覆盖。
+        request_timeout=LLM_REQUEST_TIMEOUT,
     )
 
 
 def stream_llm(messages: list[BaseMessage], *, llm_config: ResolvedChatConfig) -> Iterator[str]:
-    """流式调用 LLM，逐 token yield 文本。"""
+    """流式调用 LLM，逐 token yield 文本（同步版，旧 orchestrator 兼容路径）。
+
+    注意：主链路已迁到 agent loop（异步 astream_llm），此函数仅旧 stream_chat/
+    stream_generate/stream_rewrite 的兼容路径用。同步重试实现复杂（迭代器 + retryer
+    交织易出错）且此路径非主线，故不加重试——仅靠 P0-3 的 request_timeout 兜底超时。
+    真正的重试保护在 astream_llm（异步主线）和 invoke_llm（非流式 figure 等）。
+    """
     llm = get_llm(llm_config, streaming=True)
     for chunk in llm.stream(messages):
         if chunk.content:
@@ -138,15 +172,98 @@ async def astream_llm(
     usage_metadata（LangChain 在 stream_usage=True 时于最后一块回填），
     把 input_tokens/output_tokens 写入 usage_sink，供调用方在流结束后
     记入 LLMCallLog。generator 无法 return 侧值，故用 holder 透传。
+
+    P0-4 重试：连接建立阶段（首个 chunk 前）对瞬时错误做指数退避重试。
+    一旦开始 yield token 就不再重试（已吐出的内容无法撤回）。
     """
     llm = get_llm(llm_config, streaming=True, stream_usage=True)
-    async for chunk in llm.astream(messages):
+
+    # 重试只保护「建立连接取首块」——这是 HTTP 请求真正发出的时刻。
+    # 拿到首块后离开重试块，后续 chunk 的失败直接上抛（token 已产出无法撤回）。
+    # 注意：首块与后续块必须来自同一个流迭代器（langchain 每次 astream() 调用
+    # 返回独立的新流，会重新发请求）。故 _astream_first_chunk_with_retry 返回
+    # (流迭代器, 首块)，后续继续消费同一迭代器。
+    stream_iter, first_chunk = await _astream_first_chunk_with_retry(llm, messages)
+
+    # 处理首块（可能与后续块一样含 content/usage）
+    if first_chunk.content:
+        yield first_chunk.content
+    _capture_usage(first_chunk, usage_sink)
+
+    # 消费剩余流（不重试，同一迭代器）
+    async for chunk in stream_iter:
         if chunk.content:
             yield chunk.content
-        # 捕获 token 用量：usage_metadata 仅出现在最后一块（trailing chunk），
-        # 中间块不带；故每块都尝试读（last-wins，实际只有末块命中）。
-        # 异常/客户端取消未到末块时 sink 为空，token 落 None（正确：未完成调用）。
-        usage = getattr(chunk, "usage_metadata", None)
-        if usage and usage_sink is not None:
-            usage_sink["prompt"] = usage.get("input_tokens")
-            usage_sink["completion"] = usage.get("output_tokens")
+        _capture_usage(chunk, usage_sink)
+
+
+def _capture_usage(chunk: Any, usage_sink: dict | None) -> None:
+    """从 chunk 读 usage_metadata 写入 sink（末块才有，每块都试，last-wins）。
+
+    异常/客户端取消未到末块时 sink 为空，token 落 None（正确：未完成调用）。
+    """
+    usage = getattr(chunk, "usage_metadata", None)
+    if usage and usage_sink is not None:
+        usage_sink["prompt"] = usage.get("input_tokens")
+        usage_sink["completion"] = usage.get("output_tokens")
+
+
+async def _astream_first_chunk_with_retry(llm, messages) -> tuple[Any, Any]:
+    """用 tenacity 重试获取流的首个 chunk（连接建立阶段保护）。
+
+    返回 (流迭代器, 首块)。重试时整个流重新建立（每次 astream() 是独立请求），
+    成功后返回的迭代器供调用方继续消费剩余 chunk。
+    """
+    from tenacity import AsyncRetrying, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+    def _log_retry(rs):
+        sleep_s = rs.next_action.sleep if rs.next_action else 0
+        logger.warning(
+            "LLM 异步流式调用失败，%.1fs 后重试（第 %d/%d 次）: %s",
+            sleep_s, rs.attempt_number, _RETRY_ATTEMPTS, rs.outcome.exception(),
+        )
+
+    retryer = AsyncRetrying(
+        retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
+        wait=wait_exponential(multiplier=_RETRY_MULTIPLIER, min=_RETRY_MIN_WAIT, max=_RETRY_MAX_WAIT),
+        stop=stop_after_attempt(_RETRY_ATTEMPTS),
+        reraise=True,
+        before_sleep=_log_retry,
+    )
+    # retry 块内每次重新建立流（astream 每次返回独立迭代器）。
+    # 拿到首块即返回该迭代器 + 首块，供后续继续消费。
+    async for attempt in retryer:
+        with attempt:
+            stream = llm.astream(messages)
+            first = await stream.__anext__()
+            return stream, first
+
+
+def invoke_llm(llm_config: ResolvedChatConfig, messages: list[BaseMessage]) -> Any:
+    """非流式调用 LLM（同步，带重试）。
+
+    供 figure_service / summary_service 等同步 .invoke() 路径用。
+    P0-3 的 request_timeout + P0-4 的重试都在此生效。
+    返回 LLM 的响应 message（含 .content）。
+    """
+    from tenacity import Retrying, retry_if_exception_type, stop_after_attempt, wait_exponential
+
+    llm = get_llm(llm_config)
+
+    def _log_retry(rs):
+        sleep_s = rs.next_action.sleep if rs.next_action else 0
+        logger.warning(
+            "LLM 非流式调用失败，%.1fs 后重试（第 %d/%d 次）: %s",
+            sleep_s, rs.attempt_number, _RETRY_ATTEMPTS, rs.outcome.exception(),
+        )
+
+    retryer = Retrying(
+        retry=retry_if_exception_type(_RETRYABLE_EXCEPTIONS),
+        wait=wait_exponential(multiplier=_RETRY_MULTIPLIER, min=_RETRY_MIN_WAIT, max=_RETRY_MAX_WAIT),
+        stop=stop_after_attempt(_RETRY_ATTEMPTS),
+        reraise=True,
+        before_sleep=_log_retry,
+    )
+    for attempt in retryer:
+        with attempt:
+            return llm.invoke(messages)
