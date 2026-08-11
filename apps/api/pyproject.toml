@@ -34,6 +34,10 @@ dependencies = [
     "docker>=7.2.0",
     "pyyaml>=6.0.3",
     "firecrawl-py>=4.0.0",
+    # 限流（P0-5）：登录/注册/AI 调用等敏感端点的速率限制
+    "slowapi>=0.1.10",
+    # 重试/退避（P0-4）：LLM 调用层对瞬时错误（429/5xx/连接）的指数退避重试
+    "tenacity>=9.1.4",
 ]
 
 [project.optional-dependencies]
