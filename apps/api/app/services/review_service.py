@@ -71,6 +71,12 @@ def run_review(db: Session, *, user_id, project_id: str) -> ReviewRecord:
     total = sum(d["score"] * d["weight"] for d in dimension_scores)
     resolved, remaining = _compare_issues(dimension_scores, last_review)
 
+    # ③b 跨章节一致性检查（全篇质量报告新增，+1 次 LLM 调用）
+    cross_issues = _check_cross_section_consistency(sections, llm_config)
+
+    # ③c 问题按章节定位聚合（把 dimension 的 evidence/suggestion 归到对应章节）
+    section_issues = _aggregate_section_issues(db, pid, dimension_scores)
+
     # ④ persist
     record = ReviewRecord(
         project_id=pid,
@@ -82,6 +88,8 @@ def run_review(db: Session, *, user_id, project_id: str) -> ReviewRecord:
         dimension_scores=dimension_scores,
         resolved_issues=resolved,
         remaining_issues=remaining,
+        cross_section_issues=cross_issues,
+        section_issues=section_issues,
     )
     db.add(record)
     db.commit()
@@ -198,3 +206,70 @@ def _compare_issues(
         if d.get("suggestion"):
             remaining.append(d["suggestion"])
     return resolved, remaining
+
+
+def _check_cross_section_consistency(
+    sections: dict[str, str], llm_config: ResolvedChatConfig
+) -> list[dict]:
+    """跨章节一致性检查（+1 次 LLM 调用，结构化输出）。
+
+    检测术语统一性、权利要求-实施例对应、三段论呼应、逻辑矛盾。
+    失败时降级返回空列表（不阻断审查主流程）。
+    """
+    from app.ai.review_prompts import CONSISTENCY_SYSTEM_PROMPT, build_consistency_prompt
+    from app.ai.schemas.review_schema import ConsistencyReport
+
+    llm = get_llm(llm_config)
+    prompt = build_consistency_prompt(sections)
+    messages = [
+        SystemMessage(content=CONSISTENCY_SYSTEM_PROMPT),
+        HumanMessage(content=prompt),
+    ]
+    try:
+        structured_llm = llm.with_structured_output(ConsistencyReport)
+        result = structured_llm.invoke(messages)
+        if isinstance(result, ConsistencyReport):
+            return [issue.model_dump() for issue in result.issues]
+        # dict 兜底
+        return result.get("issues", [])
+    except (NotImplementedError, AttributeError):
+        # provider 不支持 structured output，退回文本解析
+        try:
+            resp = llm.invoke(messages)
+            data = _parse_json_response(resp.content)
+            return data.get("issues", [])
+        except Exception:
+            return []
+    except Exception:
+        return []
+
+
+def _aggregate_section_issues(
+    db: Session, project_id, dimension_scores: list[dict]
+) -> list[dict]:
+    """把维度评分的 evidence/suggestion 按章节聚合。
+
+    遍历所有章节，把 dimension 的 evidence/suggestion 中提及该章节标题的问题归到对应章节。
+    章节无问题的跳过（不产生空条目）。
+    返回 [{section_key, section_title, issues: [str]}]。
+    """
+    sections = list(db.scalars(
+        select(Section).where(Section.project_id == project_id).order_by(Section.order)
+    ))
+
+    result = []
+    for s in sections:
+        issues = []
+        for d in dimension_scores:
+            # evidence/suggestion 中提及章节标题的归入该章节
+            combined = f"{d.get('evidence', '')} {d.get('suggestion', '')}"
+            if s.title in combined:
+                issue_text = f"【{d['name']}】{d.get('suggestion', '') or d.get('evidence', '')}"
+                issues.append(issue_text)
+        if issues:
+            result.append({
+                "section_key": s.key,
+                "section_title": s.title,
+                "issues": issues,
+            })
+    return result

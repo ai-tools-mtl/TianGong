@@ -165,6 +165,19 @@ export interface DimensionScore {
   suggestion: string
 }
 
+export interface CrossSectionIssue {
+  type: string
+  description: string
+  location_sections: string[]
+  suggestion: string
+}
+
+export interface SectionIssue {
+  section_key: string
+  section_title: string
+  issues: string[]
+}
+
 export interface ReviewRecord {
   id: string
   round: number
@@ -173,6 +186,15 @@ export interface ReviewRecord {
   dimension_scores: DimensionScore[]
   resolved_issues: string[]
   remaining_issues: string[]
+  cross_section_issues: CrossSectionIssue[]
+  section_issues: SectionIssue[]
+  created_at: string
+}
+
+export interface ReviewTrendPoint {
+  round: number
+  total_score: number
+  dimension_scores: Record<string, number>
   created_at: string
 }
 

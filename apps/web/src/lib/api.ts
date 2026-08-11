@@ -561,6 +561,10 @@ export const api = {
     request<import('@/types/api').ReviewRecord>(`/projects/${projectId}/review`, { method: 'POST' }),
   listReviews: (projectId: string) =>
     request<import('@/types/api').ReviewRecord[]>(`/projects/${projectId}/reviews`),
+  getReviewTrend: (projectId: string) =>
+    request<import('@/types/api').ReviewTrendPoint[]>(`/projects/${projectId}/reviews/trend`),
+  exportReviewReportUrl: (projectId: string, reviewId: string) =>
+    `${BASE}/api/v1/projects/${projectId}/reviews/${reviewId}/export-pdf`,
 
   // ── Rubric ──
   getRubric: () => request<import('@/types/api').Rubric>(`/rubric`),
