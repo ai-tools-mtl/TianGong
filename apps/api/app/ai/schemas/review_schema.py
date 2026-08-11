@@ -17,3 +17,21 @@ class DimensionScore(BaseModel):
     score: int = Field(ge=0, le=100, description="该维度得分，0-100 整数")
     evidence: str = Field(description="评分依据，需引用交底书具体内容")
     suggestion: str = Field(description="可操作的改进建议，无改进空间时填『已达标』")
+
+
+class CrossSectionIssue(BaseModel):
+    """跨章节一致性问题的结构化输出。"""
+
+    type: str = Field(description="问题类型：terminology（术语不一致）/reference（引用错位）/contradiction（逻辑矛盾）/other")
+    description: str = Field(description="问题描述，需具体")
+    location_sections: list[str] = Field(description="涉及哪些章节标题")
+    suggestion: str = Field(description="修复建议")
+
+
+class ConsistencyReport(BaseModel):
+    """跨章节一致性检查报告（结构化输出）。"""
+
+    issues: list[CrossSectionIssue] = Field(
+        default_factory=list,
+        description="检测到的跨章节问题列表，无问题时为空",
+    )

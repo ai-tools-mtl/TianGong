@@ -22,3 +22,9 @@ class ReviewRecord(Base, IdMixin, TimestampMixin):
     dimension_scores: Mapped[list] = mapped_column(JSONType)
     resolved_issues: Mapped[list] = mapped_column(JSONType, default=list)
     remaining_issues: Mapped[list] = mapped_column(JSONType, default=list)
+    # 跨章节一致性检查结果（LLM 检测术语不一致/引用错位/逻辑矛盾）
+    # [{type, description, location_sections: [], suggestion}]
+    cross_section_issues: Mapped[list] = mapped_column(JSONType, default=list)
+    # 问题按章节定位（evidence/suggestion 带 section_key 标注后聚合）
+    # [{section_key, section_title, issues: [str]}]
+    section_issues: Mapped[list] = mapped_column(JSONType, default=list)

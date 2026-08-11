@@ -36,6 +36,15 @@ COPY . .
 # 这里强制转 LF(幂等,已经是 LF 也无妨)。
 RUN sed -i 's/\r$//' entrypoint.sh && chmod +x entrypoint.sh
 
+# weasyprint 运行时依赖 + 中文字体（审查报告 PDF 导出用）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpango-1.0-0 \
+    libpangoft2-1.0-0 \
+    libharfbuzz0b \
+    libpixman-1-0 \
+    fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/*
+
 # venv 进 PATH,直接用 python/uvicorn(不再经 uv run,省一层)
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
