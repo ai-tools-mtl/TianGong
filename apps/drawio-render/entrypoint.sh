@@ -14,6 +14,9 @@ set -e
 #    - system bus：dbus-daemon --system（需要 /run/dbus 目录）
 #    - session bus：dbus-launch（Chromium 实际连的是它，需 DBUS_SESSION_BUS_ADDRESS 环境变量）
 mkdir -p /run/dbus
+# 清理上次崩溃残留的 pid/socket：容器被 SIGKILL（restart 超时/WSL 重启）时
+# dbus-daemon 来不及清理，pid 文件留在可写层，下次 dbus-daemon 拒启 → 容器死循环重启。
+rm -f /run/dbus/pid /run/dbus/system_bus_socket
 dbus-daemon --system --fork
 # --sh-syntax 输出 "VAR='value'; export VAR;" 形式，eval 进当前 shell；双引号包裹命令替换
 # 比裸 $(...) 更可靠。export 后 exec 的 uvicorn 及其 drawio 子进程继承该环境变量。
