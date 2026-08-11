@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.database import get_db
 from app.core.exceptions import UnauthorizedError
+from app.core.rate_limit import LOGIN_LIMIT, REGISTER_LIMIT, limiter
 from app.core.security import create_access_token, create_refresh_token
 from app.deps import get_current_user, get_current_user_from_refresh
 from app.models import User
@@ -33,7 +34,8 @@ def _set_auth_cookies(response: Response, access: str, refresh: str) -> None:
 
 
 @router.post("/register", response_model=UserRead)
-def register(payload: RegisterRequest, db: Session = Depends(get_db)):
+@limiter.limit(REGISTER_LIMIT)
+def register(request: Request, payload: RegisterRequest, db: Session = Depends(get_db)):
     # 内部产品化:先核销邀请码(API 层),再建用户(register_user 保持邀请码无关)
     # 两者共用同一 session;若建用户失败,核销回滚(同事务)
     validate_and_consume(db, code=payload.invite_code)
@@ -51,7 +53,8 @@ def register(payload: RegisterRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenResponse)
-def login(payload: LoginRequest, response: Response, db: Session = Depends(get_db)):
+@limiter.limit(LOGIN_LIMIT)
+def login(request: Request, payload: LoginRequest, response: Response, db: Session = Depends(get_db)):
     user = authenticate_user(db, username=payload.username, password=payload.password)
     if user is None:
         raise UnauthorizedError("用户名或密码错误")

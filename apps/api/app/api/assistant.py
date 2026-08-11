@@ -7,12 +7,14 @@ chat/generate 端点见同文件下方。
 """
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Body, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.exceptions import AppError
+from app.core.rate_limit import AI_LIMIT, _user_or_ip_key, limiter
 from app.deps import get_current_user
 from app.models import Conversation, KIND_INIT, Message, User
 from app.services import conversation_service
@@ -251,7 +253,9 @@ async def _yield_with_heartbeat_tuple(async_gen):
 
 
 @router.post("/conversations/{conv_id}/chat")
+@limiter.limit(AI_LIMIT, key_func=_user_or_ip_key)
 async def chat(
+    request: Request,
     conv_id: str,
     payload: ChatRequest,
     current_user: User = Depends(get_current_user),
@@ -397,7 +401,9 @@ class GenerateRequest(BaseModel):
 
 
 @router.post("/conversations/{conv_id}/generate")
+@limiter.limit(AI_LIMIT, key_func=_user_or_ip_key)
 async def generate(
+    request: Request,
     conv_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -445,6 +451,10 @@ async def generate(
                     yield _sse_event("done", data)
         except asyncio.CancelledError:
             raise
+        except AppError as e:
+            # P0-1：ConflictError（双击重复落地）/ 其它业务异常走专用 code，不被 llm_error 吞掉
+            db.rollback()
+            yield _sse_event("error", {"code": e.code, "message": e.message})
         except Exception as e:
             from app.ai.llm_errors import friendly_llm_error
             db.rollback()

@@ -168,8 +168,13 @@ def app_obj(engine):
 
     from app.main import app
     app.dependency_overrides[get_db] = override_get_db
+    # P0-5：测试环境关闭限流（slowapi 内存计数器在 TestClient 快速请求间会误触发）
+    from app.core.rate_limit import limiter
+    limiter.enabled = False
     yield app
     app.dependency_overrides.clear()
+    # 注意：不恢复 limiter.enabled=True——保持 False 直到 test_rate_limit.py
+    # 的 fixture 显式开启。全局默认就是「测试不限流」。
 
 
 @pytest.fixture

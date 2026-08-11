@@ -7,7 +7,7 @@ import time
 import traceback
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -20,6 +20,7 @@ logger = logging.getLogger("tiangong.ai")
 from app.ai.orchestrator import astream_chat, astream_generate, astream_rewrite
 from app.core.database import get_db
 from app.core.exceptions import ValidationError
+from app.core.rate_limit import AI_LIMIT, _user_or_ip_key, limiter
 from app.deps import get_current_user
 from app.models import Conversation, ConversationStatus, LLMCallLog, Message, Section, User
 from app.schemas.ai import (
@@ -228,7 +229,9 @@ async def _yield_with_heartbeat_tuple(async_gen) -> AsyncIterator[tuple[str, obj
 
 
 @router.post("/sections/{section_id}/chat")
+@limiter.limit(AI_LIMIT, key_func=_user_or_ip_key)
 async def chat(
+    request: Request,
     section_id: str,
     payload: ChatRequest,
     current_user: User = Depends(get_current_user),
@@ -373,7 +376,9 @@ async def chat(
 
 
 @router.post("/sections/{section_id}/generate")
+@limiter.limit(AI_LIMIT, key_func=_user_or_ip_key)
 async def generate_draft(
+    request: Request,
     section_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -473,7 +478,9 @@ async def generate_draft(
 
 
 @router.post("/sections/{section_id}/rewrite")
+@limiter.limit(AI_LIMIT, key_func=_user_or_ip_key)
 async def rewrite(
+    request: Request,
     section_id: str,
     payload: RewriteRequest,
     current_user: User = Depends(get_current_user),

@@ -37,6 +37,10 @@ app.add_middleware(
 # 全局异常处理
 register_exception_handlers(app)
 
+# P0-5：速率限制（slowapi）——登录/注册/AI 调用等敏感端点
+from app.core.rate_limit import register_rate_limit
+register_rate_limit(app)
+
 # 路由
 app.include_router(api_router)
 
