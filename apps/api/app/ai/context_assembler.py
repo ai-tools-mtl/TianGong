@@ -199,6 +199,9 @@ def _get_profile_memories(db, user_id):
 
     画像记忆存职业/领域/专业水平（如「用户是专利代理人，机械领域」），
     用于调节模型的表达密度。与 _search_user_memories 同样需 rollback 防事务毒化。
+
+    注意：结构化 WritingProfile（/settings/profile）优先，本函数是其 fallback——
+    若用户填了 WritingProfile，build_system_prompt 会跳过此函数。
     """
     try:
         from app.services.memory_service import list_memories
@@ -207,6 +210,44 @@ def _get_profile_memories(db, user_id):
         logger.warning("画像记忆读取失败，降级返回空", exc_info=True)
         db.rollback()
         return []
+
+
+def _get_writing_profile(db, user_id):
+    """读取结构化写作画像（WritingProfile 表）。失败静默返回 None（不阻断装配）。
+
+    与 _get_profile_memories 的关系：本函数读结构化表（5 个固定字段，用户显式维护），
+    _get_profile_memories 读 user_memory(source=profile) 自由记忆。
+    build_system_prompt 优先用结构化画像；无则 fallback 到自由记忆。
+    """
+    try:
+        from app.services.profile_service import get_profile
+        return get_profile(db, user_id=user_id)
+    except Exception:
+        logger.warning("写作画像读取失败，降级返回 None", exc_info=True)
+        db.rollback()
+        return None
+
+
+def _proficiency_density_hint(proficiency: str | None, profession: str | None) -> str:
+    """据结构化画像的 proficiency/profession 返回表达密度指令。
+
+    优先级：proficiency 显式三档 > profession 关键词推断 > 默认中间档。
+    """
+    from app.models.writing_profile import (
+        PROFICIENCY_EXPERT, PROFICIENCY_NOVICE, PROFICIENCY_INTERMEDIATE,
+    )
+    # proficiency 显式档位优先
+    if proficiency == PROFICIENCY_EXPERT:
+        return "用户是专利领域专家，可使用高密度专利术语，无需解释基础概念。"
+    if proficiency == PROFICIENCY_NOVICE:
+        return "用户是技术发明人/初学者，把专利术语翻译成大白话，必要时用类比。"
+    # proficiency=intermediate 或 None 时，用 profession 关键词兜底
+    if profession:
+        if any(kw in profession for kw in _PROFESSIONAL_KEYWORDS):
+            return "用户是专利专业人士，可使用专业术语。"
+        if any(kw in profession for kw in _INVENTOR_KEYWORDS):
+            return "用户偏技术背景，适度通俗化专业术语。"
+    return "保持专业但通俗的中文交流。"
 
 
 # [S2-3] 画像 → 表达密度指令关键词。
@@ -395,16 +436,35 @@ def build_system_prompt(
                 "只在影响表达风格或领域判断时启用。"
             )
 
-        # [S2-3] 用户画像层：source=profile 的记忆（职业/领域/专业水平），全量注入。
-        # 画像不走语义检索（量少、要全量），用 list_memories(source=profile) 直取。
-        # 据画像内容调节表达密度：代理人/律师 → 高密度专业术语；发明人/工程师 → 通俗化。
-        profile = _get_profile_memories(db, project_user_id)
-        if profile:
-            profile_text = "\n".join(f"- {m.content}" for m in profile)
-            density_hint = _profile_density_hint(profile_text)
-            parts.append("# 用户画像")
-            parts.append(profile_text)
-            parts.append(f"表达密度：{density_hint}")
+        # 用户画像层：优先读结构化 WritingProfile（/settings/profile，强注入），
+        # 无则 fallback 到 user_memory(source=profile) 自由记忆（软检索）。
+        # 结构化画像含 5 个固定维度（职业/领域/水平/写作风格/术语偏好），全量注入，
+        # 每次 LLM 生成必带（不走语义检索，保证稳定生效）。
+        wp = _get_writing_profile(db, project_user_id)
+        if wp is not None:
+            lines = []
+            if wp.profession:
+                lines.append(f"- 职业身份：{wp.profession}")
+            if wp.tech_domain:
+                lines.append(f"- 技术领域：{wp.tech_domain}")
+            if wp.writing_style:
+                lines.append(f"- 写作风格偏好：{wp.writing_style}")
+            if wp.terminology:
+                lines.append(f"- 术语偏好：{wp.terminology}")
+            density_hint = _proficiency_density_hint(wp.proficiency, wp.profession)
+            if lines:
+                parts.append("# 用户画像（请遵循其偏好与专业水平）")
+                parts.append("\n".join(lines))
+                parts.append(f"表达密度：{density_hint}")
+        else:
+            # fallback：旧版自由画像记忆（user_memory source=profile）
+            profile = _get_profile_memories(db, project_user_id)
+            if profile:
+                profile_text = "\n".join(f"- {m.content}" for m in profile)
+                density_hint = _profile_density_hint(profile_text)
+                parts.append("# 用户画像")
+                parts.append(profile_text)
+                parts.append(f"表达密度：{density_hint}")
 
     # 章节策略层（底部偏上，当前章节聚焦）
     parts.append("# 当前正在撰写章节")

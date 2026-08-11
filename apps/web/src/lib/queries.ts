@@ -17,6 +17,8 @@ import type {
   Skill,
   SkillCreate,
   SkillUpdate,
+  WritingProfile,
+  WritingProfileUpdate,
   Tag,
   TagCreate,
   TagMerge,
@@ -1104,6 +1106,25 @@ export function useDeleteMemory() {
   return useMutation({
     mutationFn: (id: string) => api.deleteMemory(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['memories'] }),
+  })
+}
+
+// ── 写作画像（/settings/profile，一对一 upsert）──
+
+/** 读取当前用户写作画像。无记录时各字段为 null。 */
+export function useWritingProfile() {
+  return useQuery<WritingProfile>({
+    queryKey: ['writing-profile'],
+    queryFn: () => api.getWritingProfile(),
+  })
+}
+
+/** 新建/更新写作画像（upsert）。成功后失效画像缓存。 */
+export function useUpdateWritingProfile() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: WritingProfileUpdate) => api.updateWritingProfile(data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['writing-profile'] }),
   })
 }
 

@@ -767,3 +767,22 @@ export interface MemoryCreate {
 export interface MemoryUpdate {
   content: string
 }
+
+// ── 写作画像（/settings/profile，一对一结构化偏好）──
+
+export interface WritingProfile {
+  profession: string | null
+  tech_domain: string | null
+  proficiency: 'novice' | 'intermediate' | 'expert' | null
+  writing_style: string | null
+  terminology: string | null
+  updated_at: string | null
+}
+
+export interface WritingProfileUpdate {
+  profession?: string
+  tech_domain?: string
+  proficiency?: 'novice' | 'intermediate' | 'expert'
+  writing_style?: string
+  terminology?: string
+}
