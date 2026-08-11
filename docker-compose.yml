@@ -22,10 +22,11 @@ services:
       POSTGRES_USER: tiangong
       POSTGRES_PASSWORD: tiangong
       POSTGRES_DB: tiangong
-    # 生产安全（P0-9）：postgres 不应暴露到宿主机，仅容器间访问。
-    # 本地开发需调试时取消下面 ports 注释。生产部署注释保持。
-    # ports:
-    #   - "5432:5432"
+    # 端口暴露到宿主机：本地开发时 api 在宿主机跑（uv run uvicorn），需直连 postgres。
+    # 全栈部署（--profile full）时 api 在容器内走服务名 postgres:5432，此映射无害（仅多开一个监听）。
+    # 生产环境若要收敛端口，用 firewall/反代层控制，而非注释此处（会破坏本地开发）。
+    ports:
+      - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -46,11 +47,11 @@ services:
     environment:
       MINIO_ROOT_USER: tiangong
       MINIO_ROOT_PASSWORD: tiangong12345
-    # 生产安全（P0-9）：minio API 端口不应暴露到宿主机。
-    # 本地开发需访问 console 调试时取消下面注释。生产保持注释（仅容器间访问）。
-    # ports:
-    #   - "9000:9000"
-    #   - "9001:9001"
+    # 9000 = S3 API（api 连接用）；9001 = MinIO Console（Web UI，浏览器调试 bucket/文件用）。
+    # 本地开发两者都需要：api 连 9000 传文件，人用 9001 查 bucket 内容/上传下载。
+    ports:
+      - "9000:9000"
+      - "9001:9001"
     command: server /data --console-address ":9001"
     volumes:
       - miniodata:/data
@@ -237,10 +238,14 @@ services:
     ports:
       - "3002:3002"
     depends_on:
-      - firecrawl-redis
-      - firecrawl-playwright
-      - firecrawl-postgres
-      - firecrawl-rabbitmq
+      firecrawl-redis:
+        condition: service_healthy
+      firecrawl-playwright:
+        condition: service_healthy
+      firecrawl-postgres:
+        condition: service_healthy
+      firecrawl-rabbitmq:
+        condition: service_healthy
     healthcheck:
       # firecrawl 镜像基于 node,含 wget;根路径 / 即健康探针(返回 200/HTML)。
       test: ["CMD-SHELL", "wget -qO- http://localhost:3002/ >/dev/null 2>&1 || exit 1"]
@@ -270,10 +275,15 @@ services:
     restart: unless-stopped
 
   # Firecrawl RabbitMQ(firecrawl extract-worker 等子进程硬性要求 NUQ_RABBITMQ_URL)。
-  # 无 host 端口,仅 firecrawl 容器经服务名 amqp://firecrawl-rabbitmq:5672 访问。
+  # 5672 = AMQP 端口（firecrawl 容器经服务名访问）；15672 = Management UI（Web 控制台，浏览器调试队列用）。
+  # 用 management 镜像（自带 rabbitmq_management 插件），本地开发可访问 http://localhost:15672
+  # （默认账号 guest/guest，仅 localhost 可登录）。生产无需 UI 可换回 rabbitmq:3-alpine。
   firecrawl-rabbitmq:
-    image: rabbitmq:3-alpine
+    image: rabbitmq:3-management-alpine
     container_name: tiangong-firecrawl-rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"  # Management UI（可选，本地调试 firecrawl 队列用）
     healthcheck:
       test: ["CMD-SHELL", "rabbitmq-diagnostics -q check_running 2>/dev/null || exit 1"]
       interval: 10s
@@ -283,20 +293,37 @@ services:
     restart: unless-stopped
 
   # Playwright 渲染服务(firecrawl 依赖):headless 浏览器渲染 JS 重页面。
-  # 无 host 端口映射,仅 firecrawl 容器经服务名 http://firecrawl-playwright:3000 访问。
+  # 暴露 3000 到宿主机：本地开发可直接 curl 测试渲染服务是否正常。
   firecrawl-playwright:
     image: ghcr.io/firecrawl/playwright-service:latest
     container_name: tiangong-firecrawl-playwright
     environment:
       PORT: "3000"
       BLOCK_MEDIA: "false"
+    ports:
+      - "3000:3000"
+    healthcheck:  # P0-9 补齐：playwright 暴露 /health 端点
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/ >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
     restart: unless-stopped
 
   # Firecrawl 队列存储(firecrawl 依赖):job 队列 + crawl 临时结果。
-  # 无 host 端口,仅 firecrawl 容器经服务名 redis://firecrawl-redis:6379 访问。
+  # firecrawl 容器经服务名 redis://firecrawl-redis:6379 访问。
+  # 暴露 6379 到宿主机：本地开发可用 redis-cli / RedisInsight 等工具直连排查 firecrawl 队列状态。
   firecrawl-redis:
     image: redis:alpine
     container_name: tiangong-firecrawl-redis
+    ports:
+      - "6379:6379"
+    healthcheck:  # P0-9 补齐：firecrawl depends_on 此服务，加 healthcheck 让启动顺序可靠
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     restart: unless-stopped
 
   # ---- 以下为全栈部署服务,仅在 --profile full 时启动 ----
