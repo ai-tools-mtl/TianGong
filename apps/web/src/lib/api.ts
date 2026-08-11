@@ -35,6 +35,8 @@ import type {
   IMASettings,
   IMAConfigPayload,
   IMATestResult,
+  PatentSearchResponse,
+  PriorArtRefs,
 } from '@/types/api'
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -997,6 +999,15 @@ export const api = {
     request<Memory>(`/memories/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteMemory: (id: string) =>
     request<{ ok: boolean }>(`/memories/${id}`, { method: 'DELETE' }),
+
+  // ── 专利检索（prior art search）──
+  searchPatents: (projectId: string, query: string) =>
+    request<PatentSearchResponse>(`/projects/${projectId}/patents/search`, {
+      method: 'POST',
+      body: JSON.stringify({ query }),
+    }),
+  getPatents: (projectId: string) =>
+    request<PriorArtRefs | null>(`/projects/${projectId}/patents`),
 }
 
 /**

@@ -1,6 +1,6 @@
 'use client'
 
-import { Archive, CheckCircle2, Eye, History, MoreHorizontal, PanelLeft, PanelRight, Search, Send, Share2 } from 'lucide-react'
+import { Archive, CheckCircle2, Eye, History, MoreHorizontal, PanelLeft, PanelRight, ScanSearch, Search, Send, Share2 } from 'lucide-react'
 import { useParams } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
@@ -291,6 +291,12 @@ export default function ProjectDetailPage() {
                 <a href={`/projects/${projectId}/review`}>
                   <Search className="size-3.5" />
                   审查
+                </a>
+              </Button>
+              <Button variant="ghost" size="sm" className="h-8 gap-1.5" asChild>
+                <a href={`/projects/${projectId}/patents`}>
+                  <ScanSearch className="size-3.5" />
+                  检索
                 </a>
               </Button>
               <Button
