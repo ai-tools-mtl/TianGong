@@ -91,7 +91,9 @@ def setup_logging(settings: Any) -> None:
         level=level,
         colorize=True,
         backtrace=True,
-        diagnose=True,
+        # diagnose=False（P0-7 安全加固）：diagnose=True 会在异常时打印本地变量值，
+        # 生产环境会泄漏密钥/token/用户数据等敏感信息。backtrace=True 保留（只含调用栈，无变量值）。
+        diagnose=False,
     )
 
     # 文件 sink（轮转 + 压缩，留底）。测试环境可关。
@@ -108,7 +110,7 @@ def setup_logging(settings: Any) -> None:
             compression="zip",
             encoding="utf-8",
             backtrace=True,
-            diagnose=True,
+            diagnose=False,  # P0-7：同上，禁止打印本地变量值防泄漏
         )
 
     # 桥接标准库 logging → loguru

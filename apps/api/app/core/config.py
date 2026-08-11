@@ -1,7 +1,8 @@
 from functools import lru_cache
 from typing import Annotated, List
 
-from pydantic import field_validator
+import loguru
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -117,6 +118,55 @@ class Settings(BaseSettings):
             items = [item.strip() for item in v.split(",")]
             return [item for item in items if item]
         return v
+
+    # P0-6：已知弱/占位密钥黑名单。检测到时启动期打 ERROR 告警（不阻断启动，
+    # 按用户选择——但告警必须醒目，提示运维立即修改）。
+    # 注：ENCRYPTION_KEY 的字母表明文（base64 解出 abcdefg...）也在此列。
+    _WEAK_SECRETS = frozenset({
+        "change-me-to-a-random-64-char-string",
+        "tiangong12345",
+        "fc-local-default-key",
+        # ENCRYPTION_KEY 默认占位（base64 编码的字母表明文）
+        "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXoxMjM0NTY=",
+    })
+
+    @model_validator(mode="after")
+    def _warn_weak_secrets(self) -> "Settings":
+        """非测试环境下，检测到弱密钥打 ERROR 告警（不阻断启动）。
+
+        覆盖：jwt_secret / encryption_key / minio_secret_key / firecrawl_api_key。
+        测试环境（TIANGONG_TESTING=1）跳过，避免每个测试 fixture 触发告警噪音。
+        """
+        import os
+        if os.environ.get("TIANGONG_TESTING") == "1":
+            return self
+
+        checks = [
+            ("JWT_SECRET", self.jwt_secret),
+            ("ENCRYPTION_KEY", self.encryption_key),
+            ("MINIO_SECRET_KEY", self.minio_secret_key),
+            ("FIRECRAWL_API_KEY", self.firecrawl_api_key),
+        ]
+        for name, val in checks:
+            if val in self._WEAK_SECRETS:
+                loguru.logger.error(
+                    f"⚠️⚠️⚠️ 安全告警：{name} 使用了默认/弱密钥（值匹配已知占位符），"
+                    f"请立即修改为随机生成的强密钥！当前值不安全，存在凭据泄露风险。"
+                )
+        # ENCRYPTION_KEY 额外检测：base64 解码后是否为字母表明文（即使不在黑名单里）
+        try:
+            import base64
+            decoded = base64.b64decode(self.encryption_key).decode("ascii", errors="ignore")
+            # 字母表连续序列（如 abcdef... 或 123456...）视为弱密钥
+            if "abcdefgh" in decoded.lower() or "1234567890" in decoded:
+                loguru.logger.error(
+                    "⚠️⚠️⚠️ 安全告警：ENCRYPTION_KEY 解码后是顺序字符（字母表/数字序列），"
+                    "极易被猜中。请用 `openssl rand -base64 32` 重新生成。"
+                )
+        except Exception:
+            pass  # 解码失败（非 base64 等）不阻塞，只跳过此检测
+
+        return self
 
     @classmethod
     def from_env(cls) -> "Settings":
