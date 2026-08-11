@@ -483,6 +483,7 @@ export const api = {
 
   exportDocxUrl: (projectId: string) => `${BASE}/api/v1/projects/${projectId}/export/docx`,
   exportMarkdownUrl: (projectId: string) => `${BASE}/api/v1/projects/${projectId}/export/markdown`,
+  exportPdfUrl: (projectId: string) => `${BASE}/api/v1/projects/${projectId}/export/pdf`,
 
   // ── 知识库 ──
   archiveProject: (projectId: string) =>

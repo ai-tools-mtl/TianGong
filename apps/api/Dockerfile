@@ -36,6 +36,17 @@ COPY . .
 # 这里强制转 LF(幂等,已经是 LF 也无妨)。
 RUN sed -i 's/\r$//' entrypoint.sh && chmod +x entrypoint.sh
 
+# weasyprint 运行时依赖（pango/cairo/gdk-pixbuf）+ 中文字体（专利文档中文必需）。
+# 约 +150MB（libpango ~50MB + fonts-noto-cjk ~100MB）。
+# 必须在 USER app 之前装（非 root 无 apt 权限）。
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpango-1.0-0 \
+    libpangoft2-1.0-0 \
+    libharfbuzz0b \
+    libpixman-1-0 \
+    fonts-noto-cjk \
+    && rm -rf /var/lib/apt/lists/*
+
 # P0-10：非 root 运行（安全加固，与 web Dockerfile 对齐）。
 # 创建 app 用户并接管 /app 目录（含 logs/ 供 loguru 写文件）。
 RUN addgroup --system app && adduser --system --ingroup app app \
