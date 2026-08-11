@@ -89,6 +89,11 @@ class Settings(BaseSettings):
     ima_search_doc_url: str = "https://ima.qq.com/openapi/wiki/v1/search_knowledge"
     ima_search_timeout: float = 8.0  # 外网 + 两步检索，给足时间；超时即降级
 
+    # 智慧芽 PatSnap 专利检索（P1 功能，无 key 时走 Mock 桩数据）
+    # 拿到 key 后填 PATENTSNAP_API_KEY 即可切真实检索，无需改代码。
+    patentsnap_api_key: str = ""
+    patentsnap_base_url: str = "https://openapi.zhihuiya.com"
+
     # 文件上传（设计 13.2，附录 B：MVP 本地存储）
     upload_dir: str = "uploads"
     max_image_size_mb: int = 10

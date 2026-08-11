@@ -786,3 +786,26 @@ export interface WritingProfileUpdate {
   writing_style?: string
   terminology?: string
 }
+
+// ── 专利检索（prior art search，智慧芽 Mock 优先）──
+
+export interface PatentResult {
+  title: string
+  applicant: string
+  patent_number: string
+  abstract: string
+  url: string
+  publication_date: string
+  relevance: number
+}
+
+export interface PatentSearchResponse {
+  query: string
+  results: PatentResult[]
+  saved_to: string
+}
+
+export interface PriorArtRefs {
+  query: string
+  results: PatentResult[]
+}

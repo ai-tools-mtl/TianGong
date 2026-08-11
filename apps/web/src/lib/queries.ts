@@ -1128,6 +1128,26 @@ export function useUpdateWritingProfile() {
   })
 }
 
+// ── 专利检索（prior art search）──
+
+/** 读取已存的检索结果。无记录返回 null。 */
+export function usePriorArt(projectId: string) {
+  return useQuery({
+    queryKey: ['patents', projectId],
+    queryFn: () => api.getPatents(projectId),
+    enabled: !!projectId,
+  })
+}
+
+/** 执行专利检索。成功后失效缓存。 */
+export function useSearchPatents(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (query: string) => api.searchPatents(projectId, query),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['patents', projectId] }),
+  })
+}
+
 // ── 初始化助手顶层会话（ChatGPT 式对话页）──
 export function useAssistantConversations() {
   return useQuery({

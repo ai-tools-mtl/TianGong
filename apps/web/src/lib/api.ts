@@ -37,6 +37,8 @@ import type {
   IMATestResult,
   WritingProfile,
   WritingProfileUpdate,
+  PatentSearchResponse,
+  PriorArtRefs,
 } from '@/types/api'
 
 const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
@@ -1005,6 +1007,15 @@ export const api = {
     request<WritingProfile>('/settings/profile'),
   updateWritingProfile: (data: WritingProfileUpdate) =>
     request<WritingProfile>('/settings/profile', { method: 'PUT', body: JSON.stringify(data) }),
+
+  // ── 专利检索（prior art search）──
+  searchPatents: (projectId: string, query: string) =>
+    request<PatentSearchResponse>(`/projects/${projectId}/patents/search`, {
+      method: 'POST',
+      body: JSON.stringify({ query }),
+    }),
+  getPatents: (projectId: string) =>
+    request<PriorArtRefs | null>(`/projects/${projectId}/patents`),
 }
 
 /**
