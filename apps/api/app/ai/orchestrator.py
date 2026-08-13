@@ -117,6 +117,7 @@ async def astream_chat(
     db, section: Section, history: list[Message], user_input: str,
     *, llm_config: ResolvedChatConfig, usage_sink: dict | None = None,
     meta_sink: dict | None = None,
+    thread_id: str | None = None,
 ) -> AsyncIterator[tuple[str, dict | str]]:
     """异步引导对话：委托 deepagents agent loop（路线 B）。
 
@@ -136,6 +137,7 @@ async def astream_chat(
     （astream_rewrite 仍在用）也正确填充 usage_sink。
     """
     from app.ai.agent import build_agent
+    from app.ai.checkpoint import get_checkpointer
     from app.ai.intent import classify_intent
 
     # [L1] 传 section + user_input，让 build_agent 装配动态 system prompt（spec §3.3.2）
@@ -144,7 +146,8 @@ async def astream_chat(
     intent = classify_intent(user_input)
     logger.info("astream_chat: 开始构建 agent（intent=%s model=%s）", intent, llm_config.model)
     agent = await build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section),
-                        section=section, user_input=user_input, intent=intent)
+                        section=section, user_input=user_input, intent=intent,
+                        checkpointer=get_checkpointer())
     logger.info("astream_chat: agent 构建完成，开始 agent loop")
 
     # [L2] 透传历史 + 当前用户输入，长历史先压缩（spec §3.3.2 + 压缩 spec）
@@ -175,6 +178,7 @@ async def astream_chat(
             async for event in agent.astream_events(
                 {"messages": messages},
                 version="v2",
+                config={"configurable": {"thread_id": thread_id}} if thread_id else None,
             ):
                 evt = event["event"]
                 if evt == "on_chat_model_stream":
@@ -219,6 +223,7 @@ async def astream_generate(
     db, section: Section, history: list[Message],
     *, llm_config: ResolvedChatConfig, usage_sink: dict | None = None,
     meta_sink: dict | None = None,
+    thread_id: str | None = None,
 ) -> AsyncIterator[tuple[str, dict | str]]:
     """异步生成草稿：委托 deepagents agent loop（路线 B）。
 
@@ -238,6 +243,7 @@ async def astream_generate(
     （astream_rewrite 仍在用）也正确填充 usage_sink。
     """
     from app.ai.agent import build_agent
+    from app.ai.checkpoint import get_checkpointer
 
     # [L1] 传 section + user_input，让 build_agent 装配动态 system prompt（spec §3.3.1）
     # generate 场景无新输入，用 history 最后一条 user message 作为记忆检索信号
@@ -247,7 +253,8 @@ async def astream_generate(
     )
     # [S2-2] generate 场景无新输入，意图恒为「代写草稿」——直接传 draft（比让规则层猜更准）
     agent = await build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section),
-                        section=section, user_input=gen_query, intent="draft")
+                        section=section, user_input=gen_query, intent="draft",
+                        checkpointer=get_checkpointer())
     # [S4-2] 用 build_generate_instruction 构造含 CoT 分步思考的指令
     instruction = build_generate_instruction(section)
 
@@ -277,6 +284,7 @@ async def astream_generate(
             async for event in agent.astream_events(
                 {"messages": messages},
                 version="v2",
+                config={"configurable": {"thread_id": thread_id}} if thread_id else None,
             ):
                 evt = event["event"]
                 if evt == "on_chat_model_stream":

@@ -46,7 +46,7 @@ app.include_router(api_router)
 
 
 @app.on_event("startup")
-def on_startup():
+async def on_startup():
     import os
     loguru.logger.info("TianGong API 启动")
 
@@ -181,3 +181,14 @@ def on_startup():
             db.close()
     except Exception as e:
         loguru.logger.exception(f"内置技能同步失败（不阻塞启动）：{e}")
+
+    # LangGraph Checkpointer 初始化（附录 A 红利①基础）：
+    # Postgres→AsyncPostgresSaver 持久化 agent loop 中间态，sqlite/测试→InMemorySaver。
+    # fail-open（init_checkpointer 内部已捕获，这里再加一层保险，符合 warning 模式偏好）。
+    try:
+        from app.ai.checkpoint import init_checkpointer
+        from app.core.database import engine
+
+        await init_checkpointer(settings.database_url, is_pg=(engine.dialect.name == "postgresql"))
+    except Exception as e:
+        loguru.logger.exception(f"Checkpointer 启动初始化失败（不阻塞启动）：{e}")

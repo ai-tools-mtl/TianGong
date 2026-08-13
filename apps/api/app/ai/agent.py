@@ -21,6 +21,7 @@
 import logging
 
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.checkpoint.base import BaseCheckpointSaver
 
 from app.ai.context_assembler import SYSTEM_PROMPT
 from app.ai.llm_client import get_llm
@@ -45,6 +46,7 @@ async def build_agent(
     section=None, user_input: str | None = None, intent: str | None = None,
     system_prompt_override: str | None = None,
     tool_scope: str = "section",
+    checkpointer: BaseCheckpointSaver | None = None,
 ) -> CompiledStateGraph:
     """构造 deepagents agent（路线 B 的装配入口）。
 
@@ -171,6 +173,7 @@ async def build_agent(
         backend=backend,
         store=store,
         middleware=[ToolTimeoutMiddleware()],  # 层 1：工具级超时防护，防工具挂起死等
+        checkpointer=checkpointer,  # 附录 A 红利①：agent loop 中间态持久化（None 时不 checkpoint）
     )
     logger.info("build_agent: agent 组装完成")
     return agent
