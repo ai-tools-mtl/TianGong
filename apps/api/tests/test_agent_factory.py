@@ -133,10 +133,11 @@ def test_build_agent_assembly_args(db_session, monkeypatch):
             return None
 
     def _fake_create(model=None, tools=None, *, system_prompt=None, skills=None,
-                     backend=None, store=None, middleware=None, **kw):
+                     backend=None, store=None, middleware=None, checkpointer=None, **kw):
         captured.update(
             model=model, tools=tools or [], system_prompt=system_prompt,
             skills=skills, backend=backend, store=store, middleware=middleware or [],
+            checkpointer=checkpointer,
         )
         return _Sentinel()
 
@@ -177,6 +178,46 @@ def test_build_agent_assembly_args(db_session, monkeypatch):
     # middleware 含 ToolTimeoutMiddleware（工具级超时防护注入）
     from app.ai.tool_timeout import ToolTimeoutMiddleware
     assert any(isinstance(m, ToolTimeoutMiddleware) for m in captured["middleware"])
+    # checkpointer 默认 None（未传时不 checkpoint）
+    assert captured["checkpointer"] is None
+
+
+def test_build_agent_forwards_checkpointer(db_session, monkeypatch):
+    """build_agent(checkpointer=X) → create_deep_agent 收到 checkpointer=X（红利①转发）。"""
+    from app.ai import agent as agent_mod
+    from app.services.llm_config_service import ResolvedChatConfig
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    captured: dict = {}
+
+    class _Sentinel:
+        def ainvoke(self, *a, **kw):
+            return None
+
+        def astream_events(self, *a, **kw):
+            return None
+
+    def _fake_create(model=None, tools=None, *, system_prompt=None, skills=None,
+                     backend=None, store=None, middleware=None, checkpointer=None, **kw):
+        captured["checkpointer"] = checkpointer
+        return _Sentinel()
+
+    monkeypatch.setattr(agent_mod, "get_llm", lambda config, **kw: _mock_llm())
+    monkeypatch.setattr(agent_mod, "create_deep_agent", _fake_create)
+    from app.core import storage as storage_mod
+
+    class _FakeStorage:
+        def _resolve(self, a):
+            return a
+
+    monkeypatch.setattr(storage_mod, "get_storage", lambda: _FakeStorage())
+
+    saver = InMemorySaver()
+    config = ResolvedChatConfig(base_url="http://x", api_key="k", model="glm-4.7", source="env")
+    asyncio.run(agent_mod.build_agent(
+        db_session, llm_config=config, user_id=uuid.uuid4(), checkpointer=saver,
+    ))
+    assert captured["checkpointer"] is saver
 
 
 def test_build_agent_init_scope_keeps_rag_search(db_session, monkeypatch):

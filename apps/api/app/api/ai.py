@@ -273,7 +273,8 @@ async def chat(
         try:
             async for kind, data in _yield_with_heartbeat_tuple(
                 astream_chat(db, section, history, payload.message,
-                             llm_config=llm_config, usage_sink=usage, meta_sink=meta)
+                             llm_config=llm_config, usage_sink=usage, meta_sink=meta,
+                             thread_id=str(user_msg.id))
             ):
                 if kind == "heartbeat":
                     yield _sse_event("heartbeat", {})

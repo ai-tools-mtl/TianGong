@@ -48,8 +48,9 @@ def _make_fake_build_agent(captured: dict):
     """
 
     class _FakeAgent:
-        async def astream_events(self, input_, *, version="v2"):
+        async def astream_events(self, input_, *, version="v2", config=None):
             captured["astream_input"] = input_
+            captured["config"] = config
             return
             yield  # 让它成为 async generator（永远不会执行到这）
 
@@ -66,6 +67,38 @@ def _consume(async_gen):
         async for _ in async_gen:
             pass
     asyncio.run(_drain())
+
+
+def test_astream_chat_passes_thread_id_to_config(db_session, monkeypatch):
+    """thread_id 透传到 agent.astream_events 的 config（红利①）。"""
+    from app.ai import orchestrator as orch_mod
+    from app.ai import agent as agent_mod
+    from app.services.llm_config_service import ResolvedChatConfig
+
+    section = _build_section_with_project(db_session)
+    captured: dict = {}
+    monkeypatch.setattr(agent_mod, "build_agent", _make_fake_build_agent(captured))
+
+    config = ResolvedChatConfig(base_url="http://x", api_key="k", model="glm-4.7", source="env")
+    _consume(orch_mod.astream_chat(db_session, section, [], "hi", llm_config=config, thread_id="T1"))
+
+    assert captured["config"] == {"configurable": {"thread_id": "T1"}}
+
+
+def test_astream_generate_without_thread_id_config_none(db_session, monkeypatch):
+    """generate 默认不传 thread_id → config=None（MVP 不 checkpoint generate）。"""
+    from app.ai import orchestrator as orch_mod
+    from app.ai import agent as agent_mod
+    from app.services.llm_config_service import ResolvedChatConfig
+
+    section = _build_section_with_project(db_session)
+    captured: dict = {}
+    monkeypatch.setattr(agent_mod, "build_agent", _make_fake_build_agent(captured))
+
+    config = ResolvedChatConfig(base_url="http://x", api_key="k", model="glm-4.7", source="env")
+    _consume(orch_mod.astream_generate(db_session, section, [], llm_config=config))
+
+    assert captured["config"] is None
 
 
 def test_astream_generate_passes_section_to_build_agent(db_session, monkeypatch):
