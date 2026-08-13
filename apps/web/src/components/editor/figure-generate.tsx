@@ -47,6 +47,8 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
   const [diagramType, setDiagramType] = useState('')
   const [style, setStyle] = useState<string>(readStoredStyle)
   const [figure, setFigure] = useState<Figure | null>(null)
+  const [captionText, setCaptionText] = useState('')
+  const [captioning, setCaptioning] = useState(false)
 
   // 鉴权图片加载：fetch + credentials 转 blob URL，绕过 <img> 跨端口 cookie 限制
   const imgUrl = figure?.attachment_id ? api.attachmentUrl(projectId, figure.attachment_id) : null
@@ -130,6 +132,29 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
     const src = api.attachmentUrl(projectId, figure.attachment_id)
     onInsertImage(src, figure.prompt)
     toast.success('已插入文档')
+  }
+
+  async function handleCaption() {
+    if (!figure?.attachment_id) return
+    const source = getChatDefaultSource()
+    if (!source) {
+      toast.error('请先在设置中选择 LLM 源')
+      return
+    }
+    setCaptioning(true)
+    setCaptionText('')
+    try {
+      await api.captionFigures(
+        sectionId,
+        { attachment_ids: [figure.attachment_id], chat_source: source },
+        (t) => setCaptionText((prev) => prev + t),
+      )
+    } catch (err: unknown) {
+      const msg = (err as { message?: string })?.message ?? '图注生成失败'
+      toast.error(msg)
+    } finally {
+      setCaptioning(false)
+    }
   }
 
   // idle：展开输入区
@@ -219,6 +244,10 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
           <Check className="size-3.5" />
           插入文档
         </Button>
+        <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={handleCaption} disabled={captioning || !figure?.attachment_id}>
+          {captioning ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
+          {captioning ? '生成中...' : 'AI 看图写注'}
+        </Button>
         <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={handleRegenerate}>
           <RefreshCw className="size-3.5" />
           重新生成
@@ -229,12 +258,22 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
         </Button>
         <Button
           size="sm" variant="ghost" className="h-8 gap-1.5 ml-auto"
-          onClick={() => { setFigure(null); setPhase('idle'); setPrompt('') }}
+          onClick={() => { setFigure(null); setPhase('idle'); setPrompt(''); setCaptionText('') }}
         >
           <X className="size-3.5" />
           收起
         </Button>
       </div>
+      {captionText && (
+        <div className="space-y-1">
+          <p className="text-xs text-muted-foreground">AI 生成的图注（可复制到正文）：</p>
+          <textarea
+            value={captionText}
+            readOnly
+            className="min-h-[60px] w-full resize-y rounded border bg-muted/30 px-2 py-1.5 text-sm"
+          />
+        </div>
+      )}
     </div>
   )
 }

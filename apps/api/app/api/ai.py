@@ -689,7 +689,8 @@ def delete_conversation(
 
 
 class CaptionRequest(BaseModel):
-    descriptions: list[str]
+    descriptions: list[str] = []  # 用户手写文字描述（降级/补充用），默认空
+    attachment_ids: list[str] = []  # 要"看图"的附件 id，vision 模型时走多模态
     chat_source: str | None = None
 
 
@@ -700,30 +701,49 @@ async def caption_figures(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """图注润色：基于文字描述生成规范图注（设计 9.5，仅文本非多模态）。
+    """图注润色：基于附图图片内容（多模态 vision）或文字描述生成规范图注（设计 9.5）。
 
-    直接用 astream_llm 流式生成（不走 heartbeat 包装，简化文本生成）。
-    与其它 LLM 端点一致：成功/失败均写 LLMCallLog（含 token 用量，断链 C3）。
+    vision 模型 + attachment_ids → 真正"看图说话"；否则降级纯文字润色（呼应设计 9.5
+    顾虑③「并非所有接口支持 vision」）。直接用 astream_llm 流式生成（不走 heartbeat
+    包装，简化文本生成）。与其它 LLM 端点一致：成功/失败均写 LLMCallLog（断链 C3）。
     """
     section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
     # 仅附图章节可用
     if section.key != "drawings":
         raise ValidationError("图注润色仅限附图章节")
+    if not payload.descriptions and not payload.attachment_ids:
+        raise ValidationError("至少提供 descriptions 或 attachment_ids 之一")
 
-    from langchain_core.messages import HumanMessage, SystemMessage
+    import uuid
+
+    from app.ai.vision import build_caption_messages, is_vision_model
+    from app.core.storage import get_storage
+    from app.models import Attachment
 
     # chat_source 由前端传入；在 StreamingResponse 构造前解析，与其它端点保持一致
     llm_config = llm_config_service.resolve_chat_config(db, user_id=current_user.id, chat_source=payload.chat_source)
 
-    descs = "\n".join(f"- {d}" for d in payload.descriptions)
-    system = (
-        "你是专利交底书撰写助手。请根据用户提供的图片文字描述，"
-        "润色生成规范的图注。要求：统一'图 N 是…'格式，简洁准确。"
+    # 取附件图片字节：按 attachment_id 查，归属校验防越权（非法/跨项目一律跳过不报错）
+    images: list[tuple[bytes, str]] = []
+    for aid in payload.attachment_ids:
+        try:
+            att_id = uuid.UUID(aid)
+        except (ValueError, TypeError):
+            continue
+        att = db.get(Attachment, att_id)
+        if att is None or not att.storage_path:
+            continue
+        if str(att.project_id) != str(section.project_id):
+            continue
+        data = get_storage().get("personal", att.storage_path)
+        if data:
+            images.append((data, att.mime_type or "image/png"))
+
+    # vision 模型 + 拿到字节 → 多模态看图；否则降级纯文字
+    use_vision = bool(images) and is_vision_model(
+        _resolve_model(llm_config) if llm_config else None
     )
-    messages = [
-        SystemMessage(content=system),
-        HumanMessage(content=f"以下是各图的文字描述，请生成规范图注：\n{descs}"),
-    ]
+    messages = build_caption_messages(payload.descriptions, images, use_vision=use_vision)
 
     async def generate():
         db.rollback()

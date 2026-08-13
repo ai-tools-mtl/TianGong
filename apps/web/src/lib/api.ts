@@ -324,6 +324,23 @@ export const api = {
     return _consumeSSE(res, onToken)
   },
 
+  // 图注润色：看图说话（vision 多模态，model 不支持时后端降级文字描述）
+  captionFigures: async (
+    sectionId: string,
+    data: { attachment_ids?: string[]; descriptions?: string[]; chat_source?: string | null },
+    onToken: (t: string) => void,
+    signal?: AbortSignal,
+  ) => {
+    const res = await authFetch(`/sections/${sectionId}/caption-figures`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+      signal,
+    })
+    if (!res.ok) throw await _sseHttpError(res)
+    return _consumeSSE(res, onToken)
+  },
+
   // ── 项目初始化助手（ChatGPT 式独立对话页）──
   listAssistantConversations: () =>
     request<{ id: string; title: string; status: string; created_at: string; updated_at: string }[]>(
