@@ -203,6 +203,16 @@ services:
       # Chromium 冷启 + warmup(后台线程预热一次空渲染),需较长宽限期
       start_period: 150s
     restart: unless-stopped
+    # /run 挂 tmpfs:根治 dbus pid 残留死循环。
+    # 容器被 SIGKILL（Docker/WSL2 重启）时 dbus-daemon 来不及清理 /run/dbus/pid，
+    # pid 文件留在容器可写层，下次 dbus-daemon 见 pid 文件拒启 → set -e 退 1 →
+    # restart: unless-stopped 拉起后撞同一 pid → 死循环（实测 0.24s/次）。
+    # tmpfs 让 /run 纯内存，每次容器启动自动清空，pid 不可能跨重启残留——这正是
+    # Linux 本身把 /run 挂 tmpfs 的原因。运行时配置，无需重建镜像即生效（这点
+    # 比 entrypoint.sh 的 rm -f 强：后者改了 entrypoint 必须记得 rebuild 才生效）。
+    # 两者互为兜底：tmpfs 管容器化部署，rm -f 管裸 docker run。
+    tmpfs:
+      - /run
     deploy:
       resources:
         limits:
