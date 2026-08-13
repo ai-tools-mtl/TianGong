@@ -25,14 +25,18 @@ export function ThinkingBlock({
   streaming: boolean
   className?: string
 }) {
-  // 完成态默认折叠；流式态默认展开。用 state 控制 <details open>。
-  const [open, setOpen] = useState(true)
+  // 完成态/历史默认折叠；流式态默认展开。初值取 streaming：历史消息（streaming 恒
+  // false）首次渲染即折叠，流式消息（streaming 初值 true）展开。用 state 控制 <details open>。
+  const [open, setOpen] = useState(streaming)
   const bodyRef = useRef<HTMLDivElement>(null)
 
-  // 流式结束（streaming 从 true→false）时自动折叠
+  // streaming 翻转时同步 open：开始流式 → 展开（实时显示推理），流式结束 → 折叠。
+  // 双向处理，兼防首次渲染竞态（流式消息晚一拍才把 streaming 置 true）。
   const prevStreaming = useRef(streaming)
   useEffect(() => {
-    if (prevStreaming.current && !streaming) {
+    if (!prevStreaming.current && streaming) {
+      setOpen(true)
+    } else if (prevStreaming.current && !streaming) {
       setOpen(false)
     }
     prevStreaming.current = streaming
