@@ -387,7 +387,7 @@ export function InitAssistant() {
                         <AgentSteps
                           thinking={m.thinking}
                           toolEvents={m.toolEvents}
-                          streaming={sending && i === messages.length - 1}
+                          streaming={sending && i === messages.length - 1 && !m.content}
                         />
                         <div className="prose prose-sm max-w-none dark:prose-invert">
                           <ReactMarkdown>{m.content.trim()}</ReactMarkdown>

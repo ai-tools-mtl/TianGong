@@ -569,7 +569,7 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
               <AgentSteps
                 thinking={genSteps.thinking}
                 toolEvents={genSteps.toolEvents}
-                streaming={phase === 'generating'}
+                streaming={phase === 'generating' && !aiDraft}
               />
               {phase === 'generating' && !genSteps.thinking && !genSteps.toolEvents?.length && !aiDraft && (
                 <div className="mb-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
@@ -622,7 +622,7 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
                     <AgentSteps
                       thinking={m.thinking}
                       toolEvents={m.toolEvents}
-                      streaming={phase === 'chatting' && i === messages.length - 1}
+                      streaming={phase === 'chatting' && i === messages.length - 1 && !m.content}
                     />
                     {m.content ? (
                       <>
