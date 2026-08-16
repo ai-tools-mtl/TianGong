@@ -944,7 +944,7 @@ async def caption_figures(
 
     import uuid
 
-    from app.ai.vision import build_caption_messages, is_vision_model
+    from app.ai.vision import build_caption_messages, is_vision_model, resolve_vision_markers
     from app.core.storage import get_storage
     from app.models import Attachment
 
@@ -967,9 +967,11 @@ async def caption_figures(
         if data:
             images.append((data, att.mime_type or "image/png"))
 
-    # vision 模型 + 拿到字节 → 多模态看图；否则降级纯文字
+    # vision 模型 + 拿到字节 → 多模态看图；否则降级纯文字。
+    # 名单可由 admin 配置（vision_model_markers：extra 合并 / enabled 开关），无配置时内置默认。
     use_vision = bool(images) and is_vision_model(
-        _resolve_model(llm_config) if llm_config else None
+        _resolve_model(llm_config) if llm_config else None,
+        markers=resolve_vision_markers(db),
     )
     messages = build_caption_messages(payload.descriptions, images, use_vision=use_vision)
 

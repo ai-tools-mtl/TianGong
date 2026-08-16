@@ -381,13 +381,11 @@ export default function ProjectDetailPage() {
           <div className="h-full">
             {current && current.key === 'drawings' && (
               <div className="mb-3 space-y-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <FigureUpload
-                    sectionId={current.id}
-                    projectId={projectId}
-                    onInsertImage={(src, alt) => editorRef.current?.insertImage(src, alt)}
-                  />
-                </div>
+                <FigureUpload
+                  sectionId={current.id}
+                  projectId={projectId}
+                  onInsertImage={(src, alt) => editorRef.current?.insertImage(src, alt)}
+                />
                 <FigureGenerate
                   sectionId={current.id}
                   projectId={projectId}

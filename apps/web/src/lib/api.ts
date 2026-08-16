@@ -613,6 +613,16 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  // ── Vision 模型名单配置（admin console）──
+  getVisionMarkers: () =>
+    request<{ enabled: boolean; extra_markers: string[] }>('/admin/console/vision-markers'),
+
+  setVisionMarkers: (body: { enabled: boolean; extra_markers: string[] }) =>
+    request<{ enabled: boolean; extra_markers: string[] }>('/admin/console/vision-markers', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+
   // ── 审查 ──
   runReview: (projectId: string) =>
     request<import('@/types/api').ReviewRecord>(`/projects/${projectId}/review`, { method: 'POST' }),

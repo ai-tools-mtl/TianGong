@@ -1,6 +1,6 @@
 'use client'
 
-import { BarChart3, Database, FileText, ImageIcon, LifeBuoy, Plug, ScanText, Search, Settings, ShieldQuestion } from 'lucide-react'
+import { BarChart3, Database, Eye, FileText, ImageIcon, LifeBuoy, Plug, ScanText, Search, Settings, ShieldQuestion } from 'lucide-react'
 import Link from 'next/link'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
@@ -42,6 +42,12 @@ const CONSOLE_SECTIONS = [
     icon: LifeBuoy,
     title: '支持查看',
     description: '凭用户授权码限时只读查看项目（全程审计）',
+  },
+  {
+    href: '/admin/console/vision-markers',
+    icon: Eye,
+    title: 'Vision 模型名单',
+    description: '图注看图说话的模型能力探测名单（追加/停用）',
   },
   {
     href: '/admin/console/stats',
