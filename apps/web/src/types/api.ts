@@ -607,6 +607,32 @@ export interface SharedProject {
   metadata: Record<string, unknown> | null
 }
 
+// ── 经授权临时查看（§8.3：一次性授权码 + admin 限时只读）──
+
+export interface SupportCode {
+  id: string
+  code: string
+  project_id: string
+  expires_at: string | null
+  redeemed_at: string | null
+  view_expires_at: string | null
+  revoked_at: string | null
+  status: 'active' | 'redeemed' | 'expired' | 'revoked'
+  created_at: string
+}
+
+/** admin 凭码核销/查看响应：项目只读视图 + 窗口信息 + 求助用户。 */
+export interface SupportView {
+  code_id: string
+  project_id: string
+  project_title: string
+  owner_id: string
+  owner_name: string | null
+  redeemed_at: string
+  view_expires_at: string
+  project: SharedProject
+}
+
 // ── AI 会话 ──
 
 export interface Conversation {

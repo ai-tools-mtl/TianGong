@@ -20,6 +20,7 @@ from app.models.review_rubric import ReviewRubric
 from app.models.section import Section
 from app.models.section_version import SectionVersion
 from app.models.share_link import ShareLink
+from app.models.support_access_code import SupportAccessCode
 from app.models.system_setting import SystemSetting
 from app.models.tag import Tag
 from app.models.template import Template
@@ -44,6 +45,7 @@ __all__ = [
     "McpServer",
     "AuditLog",
     "InviteCode",
+    "SupportAccessCode",
     "WebIngestionJob",
     "UserMemory",
     "WritingProfile",
