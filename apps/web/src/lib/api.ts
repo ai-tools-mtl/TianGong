@@ -603,6 +603,16 @@ export const api = {
       { method: 'PUT', body: JSON.stringify(body) },
     ),
 
+  // ── HITL 工具确认配置（admin console）──
+  getHitlConfig: () =>
+    request<{ enabled: boolean; tools: string[] }>('/admin/console/hitl'),
+
+  setHitlConfig: (body: { enabled: boolean; tools: string[] }) =>
+    request<{ enabled: boolean; tools: string[] }>('/admin/console/hitl', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
+
   // ── 审查 ──
   runReview: (projectId: string) =>
     request<import('@/types/api').ReviewRecord>(`/projects/${projectId}/review`, { method: 'POST' }),

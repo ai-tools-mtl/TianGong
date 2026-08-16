@@ -466,3 +466,40 @@ def set_figure_preset(
         detail={"preset_id": preset_id, **overrides},
     )
     return updated
+
+
+# ── HITL 工具确认配置 ──────────────────────────────────────────────────────────
+
+
+class HitlConfigUpdate(BaseModel):
+    """admin 配置 agent 工具确认拦截清单。tools 为工具名列表（MCP 工具按名配置）。"""
+    enabled: bool
+    tools: list[str] = Field(default_factory=list)
+
+
+@router.get("/admin/console/hitl")
+def get_hitl_config(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """读取 HITL 拦截配置（无配置时返回默认：generate_figure）。"""
+    from app.services.hitl_config_service import get_hitl_config as _get
+    return _get(db)
+
+
+@router.put("/admin/console/hitl")
+def set_hitl_config(
+    payload: HitlConfigUpdate,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """保存 HITL 拦截配置（全量覆盖）。写审计。"""
+    from app.services.hitl_config_service import set_hitl_config as _set
+
+    updated = _set(db, enabled=payload.enabled, tools=payload.tools, updated_by=admin.id)
+    admin_service._audit(
+        db, actor=admin, action="set_hitl_config",
+        target_type="system_setting", target_id="agent_hitl_config",
+        detail={"enabled": payload.enabled, "tools": payload.tools},
+    )
+    return updated
