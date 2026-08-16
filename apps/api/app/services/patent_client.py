@@ -25,6 +25,7 @@ _MOCK_PATENTS = [
         "abstract": "本发明涉及图像识别技术领域，具体公开了一种基于深度学习的图像识别方法及系统。该方法通过构建卷积神经网络模型，对输入图像进行特征提取和分类识别，提高了识别准确率和处理效率。",
         "url": "https://patents.google.com/patent/CN110123456A",
         "publication_date": "2019-08-09",
+        "legal_status": "有效",
         "relevance": 0.95,
     },
     {
@@ -34,6 +35,7 @@ _MOCK_PATENTS = [
         "abstract": "本发明公开了一种新型机械传动装置，包括主动齿轮、从动齿轮和传动轴。通过优化齿轮齿形和材料配比，实现了高扭矩传递下的低噪音运行，适用于工业自动化设备。",
         "url": "https://patents.google.com/patent/CN105678901B",
         "publication_date": "2018-03-15",
+        "legal_status": "有效",
         "relevance": 0.88,
     },
     {
@@ -43,6 +45,7 @@ _MOCK_PATENTS = [
         "abstract": "本发明涉及电池技术领域，具体涉及一种锂离子电池正极材料及其制备方法。该正极材料采用镍钴锰三元体系，通过共沉淀法和高温烧结工艺制备，具有高能量密度和优异的循环稳定性。",
         "url": "https://patents.google.com/patent/CN109876543A",
         "publication_date": "2019-06-04",
+        "legal_status": "失效（未缴年费）",
         "relevance": 0.82,
     },
 ]
@@ -51,7 +54,7 @@ _MOCK_PATENTS = [
 def search_patents(query: str, *, top_k: int = 10) -> list[dict]:
     """检索专利。无 key 时返回 Mock 桩数据，有 key 时调智慧芽真实 API。
 
-    返回统一形状：[{title, applicant, patent_number, abstract, url, publication_date, relevance}]
+    返回统一形状：[{title, applicant, patent_number, abstract, url, publication_date, legal_status, relevance}]
     """
     if not query.strip():
         return []
@@ -100,6 +103,7 @@ def _search_patentsnap(query: str, settings, *, top_k: int) -> list[dict]:
             "abstract": p.get("abstract", ""),
             "url": f"https://patents.google.com/patent/{p.get('patent_number', '')}",
             "publication_date": p.get("publication_date", ""),
+            "legal_status": p.get("legal_status", p.get("simple_legal_status", "未知")),
             "relevance": p.get("score", 0.5),
         }
         for p in items
