@@ -191,3 +191,27 @@ items.map((a) => ...)                  //    a: any
 - **修复**：弃用 LlamaIndex 做 embedding，改用 **LangChain 的 `OpenAIEmbeddings`**（接受任意模型名 + 自定义 base_url）。向量存储直接用 pgvector（SQLAlchemy 操作）。设计文档原定 LlamaIndex，据此调整为 LangChain + pgvector
 - **预防**：国产模型生态优先用 LangChain（更灵活），LlamaIndex 对非 OpenAI 模型支持差
 - **影响任务**：计划 6（知识库 RAG）
+
+### E4: Windows 测试环境必须先起 docker 服务，否则 app startup 像挂死 ⚠️
+
+- **现象**：`uv run pytest` 任何用到 `client` fixture 的测试卡住数分钟无输出（CPU 几乎为 0），像死锁
+- **根因**：main.py 的 startup（恢复扫描/内置技能同步/checkpointer 初始化）直连真实 `SessionLocal`（PG）与 MinIO。docker 没起时每个连接走 urllib3 重试 ~30s，多步叠加把 startup 拖成数分钟；`TIANGONG_TESTING=1` 只跳过 embedding/rerank/firecrawl 探活，跳不过这些
+- **修复**：跑测试前先 `docker compose up -d postgres minio`（或干脆起全套）。Docker Desktop 没开时先启动它再等 engine ready
+- **预防**：Windows 本机跑全量测试前确认 `docker ps` 里 postgres/minio 是 healthy
+- **影响任务**：feat/langgraph-resume-hitl-store（定位此问题耗了一次完整调试）
+
+### E5: SQLAlchemy `Uuid` 列绑定必须传 UUID 对象，传 str 直接 AttributeError
+
+- **现象**：对 UUID 主键列查询/写入时报 `'str' object has no attribute 'hex'`（sqltypes.py 的 bind processor）
+- **根因**：SQLAlchemy 2.0 的 `Uuid` 类型在 native_uuid 路径下要求绑定值是 `uuid.UUID`；**sqlite 测试兼容表用 String(36) 掩盖了这一点**，同样的代码 sqlite 过、PG 语义下炸
+- **修复**：跨边界拿到的字符串 id 一律先 `uuid.UUID(s)` 转换再进 ORM（见 `app/ai/store.py` 的 `_as_uuid`）
+- **预防**：写 Store/adapter 层这种接受外部字符串 key 的代码时，入口处统一转 UUID
+- **影响任务**：feat/langgraph-resume-hitl-store（CompositeAgentStore）
+
+### E6: 两个存量迁移 bug 在真实数据上必炸（已修）⚠️
+
+- **现象**：开发库 `alembic upgrade head` 失败：① `JSONB(astext_text=)` TypeError（笔误，正确是 `astext_type`）；② init 去重迁移把孤儿会话 `project_id` 指向哨兵 UUID，触发 `ForeignKeyViolation`
+- **根因**：① 是拼写错误，该迁移在任何环境都跑不过（此前从未有库走到它）；② 写迁移时忽略了 project_id 的 FK 约束，无脏数据的库恰好不受影响
+- **修复**：commit 73926f9 —— ① 改 `astext_type`；② 改为把多余会话 `kind='init_dup'`（避开部分索引条件，不碰外键、不删数据）
+- **预防**：迁移文件要在一个**有历史脏数据的真实库**上验证过才算数；写「哨兵值」前先查目标列的约束
+- **影响任务**：feat/support-access（本机 PG 实测通过到 head）

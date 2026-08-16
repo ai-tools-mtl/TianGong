@@ -94,8 +94,7 @@ class Settings(BaseSettings):
     patentsnap_api_key: str = ""
     patentsnap_base_url: str = "https://openapi.zhihuiya.com"
 
-    # 文件上传（设计 13.2，附录 B：MVP 本地存储）
-    upload_dir: str = "uploads"
+    # 文件上传大小上限（存储已一刀切走 minio，见下方对象存储配置；原 upload_dir 本地存储字段已删）
     max_image_size_mb: int = 10
 
     # 对象存储（minio，S3 兼容；一刀切，不留 local 分支，见计划关键约束 5）
