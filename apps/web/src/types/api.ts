@@ -864,6 +864,8 @@ export interface PatentResult {
   abstract: string
   url: string
   publication_date: string
+  /** 法律状态（有效/失效/未知；Mock 提供样例，PatSnap 真实调用映射） */
+  legal_status?: string
   relevance: number
 }
 
@@ -873,7 +875,15 @@ export interface PatentSearchResponse {
   saved_to: string
 }
 
+/** AI 新颖性评估报告（存于 prior_art_refs.assessment） */
+export interface NoveltyAssessment {
+  content: string
+  assessed_at: string
+  model: string
+}
+
 export interface PriorArtRefs {
   query: string
   results: PatentResult[]
+  assessment?: NoveltyAssessment
 }

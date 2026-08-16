@@ -370,6 +370,24 @@ export const api = {
     return _consumeSSE(res, onToken)
   },
 
+  /** AI 新颖性评估（SSE 流式 Markdown 报告；done 事件带全文）。 */
+  streamAssessNovelty: async (
+    projectId: string,
+    onToken: (t: string) => void,
+    signal?: AbortSignal,
+    chatSource?: string | null,
+    onDone?: (d: { content: string; project_id: string }) => void,
+  ) => {
+    const res = await authFetch(`/projects/${projectId}/patents/assess`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(chatSource ? { chat_source: chatSource } : {}),
+      signal,
+    })
+    if (!res.ok) throw await _sseHttpError(res)
+    return _consumeSSE(res, onToken, onDone)
+  },
+
   // ── 项目初始化助手（ChatGPT 式独立对话页）──
   listAssistantConversations: () =>
     request<{ id: string; title: string; status: string; created_at: string; updated_at: string }[]>(
@@ -1161,10 +1179,10 @@ async function _sseHttpError(res: Response): Promise<Error & { status: number; c
  *
  * 原实现只看 data.text，导致 error 事件被静默吞掉（用户看到"空回复+无报错"）。
  */
-async function _consumeSSE(
+async function _consumeSSE<TDone = { message_id: string; conversation_id?: string; title?: string | null }>(
   res: Response,
   onToken: (t: string) => void,
-  onDone?: (data: { message_id: string; conversation_id?: string; title?: string | null }) => void,
+  onDone?: (data: TDone) => void,
   agentHandlers?: AgentStreamHandlers,
 ): Promise<void> {
   if (!res.body) return
@@ -1218,8 +1236,8 @@ async function _consumeSSE(
           actions: (data.actions as { name: string; args: Record<string, unknown>; description?: string }[]) ?? [],
         })
       } else if (eventType === 'done' && onDone) {
-        // done 事件：透传元数据（message_id / conversation_id / title）
-        onDone(data as { message_id: string; conversation_id?: string; title?: string | null })
+        // done 事件：透传元数据（message_id / conversation_id / title / content 等）
+        onDone(data as TDone)
       }
       // heartbeat：忽略
     }

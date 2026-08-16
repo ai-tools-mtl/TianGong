@@ -1,22 +1,28 @@
 'use client'
 
-import { ArrowLeft, ExternalLink, Search } from 'lucide-react'
+import { ArrowLeft, ExternalLink, Scale, Search } from 'lucide-react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 
+import { Markdown } from '@/components/markdown'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { api } from '@/lib/api'
+import { getChatDefaultSource } from '@/lib/llm-source'
 import { usePriorArt, useSearchPatents } from '@/lib/queries'
 import type { PatentResult } from '@/types/api'
 
 export default function PatentsPage() {
   const params = useParams<{ id: string }>()
   const [query, setQuery] = useState('')
+  // 新颖性评估：流式报告 + 进行中标记
+  const [assessment, setAssessment] = useState('')
+  const [assessing, setAssessing] = useState(false)
+  const assessAbort = useRef<AbortController | null>(null)
 
   const { data: priorArt } = usePriorArt(params.id)
   const searchMut = useSearchPatents(params.id)
@@ -34,6 +40,34 @@ export default function PatentsPage() {
 
   const results: PatentResult[] = searchMut.data?.results ?? priorArt?.results ?? []
   const lastQuery = searchMut.data?.query ?? priorArt?.query
+  const savedAssessment = priorArt?.assessment?.content ?? ''
+
+  async function onAssess() {
+    const source = getChatDefaultSource()
+    if (!source) {
+      toast.error('请先在设置中选择 LLM 源')
+      return
+    }
+    setAssessing(true)
+    setAssessment('')
+    assessAbort.current = new AbortController()
+    try {
+      await api.streamAssessNovelty(
+        params.id,
+        (t) => setAssessment((prev) => prev + t),
+        assessAbort.current.signal,
+        source,
+      )
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        // 用户停止：保留半截展示
+      } else {
+        toast.error((err as { message?: string })?.message ?? '评估失败')
+      }
+    } finally {
+      setAssessing(false)
+    }
+  }
 
   return (
     <div className="mx-auto max-w-4xl px-6 py-8">
@@ -67,6 +101,40 @@ export default function PatentsPage() {
         </Button>
       </div>
 
+      {/* AI 新颖性评估（有检索结果才可用） */}
+      {results.length > 0 && (
+        <Card className="mb-4">
+          <CardContent className="space-y-3 py-4">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-[14px] font-medium">
+                <Scale className="size-4" />
+                AI 新颖性评估
+              </div>
+              {assessing ? (
+                <Button variant="destructive" size="sm" onClick={() => assessAbort.current?.abort()}>
+                  停止
+                </Button>
+              ) : (
+                <Button size="sm" onClick={onAssess}>
+                  {savedAssessment || assessment ? '重新评估' : '开始评估'}
+                </Button>
+              )}
+            </div>
+            <p className="text-[12px] text-muted-foreground">
+              对比检索到的专利与本交底书核心章节，生成逐篇对比分析、总体风险与差异化撰写建议。
+              AI 辅助参考，不构成法律意见。
+            </p>
+            {(assessment || savedAssessment) && (
+              <div className="rounded-lg border bg-muted/30 px-3 py-2.5">
+                <Markdown className="prose prose-sm max-w-none dark:prose-invert">
+                  {assessment || savedAssessment}
+                </Markdown>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* 结果列表 */}
       {results.length > 0 ? (
         <div className="space-y-3">
@@ -92,9 +160,23 @@ export default function PatentsPage() {
                       {p.applicant} · {p.patent_number} · {p.publication_date}
                     </p>
                   </div>
-                  <Badge variant="outline" className="shrink-0 tabular-nums">
-                    相关度 {(p.relevance * 100).toFixed(0)}%
-                  </Badge>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    {p.legal_status && (
+                      <Badge
+                        variant="outline"
+                        className={
+                          p.legal_status.includes('失效')
+                            ? 'text-muted-foreground'
+                            : 'text-success'
+                        }
+                      >
+                        {p.legal_status}
+                      </Badge>
+                    )}
+                    <Badge variant="outline" className="tabular-nums">
+                      相关度 {(p.relevance * 100).toFixed(0)}%
+                    </Badge>
+                  </div>
                 </div>
                 {p.abstract && (
                   <p className="line-clamp-3 text-[13px] text-muted-foreground">

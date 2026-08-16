@@ -58,12 +58,13 @@
 
 | 功能 | 入口 | 说明 |
 |------|------|------|
-| 对话引导 + 草稿生成 | `ai/orchestrator.py` `astream_chat` / `astream_generate` | 走 deepagents agent loop + 工具（rag_search/save_memory） |
+| 对话引导 + 草稿生成 | `ai/orchestrator.py` `astream_chat` / `astream_generate` | 走 deepagents agent loop + 工具（rag_search/save_memory）；崩溃/HITL 中断的 turn 可经 `/messages/{id}/resume` 续跑（`astream_resume`，记账 action=`chat_resume`，同 thread 续跑不重发 input） |
 | 段落重写 | `ai/orchestrator.py` `astream_rewrite` | 选中文字 + 指令流式重写 |
 | 批量生成项目 8 章初稿 | `ai/init_orchestrator.py` `astream_init_generate` | 裸 `astream_llm` 逐章生成 Markdown |
 | 项目初始化冷启动引导 | `ai/init_orchestrator.py` `astream_init_chat` | 引导用户把技术想法说清 |
-| 图注润色 | `api/ai.py` `caption_figures` | drawings 章节 AI 看图说话（多模态 vision，model 不支持时降级文字描述）生成规范图注 |
-| **附图生成** | `services/figure_service.py` `generate_figure` | drawings 章节 AI 生成专利附图：`resolve_chat_config` → `get_llm().invoke()` 出 drawio XML → 调 drawio 渲染微服务出 PNG。**非流式同步调用**，记账 action=`figure`（`log_chat_call`）。渲染失败（`ServiceUnavailableError`）不落库，fail-closed |
+| 图注润色 | `api/ai.py` `caption_figures` | drawings 章节 AI 看图说话（多模态 vision，model 不支持时降级文字描述）生成规范图注。vision 探测名单 admin 可配（`/admin/console/vision-markers`，`SystemSetting vision_model_markers`） |
+| **新颖性评估** | `api/patents.py` `assess_novelty` + `services/novelty_service.py` | 专利检索页「AI 新颖性评估」：对比文件（含 legal_status）× 交底书核心章节 → 流式 Markdown 报告（总体风险/逐篇对比/差异化建议/法律状态提示），完成持久化 `prior_art_refs.assessment`。记账 action=`novelty_assess` |
+| **附图生成** | `services/figure_service.py` `generate_figure` | drawings 章节 AI 生成专利附图：`resolve_chat_config` → `get_llm().invoke()` 出 drawio XML → 调 drawio 渲染微服务出 PNG。**非流式同步调用**，记账 action=`figure`（`log_chat_call`）。渲染失败（`ServiceUnavailableError`）不落库，fail-closed。**默认被 HITL 拦截**（`agent_hitl_config`，工具确认后执行） |
 
 ## 六、维护说明
 
