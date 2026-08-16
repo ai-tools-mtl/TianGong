@@ -115,12 +115,13 @@ def test_build_agent_assembly_args(db_session, monkeypatch):
     装配逻辑结构断言（不依赖 deepagents 实际行为）：
     - tools 来自 create_agent_tools 工厂（rag_search + save_memory）
     - skills 是 list（来自 build_agent_skill_sources）
-    - store 是 MinIOSkillStore
+    - store 是 CompositeAgentStore（红利③：memories 命名空间路由 user_memories，
+      其余透传 MinIOSkillStore）
     - backend 是 StoreBackend，包装同一 store
     """
     from app.ai import agent as agent_mod
+    from app.ai.store import CompositeAgentStore
     from app.services.llm_config_service import ResolvedChatConfig
-    from app.skills.storage import MinIOSkillStore
     from deepagents.backends import StoreBackend
 
     captured: dict = {}
@@ -169,8 +170,10 @@ def test_build_agent_assembly_args(db_session, monkeypatch):
     assert "save_memory" in tool_names
     # skills 是 list（空也合法——无可见 skill 时 build_agent_skill_sources 返回 []）
     assert isinstance(captured["skills"], (list, type(None)))
-    # store 是 MinIOSkillStore
-    assert isinstance(captured["store"], MinIOSkillStore)
+    # store 是 CompositeAgentStore（内包 MinIOSkillStore 的 skill 路由）
+    assert isinstance(captured["store"], CompositeAgentStore)
+    from app.skills.storage import MinIOSkillStore
+    assert isinstance(captured["store"]._skill_store, MinIOSkillStore)  # noqa: SLF001
     # backend 是 StoreBackend，包装同一 store
     assert isinstance(captured["backend"], StoreBackend)
     # system_prompt 非空（来自 context_assembler）

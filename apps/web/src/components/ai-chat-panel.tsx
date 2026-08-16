@@ -29,12 +29,20 @@ import type { Conversation, Hunk, MessageMeta, Section, ToolEvent } from '@/type
 interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
+  /** 消息 id（历史回灌 / interrupt 事件回传；resume 端点按它定位 partial 消息） */
+  id?: string | null
+  /** resume 锚点：该 turn 的 user 消息 id（= checkpoint thread_id 约定） */
+  threadId?: string | null
   /** agent 透明化：本轮思考过程（流式累积 / 历史回灌） */
   thinking?: string
   /** agent 透明化：本轮工具调用事件序列（流式累积 / 历史回灌） */
   toolEvents?: ToolEvent[]
   /** 回复被中断（历史回灌）：后端兜底落了半截内容，非正常结束。 */
   incomplete?: boolean
+  /** HITL 工具确认中断：agent 停在断点等用户同意/拒绝（resume 恢复）。 */
+  interrupted?: boolean
+  /** interrupted 时待确认的工具动作。 */
+  pendingActions?: { name: string; args: Record<string, unknown>; description?: string }[]
 }
 
 /**
@@ -138,16 +146,28 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
     }
     if (history && msgLoadedForConv.current !== currentConvId) {
       msgLoadedForConv.current = currentConvId
+      // threadId 回灌：assistant 消息的 resume 锚点是它前面最近一条 user 消息的 id
+      let lastUserId: string | null = null
       setMessages(
-        history.map((m: { role: string; content: string; meta?: MessageMeta | null }) => ({
-          role: m.role as 'user' | 'assistant',
-          content: m.content,
-          // 历史回灌：从 Message.meta 恢复思考过程 + 工具调用（刷新后仍可见）
-          thinking: m.meta?.thinking,
-          toolEvents: m.meta?.tool_events,
-          // 历史回灌：恢复中断标记（后端兜底落的半截回复）
-          incomplete: m.meta?.incomplete,
-        })),
+        history.map((m: { id: string; role: string; content: string; meta?: MessageMeta | null }) => {
+          if (m.role === 'user') {
+            lastUserId = m.id
+            return { id: m.id, role: 'user' as const, content: m.content, threadId: null }
+          }
+          return {
+            id: m.id,
+            role: 'assistant' as const,
+            content: m.content,
+            threadId: lastUserId,
+            // 历史回灌：从 Message.meta 恢复思考过程 + 工具调用（刷新后仍可见）
+            thinking: m.meta?.thinking,
+            toolEvents: m.meta?.tool_events,
+            // 历史回灌：恢复中断标记（后端兜底落的半截回复）与 HITL 待确认动作
+            incomplete: m.meta?.incomplete,
+            interrupted: m.meta?.interrupted,
+            pendingActions: m.meta?.pending_interrupt,
+          }
+        }),
       )
     }
   }, [history, currentConvId])
@@ -289,6 +309,24 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
           onThinking: (t) => { aiThinking += t; mergeAgentState() },
           onToolCall: (e) => { aiToolEvents.push({ kind: 'call', name: e.name, args: e.args }); mergeAgentState() },
           onToolResult: (e) => { aiToolEvents.push({ kind: 'result', name: e.name, result: e.result }); mergeAgentState() },
+          // HITL 工具确认：流到此结束（无 done）。把断点信息挂到流式中的 assistant
+          // 消息上（message_id 由后端落 partial 后回传），渲染确认卡片等用户决策。
+          onInterrupt: (e) => {
+            setMessages((m) => {
+              const copy = [...m]
+              const last = copy[copy.length - 1]
+              if (last && last.role === 'assistant') {
+                copy[copy.length - 1] = {
+                  ...last,
+                  id: e.message_id ?? last.id,
+                  threadId: e.thread_id,
+                  interrupted: true,
+                  pendingActions: e.actions,
+                }
+              }
+              return copy
+            })
+          },
         },
       )
     } catch (err: unknown) {
@@ -333,6 +371,92 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
       }
       return copy
     })
+  }
+
+  /**
+   * 续跑（Checkpoint 断点恢复）：
+   * - 崩溃/断连的半截回复：无 decision，后端 input=None 从 checkpoint 续跑；
+   * - HITL 工具确认：decision=approve/reject，后端 Command(resume=...) 恢复。
+   * token 续接在目标消息上；done 带权威全文整体替换（中断节点整段重放，
+   * 本地拼接会有重复前缀）。
+   */
+  async function handleResume(target: ChatMessage, decision?: 'approve' | 'reject') {
+    if (!target.id || !target.threadId) {
+      toast.error('缺少续跑锚点，请刷新页面后重试')
+      return
+    }
+    const source = getChatDefaultSource()
+    if (!source) {
+      toast.error('请先在设置中选择 LLM 源')
+      return
+    }
+    const targetId = target.id
+    setPhase('chatting')
+    abortRef.current = new AbortController()
+    // 思考/工具事件续接在该消息上（从 partial 已有内容继续累积）
+    let thinking = target.thinking ?? ''
+    const toolEvents: ToolEvent[] = [...(target.toolEvents ?? [])]
+    const patchMsg = (patch: Partial<ChatMessage>) => {
+      setMessages((m) => m.map((msg) => (msg.id === targetId ? { ...msg, ...patch } : msg)))
+    }
+    try {
+      await api.streamResume(
+        sectionId,
+        targetId,
+        {
+          thread_id: target.threadId,
+          ...(decision ? { decision } : {}),
+          chat_source: source,
+        },
+        (token) => {
+          setMessages((m) =>
+            m.map((msg) => (msg.id === targetId ? { ...msg, content: msg.content + token } : msg)),
+          )
+        },
+        abortRef.current.signal,
+        (doneData) => {
+          // 权威全文替换：清除 incomplete/interrupted/待确认标记
+          if (typeof doneData.content === 'string') {
+            patchMsg({
+              content: doneData.content,
+              incomplete: false,
+              interrupted: false,
+              pendingActions: undefined,
+            })
+          }
+          if (doneData.conversation_id && doneData.conversation_id !== currentConvId) {
+            setCurrentConvId(doneData.conversation_id)
+          }
+          qc.invalidateQueries({ queryKey: ['conversations', sectionId] })
+        },
+        {
+          onThinking: (t) => { thinking += t; patchMsg({ thinking }) },
+          onToolCall: (e) => { toolEvents.push({ kind: 'call', name: e.name, args: e.args }); patchMsg({ toolEvents: [...toolEvents] }) },
+          onToolResult: (e) => { toolEvents.push({ kind: 'result', name: e.name, result: e.result }); patchMsg({ toolEvents: [...toolEvents] }) },
+          // 链式确认：续跑中再次停在工具断点，更新断点信息继续等决策
+          onInterrupt: (e) => {
+            patchMsg({
+              interrupted: true,
+              pendingActions: e.actions,
+              id: e.message_id ?? targetId,
+              threadId: e.thread_id || target.threadId,
+            })
+          },
+        },
+      )
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        // 主动停止：保留内容；后端同款落 incomplete
+        patchMsg({ incomplete: true, interrupted: false, pendingActions: undefined })
+      } else if (isForbiddenSourceError(err)) {
+        handleStaleSourceError()
+      } else {
+        const e = err as { message?: string }
+        toast.error(e?.message || '续跑失败')
+      }
+    } finally {
+      setPhase('idle')
+    }
   }
 
   function handleClearChat() {
@@ -629,11 +753,24 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
                         <Markdown className="prose prose-sm max-w-none dark:prose-invert">
                           {m.content}
                         </Markdown>
-                        {/* 中断标记：后端兜底落的半截回复（切会话/断连/异常），提示非正常结束 */}
+                        {/* 中断标记：后端兜底落的半截回复（切会话/断连/异常），提示非正常结束。
+                            有锚点（历史回灌带 id/threadId）时提供「继续」走 checkpoint 续跑 */}
                         {m.incomplete && (
-                          <div className="mt-1.5 flex items-center gap-1 text-[11px] text-muted-foreground/70">
-                            <span className="inline-block size-1.5 rounded-full bg-muted-foreground/40" />
-                            回复已中断
+                          <div className="mt-1.5 flex items-center gap-2 text-[11px] text-muted-foreground/70">
+                            <span className="flex items-center gap-1">
+                              <span className="inline-block size-1.5 rounded-full bg-muted-foreground/40" />
+                              回复已中断
+                            </span>
+                            {m.id && m.threadId && phase !== 'chatting' && (
+                              <Button
+                                size="xs"
+                                variant="outline"
+                                className="h-5 px-1.5 text-[11px]"
+                                onClick={() => handleResume(m)}
+                              >
+                                继续
+                              </Button>
+                            )}
                           </div>
                         )}
                       </>
@@ -644,6 +781,32 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
                         <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:300ms]" />
                       </span>
                     ) : null}
+                    {/* HITL 工具确认卡片：agent 停在断点等同意/拒绝（如 generate_figure） */}
+                    {m.interrupted && m.pendingActions && m.pendingActions.length > 0 && (
+                      <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-2.5 py-2">
+                        <div className="text-[11px] font-medium text-amber-600 dark:text-amber-400">
+                          AI 请求执行以下工具，等待确认
+                        </div>
+                        {m.pendingActions.map((a, ai) => (
+                          <div key={ai} className="mt-1 break-all font-mono text-[11px] text-muted-foreground">
+                            {a.name}
+                            {a.args && Object.keys(a.args).length > 0 && (
+                              <span className="ml-1">{JSON.stringify(a.args)}</span>
+                            )}
+                          </div>
+                        ))}
+                        {phase !== 'chatting' && (
+                          <div className="mt-2 flex gap-2">
+                            <Button size="xs" onClick={() => handleResume(m, 'approve')}>
+                              同意执行
+                            </Button>
+                            <Button size="xs" variant="outline" onClick={() => handleResume(m, 'reject')}>
+                              拒绝
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               ),

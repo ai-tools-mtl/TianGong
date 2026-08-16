@@ -637,6 +637,10 @@ export interface MessageMeta {
   thinking?: string
   /** 回复被中断（客户端断连 / LLM 异常）：后端兜底落了半截内容，非正常结束。 */
   incomplete?: boolean
+  /** HITL 工具确认中断：agent 停在断点等用户同意/拒绝，可 resume 续跑。 */
+  interrupted?: boolean
+  /** interrupted 时待确认的工具动作（interrupt 事件同构）。 */
+  pending_interrupt?: { name: string; args: Record<string, unknown>; description?: string }[]
 }
 
 // ── Agent Skill（spec 合规，两档可见性）──

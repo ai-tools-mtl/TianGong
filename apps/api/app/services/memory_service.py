@@ -175,6 +175,29 @@ def list_memories(
     return list(db.scalars(stmt))
 
 
+def list_top_hot_memories(
+    db: Session, *, user_id, limit: int = 15, exclude_ids=None
+) -> list[UserMemory]:
+    """按热度（(hit_count+1)×30 天半衰期，与检索重排同公式）取 top-N 记忆。
+
+    供 system prompt 的「长期记忆常驻段」用——与按 query 的语义检索互补：
+    常驻段保证高频偏好每轮可见，检索段保证当前话题相关记忆被召回。
+    exclude_ids 排除已被检索段命中的记忆（去重，两段不重复注入）。
+    用户记忆 ≤200 条（MEMORY_LIMIT），全表读 + Python 排序可接受。
+    """
+    mems = db.scalars(
+        select(UserMemory).where(UserMemory.user_id == user_id)
+    ).all()
+    now = datetime.now(timezone.utc)
+    exclude = set(exclude_ids or [])
+    ranked = sorted(
+        (m for m in mems if m.id not in exclude),
+        key=lambda m: _compute_hot_score(m, now),
+        reverse=True,
+    )
+    return ranked[:limit]
+
+
 def update_memory(db: Session, *, memory_id, user_id, content: str) -> UserMemory:
     """更新记忆内容，重新生成 embedding。
 

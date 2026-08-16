@@ -194,6 +194,21 @@ def _search_user_memories(db, user_id, query: str):
         return []
 
 
+def _hot_user_memories(db, user_id, *, limit=15, exclude_ids=None):
+    """[红利③配套] 热门记忆常驻视图：top-N 热度记忆，排除已检索命中的 id。
+
+    与 _search_user_memories（按 query 语义检索）互补：常驻保证高频偏好每轮
+    可见（检索只保证与当前输入相关的记忆可见）。失败降级空 + rollback（同上）。
+    """
+    try:
+        from app.services.memory_service import list_top_hot_memories
+        return list_top_hot_memories(db, user_id=user_id, limit=limit, exclude_ids=exclude_ids)
+    except Exception:
+        logger.warning("热门记忆读取失败，降级返回空（不阻断 prompt 装配）", exc_info=True)
+        db.rollback()
+        return []
+
+
 def _get_profile_memories(db, user_id):
     """[S2-3] 取用户画像记忆（source=profile）。失败静默返回空（不阻断 prompt 装配）。
 
@@ -423,8 +438,16 @@ def build_system_prompt(
         memory_query = (user_input.strip() if user_input and user_input.strip()
                         else f"{section.title} {sp.goal}")
         memories = _search_user_memories(db, project_user_id, memory_query)
-        if memories:
-            memory_lines = "\n".join(f"- {m.content}" for m in memories)
+        # [红利③配套] 热门记忆常驻补位：检索只保证「与当前输入相关」的记忆可见，
+        # 高频稳定偏好（写作风格/术语习惯）即使与本轮 query 无关也应每轮在场。
+        # exclude 检索已命中的 id，两路合并进同一个记忆块（不重复注入）。
+        # getattr 防御：检索结果可能来自测试 fake（无 id 属性），别让去重逻辑炸装配。
+        retrieved_ids = {getattr(m, "id", None) for m in memories}
+        hot = _hot_user_memories(
+            db, project_user_id, exclude_ids=retrieved_ids)
+        merged = list(memories) + [m for m in hot if getattr(m, "id", None) not in retrieved_ids]
+        if merged:
+            memory_lines = "\n".join(f"- {m.content}" for m in merged)
             parts.append("# 关于这位用户的长期记忆（请遵循其偏好与约定）")
             parts.append(memory_lines)
             # [S3-2] 记忆使用规则：从「裸堆」升级为「注入+使用规则」。

@@ -56,6 +56,12 @@ export type AgentStreamHandlers = {
   onToolCall?: (e: { name: string; args: Record<string, unknown> }) => void
   /** 工具返回（result 后端已截断 500 字符） */
   onToolResult?: (e: { name: string; result: string }) => void
+  /** HITL 工具确认请求：agent 停在断点，等用户同意/拒绝（streamResume 恢复） */
+  onInterrupt?: (e: {
+    message_id: string | null
+    thread_id: string
+    actions: { name: string; args: Record<string, unknown>; description?: string }[]
+  }) => void
 }
 
 // ── 静默刷新：access token 过期(401)时用 refresh token 续期并重试一次 ──
@@ -280,10 +286,12 @@ export const api = {
     const res = await authFetch(`/sections/${sectionId}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      // 后端 ChatRequest 只认 chat_source（此前误发 source 字段被 pydantic 静默忽略，
+      // 用户显式选择的 LLM 源从未真正传到后端）
       body: JSON.stringify({
         message,
         conversation_id: conversationId ?? null,
-        ...(source ? { source } : {}),
+        ...(source ? { chat_source: source } : {}),
       }),
       signal,
     })
@@ -301,11 +309,32 @@ export const api = {
     const res = await authFetch(`/sections/${sectionId}/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(source ? { source } : {}),
+      // 同 streamChat：GenerateRequest 只认 chat_source
+      body: JSON.stringify(source ? { chat_source: source } : {}),
       signal,
     })
     if (!res.ok) throw await _sseHttpError(res)
     return _consumeSSE(res, onToken, undefined, agentHandlers)
+  },
+
+  /** 续跑中断/未完成的 turn（崩溃续跑 decision=undefined；HITL 决策 approve/reject）。 */
+  streamResume: async (
+    sectionId: string,
+    messageId: string,
+    data: { thread_id: string; decision?: 'approve' | 'reject'; message?: string; chat_source?: string | null },
+    onToken: (t: string) => void,
+    signal?: AbortSignal,
+    onDone?: (d: { message_id: string; conversation_id?: string; title?: string | null; content?: string }) => void,
+    agentHandlers?: AgentStreamHandlers,
+  ) => {
+    const res = await authFetch(`/sections/${sectionId}/messages/${messageId}/resume`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+      signal,
+    })
+    if (!res.ok) throw await _sseHttpError(res)
+    return _consumeSSE(res, onToken, onDone, agentHandlers)
   },
 
   streamRewrite: async (
@@ -573,6 +602,16 @@ export const api = {
       `/admin/console/figure-presets/${presetId}`,
       { method: 'PUT', body: JSON.stringify(body) },
     ),
+
+  // ── HITL 工具确认配置（admin console）──
+  getHitlConfig: () =>
+    request<{ enabled: boolean; tools: string[] }>('/admin/console/hitl'),
+
+  setHitlConfig: (body: { enabled: boolean; tools: string[] }) =>
+    request<{ enabled: boolean; tools: string[] }>('/admin/console/hitl', {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    }),
 
   // ── 审查 ──
   runReview: (projectId: string) =>
@@ -1092,11 +1131,7 @@ async function _consumeSSE(
   res: Response,
   onToken: (t: string) => void,
   onDone?: (data: { message_id: string; conversation_id?: string; title?: string | null }) => void,
-  agentHandlers?: {
-    onThinking?: (t: string) => void
-    onToolCall?: (e: { name: string; args: Record<string, unknown> }) => void
-    onToolResult?: (e: { name: string; result: string }) => void
-  },
+  agentHandlers?: AgentStreamHandlers,
 ): Promise<void> {
   if (!res.body) return
   const reader = res.body.getReader()
@@ -1141,6 +1176,13 @@ async function _consumeSSE(
         agentHandlers?.onToolCall?.({ name: String(data.name ?? ''), args: (data.args as Record<string, unknown>) ?? {} })
       } else if (eventType === 'tool_result') {
         agentHandlers?.onToolResult?.({ name: String(data.name ?? ''), result: String(data.result ?? '') })
+      } else if (eventType === 'interrupt') {
+        // HITL 工具确认：流到此结束（无 done），用户决策后走 streamResume
+        agentHandlers?.onInterrupt?.({
+          message_id: (data.message_id as string | null) ?? null,
+          thread_id: String(data.thread_id ?? ''),
+          actions: (data.actions as { name: string; args: Record<string, unknown>; description?: string }[]) ?? [],
+        })
       } else if (eventType === 'done' && onDone) {
         // done 事件：透传元数据（message_id / conversation_id / title）
         onDone(data as { message_id: string; conversation_id?: string; title?: string | null })

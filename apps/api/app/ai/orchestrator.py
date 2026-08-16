@@ -113,73 +113,55 @@ def build_generate_instruction(section: Section) -> str:
     )
 
 
-async def astream_chat(
-    db, section: Section, history: list[Message], user_input: str,
-    *, llm_config: ResolvedChatConfig, usage_sink: dict | None = None,
-    meta_sink: dict | None = None,
-    thread_id: str | None = None,
-) -> AsyncIterator[tuple[str, dict | str]]:
-    """异步引导对话：委托 deepagents agent loop（路线 B）。
+def _extract_hitl_payload(data) -> dict | None:
+    """从 on_interrupt 事件 data 提取 HITL 请求（{"actions": [{name,args,description}]}）。
 
-    yield (kind, payload) 元组（Task 23：agent loop 透明化）：
-      - ("token", str)：文本 token
-      - ("thinking", str)：模型思考过程片段（GLM/DeepSeek 推理模型的 reasoning）
-      - ("tool_call", {"name", "args"})：agent 发起工具调用
-      - ("tool_result", {"name", "result"})：工具返回
-
-    agent.astream_events 暴露 token + thinking + tool_call/tool_result 事件，本函数
-    全部透传给 SSE 层（thinking 由 ReasoningChatOpenAI 回填进 chunk.additional_kwargs，
-    extract_reasoning 读出）。
-
-    注意：usage_sink 在 agent loop 路径下**会被填充**——P0-2 修复后，on_chat_model_stream
-    分支捕获 chunk 的 usage_metadata（agent.py 的 get_llm(stream_usage=True) 已开启回填）。
-    agent loop 多步调用时 completion 累加，prompt 取 last-wins。旧 astream_llm 路径
-    （astream_rewrite 仍在用）也正确填充 usage_sink。
+    langgraph 各版本对 on_interrupt 的 data 包裹层级不统一（GraphInterruptEvent /
+    interrupts 元组 / 直接 HITLRequest dict 都可能出现），按层探测；解析失败返回
+    None 并打 debug 日志（不打断主流，前端拿不到 interrupt 事件时退化成普通结束）。
     """
-    from app.ai.agent import build_agent
-    from app.ai.checkpoint import get_checkpointer
-    from app.ai.intent import classify_intent
+    candidates = list(data.values()) if isinstance(data, dict) else [data]
+    if isinstance(data, dict):
+        candidates = [data.get("event"), data.get("interrupt"), *candidates]
+    for cand in candidates:
+        # GraphInterruptEvent.interrupts → tuple[Interrupt]；Interrupt.value = HITLRequest
+        interrupts = getattr(cand, "interrupts", None)
+        if interrupts:
+            cand = interrupts
+        if not isinstance(cand, (tuple, list)):
+            continue
+        for intr in cand:
+            value = getattr(intr, "value", None) or intr
+            if isinstance(value, dict) and "action_requests" in value:
+                return {"actions": [
+                    {
+                        "name": r.get("name", ""),
+                        "args": r.get("args", {}),
+                        "description": r.get("description", ""),
+                    }
+                    for r in value["action_requests"] if isinstance(r, dict)
+                ]}
+    logger.debug("on_interrupt 事件 data 未能解析 HITL payload: %r", data)
+    return None
 
-    # [L1] 传 section + user_input，让 build_agent 装配动态 system prompt（spec §3.3.2）
-    # user_input 用于记忆检索（用户当前输入是最强语义信号，如「检查写作风格」→命中偏好记忆）
-    # [S2-2] 规则层意图识别：draft/edit/info/guide → 注入对应行为指令（D1，LLM 兜底默认关）
-    intent = classify_intent(user_input)
-    logger.info("astream_chat: 开始构建 agent（intent=%s model=%s）", intent, llm_config.model)
-    agent = await build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section),
-                        section=section, user_input=user_input, intent=intent,
-                        checkpointer=get_checkpointer())
-    logger.info("astream_chat: agent 构建完成，开始 agent loop")
 
-    # [L2] 透传历史 + 当前用户输入，长历史先压缩（spec §3.3.2 + 压缩 spec）
-    from app.ai.context_compactor import compress_history
+async def _astream_agent_events(
+    agent, input_value, *, thread_id: str | None,
+    usage_sink: dict | None = None, timeout_notice: str,
+) -> AsyncIterator[tuple[str, dict | str]]:
+    """共享 agent loop 事件循环（chat/generate/resume 三路复用）。
 
-    compressed, snapshot = await compress_history(
-        history, user_input, llm_config, scene="chat"
-    )
-    if snapshot.triggered:
-        # 用 loguru（项目既定日志出口；标准 logging 在本项目默认 WARNING+无 handler，info 会被静默）
-        logger.info(
-            "上下文压缩触发 (chat, section={}): reason={} {}→{}条 fallback={}",
-            section.id, snapshot.reason, snapshot.original_count,
-            snapshot.compressed_count, snapshot.fallback,
-        )
-    # 压缩观测透传：把 snapshot 写入 meta_sink，供 SSE 层记入 LLMCallLog.context_meta（spec §5.1）。
-    if meta_sink is not None:
-        meta_sink["context_meta"] = snapshot.to_dict()
-    # compress_history 的契约：触发/降级路径已在末尾 append current_input；
-    # 未触发路径只返回历史 dict，不含 current_input —— 这里补一次，保证末尾恒为当前输入。
-    messages = compressed
-    if not snapshot.triggered:
-        messages.append({"role": "user", "content": user_input})
+    yield (kind, payload)：
+      - ("token", str) / ("thinking", str) / ("tool_call", dict) / ("tool_result", dict)
+      - ("interrupt", {"actions": [...]})：HITL 工具确认请求（层 3 总超时同样适用）
 
-    # 层 3：agent loop 总超时兜底，防极端情况（多步工具 + 生成）无限循环
+    input_value：常规跑传 {"messages": [...]}；续跑传 None（checkpoint 续跑）或
+    Command(resume=...)（HITL 决策恢复）。
+    """
     try:
         async with asyncio.timeout(AGENT_LOOP_TOTAL_TIMEOUT):
-            async for event in agent.astream_events(
-                {"messages": messages},
-                version="v2",
-                config={"configurable": {"thread_id": thread_id}} if thread_id else None,
-            ):
+            config = {"configurable": {"thread_id": thread_id}} if thread_id else None
+            async for event in agent.astream_events(input_value, version="v2", config=config):
                 evt = event["event"]
                 if evt == "on_chat_model_stream":
                     chunk = event["data"].get("chunk")
@@ -214,9 +196,80 @@ async def astream_chat(
                         "name": event.get("name", ""),
                         "result": result_str,
                     })
+                elif evt == "on_interrupt":
+                    info = _extract_hitl_payload(event.get("data"))
+                    if info is not None:
+                        yield ("interrupt", info)
     except TimeoutError:
-        logger.warning("astream_chat: agent loop 总超时（%ss），强制结束", AGENT_LOOP_TOTAL_TIMEOUT)
-        yield ("token", "\n\n[系统提示：回复生成超时，已中止。请重试或简化问题。]")
+        logger.warning("_astream_agent_events: agent loop 总超时（%ss），强制结束", AGENT_LOOP_TOTAL_TIMEOUT)
+        yield ("token", timeout_notice)
+
+
+async def astream_chat(
+    db, section: Section, history: list[Message], user_input: str,
+    *, llm_config: ResolvedChatConfig, usage_sink: dict | None = None,
+    meta_sink: dict | None = None,
+    thread_id: str | None = None,
+) -> AsyncIterator[tuple[str, dict | str]]:
+    """异步引导对话：委托 deepagents agent loop（路线 B）。
+
+    yield (kind, payload) 元组（Task 23：agent loop 透明化）：
+      - ("token", str)：文本 token
+      - ("thinking", str)：模型思考过程片段（GLM/DeepSeek 推理模型的 reasoning）
+      - ("tool_call", {"name", "args"})：agent 发起工具调用
+      - ("tool_result", {"name", "result"})：工具返回
+      - ("interrupt", {"actions": [...]})：HITL 工具确认请求（agent 停在该断点等决策）
+
+    agent.astream_events 暴露 token + thinking + tool_call/tool_result 事件，本函数
+    全部透传给 SSE 层（thinking 由 ReasoningChatOpenAI 回填进 chunk.additional_kwargs，
+    extract_reasoning 读出）。
+
+    注意：usage_sink 在 agent loop 路径下**会被填充**——P0-2 修复后，on_chat_model_stream
+    分支捕获 chunk 的 usage_metadata（agent.py 的 get_llm(stream_usage=True) 已开启回填）。
+    agent loop 多步调用时 completion 累加，prompt 取 last-wins。旧 astream_llm 路径
+    （astream_rewrite 仍在用）也正确填充 usage_sink。
+    """
+    from app.ai.agent import build_agent
+    from app.ai.checkpoint import get_checkpointer
+    from app.ai.intent import classify_intent
+
+    # [L1] 传 section + user_input，让 build_agent 装配动态 system prompt（spec §3.3.2）
+    # user_input 用于记忆检索（用户当前输入是最强语义信号，如「检查写作风格」→命中偏好记忆）
+    # [S2-2] 规则层意图识别：draft/edit/info/guide → 注入对应行为指令（LLM 兜底默认关）
+    intent = classify_intent(user_input)
+    logger.info("astream_chat: 开始构建 agent（intent=%s model=%s）", intent, llm_config.model)
+    agent = await build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section),
+                        section=section, user_input=user_input, intent=intent,
+                        checkpointer=get_checkpointer())
+    logger.info("astream_chat: agent 构建完成，开始 agent loop")
+
+    # [L2] 透传历史 + 当前用户输入，长历史先压缩（spec §3.3.2 + 压缩 spec）
+    from app.ai.context_compactor import compress_history
+
+    compressed, snapshot = await compress_history(
+        history, user_input, llm_config, scene="chat"
+    )
+    if snapshot.triggered:
+        # 用 loguru（项目既定日志出口；标准 logging 在本项目默认 WARNING+ 无 handler，info 会被静默）
+        logger.info(
+            "上下文压缩触发 (chat, section={}): reason={} {}→{}条 fallback={}",
+            section.id, snapshot.reason, snapshot.original_count,
+            snapshot.compressed_count, snapshot.fallback,
+        )
+    # 压缩观测透传：把 snapshot 写入 meta_sink，供 SSE 层记入 LLMCallLog.context_meta（spec §5.1）。
+    if meta_sink is not None:
+        meta_sink["context_meta"] = snapshot.to_dict()
+    # compress_history 的契约：触发/降级路径已在末尾 append current_input；
+    # 未触发路径只返回历史 dict，不含 current_input —— 这里补一次，保证末尾恒为当前输入。
+    messages = compressed
+    if not snapshot.triggered:
+        messages.append({"role": "user", "content": user_input})
+
+    async for item in _astream_agent_events(
+        agent, {"messages": messages}, thread_id=thread_id, usage_sink=usage_sink,
+        timeout_notice="\n\n[系统提示：回复生成超时，已中止。请重试或简化问题。]",
+    ):
+        yield item
 
 
 async def astream_generate(
@@ -278,51 +331,89 @@ async def astream_generate(
     if not snapshot.triggered:
         messages.append({"role": "user", "content": instruction})
 
-    # 层 3：agent loop 总超时兜底，防极端情况（多步工具 + 生成）无限循环
+    async for item in _astream_agent_events(
+        agent, {"messages": messages}, thread_id=thread_id, usage_sink=usage_sink,
+        timeout_notice="\n\n[系统提示：草稿生成超时，已中止。请重试。]",
+    ):
+        yield item
+
+
+async def build_resume_agent(
+    db, section: Section, *, llm_config: ResolvedChatConfig, user_input: str | None = None,
+):
+    """构建与 astream_chat 同参的 agent（供 resume 端点先 aget_state 判可续性后复用同一实例）。
+
+    user_input 传原 turn 的用户消息内容——system prompt / 记忆检索 / 意图识别
+    尽量还原首跑时的装配上下文（resume 不重发 input，但每步 model call 仍会
+    用到 system prompt）。
+    """
+    from app.ai.agent import build_agent
+    from app.ai.checkpoint import get_checkpointer
+    from app.ai.intent import classify_intent
+
+    return await build_agent(
+        db, llm_config=llm_config, user_id=_section_owner(db, section),
+        section=section, user_input=user_input, intent=classify_intent(user_input or ""),
+        checkpointer=get_checkpointer(),
+    )
+
+
+async def astream_resume(
+    db, section: Section, *, llm_config: ResolvedChatConfig, thread_id: str,
+    user_input: str | None = None,
+    decision: str | None = None, decision_message: str | None = None,
+    usage_sink: dict | None = None,
+    agent=None,
+) -> AsyncIterator[tuple[str, dict | str]]:
+    """续跑一个中断/未完成的 turn（Checkpoint 红利：断点恢复）。
+
+    input 语义（langgraph 1.2.9 已核实 _loop.py 的 is_resuming 判定）：
+    - None：从 checkpoint 续跑——崩溃/断连的 turn，channel_versions 非空即续跑，
+      被中断的节点**从头重放**（含整段重流其 token）
+    - Command(resume={"decisions": [...]})：HITL 中断恢复。decisions 与
+      action_requests 等长（HITLRequest 契约，见 langchain HumanInTheLoopMiddleware）；
+      {"type": "approve"} 放行 / {"type": "reject", "message": ...} 拒绝并让
+      agent 收到 error ToolMessage 后继续生成
+
+    agent 可由调用方预先构建（resume 端点要用同一实例 aget_state 检查可续性，
+    避免重复装配）；None 时现场构建（等价 build_resume_agent）。
+    """
+    if agent is None:
+        agent = await build_resume_agent(db, section, llm_config=llm_config, user_input=user_input)
+    input_value = None
+    if decision:
+        from langgraph.types import Command
+
+        d: dict = {"type": decision}
+        if decision_message:
+            d["message"] = decision_message
+        input_value = Command(resume={"decisions": [d]})
+    async for item in _astream_agent_events(
+        agent, input_value, thread_id=thread_id, usage_sink=usage_sink,
+        timeout_notice="\n\n[系统提示：续跑超时，已中止。可再次点击「继续」。]",
+    ):
+        yield item
+
+
+async def collect_final_answer(agent, thread_id: str) -> str | None:
+    """turn 完成后从 checkpoint 权威重建 assistant 全文。
+
+    双真源约定下 messages 表是 canonical、checkpoint 是 transient——这里只借
+    checkpoint 把「跨节点全文」一次性取齐：崩溃续跑时被中断的节点会整段重放，
+    若直接拼接「DB 半截 + 续跑流」会产生重复前缀，故完成时以 state 重建为准
+    （拼接所有非空 AIMessage.content，与 SSE 累积语义一致）。
+    任何失败返回 None（调用方退回拼接值），不影响主流程。
+    """
     try:
-        async with asyncio.timeout(AGENT_LOOP_TOTAL_TIMEOUT):
-            async for event in agent.astream_events(
-                {"messages": messages},
-                version="v2",
-                config={"configurable": {"thread_id": thread_id}} if thread_id else None,
-            ):
-                evt = event["event"]
-                if evt == "on_chat_model_stream":
-                    chunk = event["data"].get("chunk")
-                    # 先透传思考过程（reasoning），再透传正文 token。思考片段在正文之前产出
-                    # （GLM-4.x 思考模型先 think 后答），前端据此展示可折叠思考块。
-                    reasoning = extract_reasoning(chunk)
-                    if reasoning:
-                        yield ("thinking", reasoning)
-                    if chunk and chunk.content:
-                        yield ("token", chunk.content)
-                    # P0-2：捕获 token 用量。usage_metadata 仅在 stream_usage=True 时由
-                    # provider 在最后一块 chunk 回填（见 agent.py 的 get_llm(stream_usage=True)）。
-                    # agent loop 多步调用（先 tool_call 再生成），on_chat_model_stream 会触发
-                    # 多次，故 completion 用累加而非覆盖；prompt 取 last-wins（每次调用的
-                    # input_tokens 包含完整上下文，最后一次最准）。
-                    _usage = getattr(chunk, "usage_metadata", None) if chunk else None
-                    if _usage and usage_sink is not None:
-                        usage_sink["prompt"] = _usage.get("input_tokens")
-                        usage_sink["completion"] = (
-                            usage_sink.get("completion", 0) + (_usage.get("output_tokens") or 0)
-                        )
-                elif evt == "on_tool_start":
-                    yield ("tool_call", {
-                        "name": event.get("name", ""),
-                        "args": event.get("data", {}).get("input", {}),
-                    })
-                elif evt == "on_tool_end":
-                    result = event.get("data", {}).get("output")
-                    # result 可能是各种类型（str / ToolMessage / dict），统一转 str 截断
-                    result_str = str(result)[:500] if result is not None else ""
-                    yield ("tool_result", {
-                        "name": event.get("name", ""),
-                        "result": result_str,
-                    })
-    except TimeoutError:
-        logger.warning("astream_generate: agent loop 总超时（%ss），强制结束", AGENT_LOOP_TOTAL_TIMEOUT)
-        yield ("token", "\n\n[系统提示：草稿生成超时，已中止。请重试。]")
+        from langchain_core.messages import AIMessage
+
+        state = await agent.aget_state({"configurable": {"thread_id": thread_id}})
+        msgs = (state.values or {}).get("messages") or []
+        parts = [m.content for m in msgs if isinstance(m, AIMessage) and m.content]
+        return "".join(parts) or None
+    except Exception as e:  # noqa: BLE001 — fail-open，退回拼接值
+        logger.warning("collect_final_answer 失败，退回拼接值: %s", e)
+        return None
 
 
 async def astream_rewrite(

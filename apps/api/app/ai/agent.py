@@ -94,9 +94,14 @@ async def build_agent(
     check_tool_support(model=llm_config.model)
     logger.debug("build_agent: tool support ok for %s", llm_config.model)
 
-    # 2. MinIO BaseStore + StoreBackend
+    # 2. 复合 BaseStore + StoreBackend
     # C1：所有 skill（global + personal）统一存 "global" bucket，仅靠 minio_prefix 区分 scope。
-    store = MinIOSkillStore(bucket="global")
+    # 红利③（Store 统一记忆）：CompositeAgentStore 按 namespace 路由——
+    # ("skills", ...) → MinIOSkillStore（原行为不变）；("memories", user_id) →
+    # user_memories 表（经 memory_service，单一真源，fail-open）。
+    from app.ai.store import CompositeAgentStore
+    store = CompositeAgentStore(
+        user_id=user_id, skill_store=MinIOSkillStore(bucket="global"), db=db)
     # Task 15 v1 决定（spec §12 已知限制）：backend 只用 StoreBackend（skill 存储），
     # 不自动注入 Docker sandbox backend。脚本执行通过 sandbox.docker_runner.execute_script
     # 独立 API 暴露（Task 14）。agent 自动执行脚本（CompositeBackend 组合 sandbox）留 v2。
@@ -165,6 +170,10 @@ async def build_agent(
     logger.info("build_agent: 调用 create_deep_agent（tools=%d skills=%d）",
                 len(agent_tools),
                 len(skill_sources) if skill_sources else 0)
+    # HITL（工具确认）：admin 可配拦截清单（默认 generate_figure）。interrupt 断点
+    # 依赖 checkpointer 持久化——checkpointer 为 None（初始化失败 fail-open）时不拦。
+    from app.services.hitl_config_service import build_interrupt_on
+    interrupt_on = build_interrupt_on(db, checkpointer=checkpointer)
     agent = create_deep_agent(
         model=llm,  # I1：不预绑定。deepagents 内部调 bind_tools，预绑定会让 RunnableBinding 无 bind_tools 方法。
         system_prompt=system_prompt,
@@ -174,8 +183,10 @@ async def build_agent(
         store=store,
         middleware=[ToolTimeoutMiddleware()],  # 层 1：工具级超时防护，防工具挂起死等
         checkpointer=checkpointer,  # 附录 A 红利①：agent loop 中间态持久化（None 时不 checkpoint）
+        interrupt_on=interrupt_on,  # 红利②：HITL 工具确认（None = 不拦任何工具）
     )
-    logger.info("build_agent: agent 组装完成")
+    logger.info("build_agent: agent 组装完成（interrupt_on=%s）",
+                sorted(interrupt_on.keys()) if interrupt_on else None)
     return agent
 
 

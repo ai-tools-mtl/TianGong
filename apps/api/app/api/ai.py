@@ -17,9 +17,16 @@ from app.ai.llm_client import astream_llm
 from app.ai.llm_errors import friendly_llm_error
 
 logger = logging.getLogger("tiangong.ai")
-from app.ai.orchestrator import astream_chat, astream_generate, astream_rewrite
+from app.ai.orchestrator import (
+    astream_chat,
+    astream_generate,
+    astream_resume,
+    astream_rewrite,
+    build_resume_agent,
+    collect_final_answer,
+)
 from app.core.database import get_db
-from app.core.exceptions import ValidationError
+from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.rate_limit import AI_LIMIT, _user_or_ip_key, limiter
 from app.deps import get_current_user
 from app.models import Conversation, ConversationStatus, LLMCallLog, Message, Section, User
@@ -28,6 +35,7 @@ from app.schemas.ai import (
     ConversationCreate,
     ConversationUpdate,
     GenerateRequest,
+    ResumeRequest,
     RewriteRequest,
 )
 from app.services import conversation_service, llm_config_service, section_service
@@ -271,6 +279,7 @@ async def chat(
             )
             return
         try:
+            interrupted = False
             async for kind, data in _yield_with_heartbeat_tuple(
                 astream_chat(db, section, history, payload.message,
                              llm_config=llm_config, usage_sink=usage, meta_sink=meta,
@@ -294,6 +303,29 @@ async def chat(
                     yield _sse_event("tool_result", {
                         "name": data["name"], "result": data["result"],
                     })
+                elif kind == "interrupt":
+                    # HITL：agent 停在工具确认断点（如 generate_figure）。落 partial
+                    # assistant 消息（meta.interrupted + 待确认动作），发 interrupt 事件
+                    # 后流结束——不发 done，前端凭 interrupt 事件渲染确认卡片，
+                    # 用户点「同意/拒绝」后走 resume 端点带 Command(resume=...) 续跑。
+                    actions = data.get("actions", [])
+                    partial_msg = Message(
+                        section_id=section.id, conversation_id=conv.id, role="assistant",
+                        content=full_response,
+                        meta={**(stream_meta.build() or {}), "interrupted": True,
+                              "pending_interrupt": actions},
+                    )
+                    db.add(partial_msg)
+                    db.commit()
+                    interrupted = True
+                    yield _sse_event("interrupt", {
+                        "message_id": str(partial_msg.id),
+                        "thread_id": str(user_msg.id),
+                        "actions": actions,
+                    })
+            if interrupted:
+                # interrupt 分支已落库并发完事件，流到此为止（无 done）
+                return
             ai_msg = Message(section_id=section.id, conversation_id=conv.id, role="assistant",
                              content=full_response, meta=stream_meta.build())
             db.add(ai_msg)
@@ -317,8 +349,9 @@ async def chat(
                 "title": new_title,  # None 表示会话已是 active，标题未变
             })
         except asyncio.CancelledError:
-            # 客户端断连（含切会话 abort）：保留已生成内容，标 incomplete 供前端区分「正常结束」与「中断的半截」
-            if full_response:
+            # 客户端断连（含切会话 abort）：保留已生成内容，标 incomplete 供前端区分「正常结束」与「中断的半截」。
+            # interrupted 时 partial 已落库（meta.interrupted），不重复落一条 incomplete。
+            if full_response and not interrupted:
                 db.add(Message(section_id=section.id, conversation_id=conv.id, role="assistant",
                                content=full_response,
                                meta={**(stream_meta.build() or {}), "incomplete": True}))
@@ -332,7 +365,8 @@ async def chat(
             logger.exception("SSE 流式端点异常（已友好化转发前端）")
             # 异常兜底：保留已生成的部分内容（标 incomplete），不丢弃用户已看到的回复。
             # rollback 先撤销中毒事务，再新建 Message 落库；落库失败不阻塞错误上报。
-            if full_response:
+            # interrupted 时 partial 已落库，不重复落。
+            if full_response and not interrupted:
                 try:
                     db.rollback()
                     db.add(Message(
@@ -371,6 +405,199 @@ async def chat(
                 duration_ms=int((time.monotonic() - start) * 1000),
                 error=err,
                 context_meta=meta.get("context_meta"),
+            )
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@router.post("/sections/{section_id}/messages/{message_id}/resume")
+@limiter.limit(AI_LIMIT, key_func=_user_or_ip_key)
+async def resume_chat(
+    request: Request,
+    section_id: str,
+    message_id: str,
+    payload: ResumeRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """续跑一个中断/未完成的 turn（Checkpoint 红利：断点恢复）。
+
+    两类断点、同一入口：
+    - 崩溃/断连的 turn（assistant 消息 meta.incomplete）→ input=None 从 checkpoint 续跑；
+    - HITL 工具确认（meta.interrupted）→ decision=approve/reject 恢复。
+
+    thread_id 必须是原 turn 的 user 消息 id（chat 端点的 checkpoint thread 约定），
+    且与 message_id 同属一个会话——防止拿 A 会话的 thread 续跑 B 会话的消息。
+    """
+    import uuid as _uuid
+
+    def _to_uuid(value, field: str):
+        try:
+            return _uuid.UUID(str(value))
+        except (ValueError, AttributeError, TypeError):
+            raise ValidationError(f"{field} 格式无效")
+
+    section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
+
+    ai_msg = db.get(Message, _to_uuid(message_id, "message_id"))
+    if (ai_msg is None or ai_msg.section_id != section.id or ai_msg.role != "assistant"):
+        raise NotFoundError("消息不存在")
+    prev_meta: dict = dict(ai_msg.meta or {})
+    if not (prev_meta.get("incomplete") or prev_meta.get("interrupted")):
+        raise ConflictError("该消息没有可续跑的断点")
+
+    user_msg = db.get(Message, _to_uuid(payload.thread_id, "thread_id"))
+    if (user_msg is None or user_msg.section_id != section.id or user_msg.role != "user"
+            or user_msg.conversation_id != ai_msg.conversation_id):
+        raise NotFoundError("thread 对应消息不存在")
+
+    if payload.decision is not None and payload.decision not in ("approve", "reject"):
+        raise ValidationError("decision 仅支持 approve / reject")
+
+    llm_config = llm_config_service.resolve_chat_config(
+        db, user_id=current_user.id, chat_source=payload.chat_source)
+    if llm_config is None:
+        raise ValidationError("未配置 LLM，请先在设置中配置")
+
+    # 构建 agent + 判可续性（在 StreamingResponse 之前，409/引导才能以真实 HTTP 状态返回）。
+    # agent 复用同一实例传给 astream_resume，避免重复装配（skill 查询 + prompt 组装）。
+    agent = await build_resume_agent(
+        db, section, llm_config=llm_config, user_input=user_msg.content)
+    state = await agent.aget_state({"configurable": {"thread_id": str(user_msg.id)}})
+    if state is None or not getattr(state, "next", None):
+        raise ConflictError(
+            "断点已失效（服务重启后 checkpoint 丢失，或该 turn 已完成），请直接重发消息")
+    pending_interrupt = any(
+        getattr(t, "interrupts", None) for t in (getattr(state, "tasks", None) or []))
+    if pending_interrupt and payload.decision is None:
+        raise ValidationError("该断点正在等待工具确认，请选择「同意」或「拒绝」后继续")
+
+    # 在开流前捕获 partial 基准（generate() 里 rollback 后再取会触发过期重载）
+    base_content: str = ai_msg.content or ""
+    conv_id_str = str(ai_msg.conversation_id)
+
+    async def generate():
+        db.rollback()
+        streamed = ""
+        usage = {}   # 断链 C3：astream_resume 透传 usage_metadata
+        stream_meta = _StreamMeta()
+        # 延续既有 partial 的工具/思考元数据，历史回灌的时间线才完整
+        stream_meta.tool_events = list(prev_meta.get("tool_events") or [])
+        if prev_meta.get("thinking"):
+            stream_meta._thinking_parts = [prev_meta["thinking"]]
+        start = time.monotonic()
+        status = "success"
+        err = None
+        try:
+            async for kind, data in _yield_with_heartbeat_tuple(
+                astream_resume(db, section, llm_config=llm_config,
+                               thread_id=str(user_msg.id), user_input=user_msg.content,
+                               decision=payload.decision, decision_message=payload.message,
+                               usage_sink=usage, agent=agent)
+            ):
+                if kind == "heartbeat":
+                    yield _sse_event("heartbeat", {})
+                elif kind == "token":
+                    streamed += data
+                    yield _sse_event("token", {"text": data})
+                elif kind == "thinking":
+                    stream_meta.add_thinking(data)
+                    yield _sse_event("thinking", {"text": data})
+                elif kind == "tool_call":
+                    stream_meta.add_tool_call(data["name"], data["args"])
+                    yield _sse_event("tool_call", {
+                        "name": data["name"], "args": data["args"],
+                    })
+                elif kind == "tool_result":
+                    stream_meta.add_tool_result(data["name"], data["result"])
+                    yield _sse_event("tool_result", {
+                        "name": data["name"], "result": data["result"],
+                    })
+                elif kind == "interrupt":
+                    # 续跑中链式触发第二次工具确认：更新同一条 partial 消息后停在断点
+                    actions = data.get("actions", [])
+                    try:
+                        db.rollback()
+                        ai_msg.content = base_content + streamed
+                        ai_msg.meta = {**(stream_meta.build() or {}), "interrupted": True,
+                                       "pending_interrupt": actions}
+                        db.commit()
+                    except Exception:
+                        db.rollback()
+                    yield _sse_event("interrupt", {
+                        "message_id": str(ai_msg.id),
+                        "thread_id": str(user_msg.id),
+                        "actions": actions,
+                    })
+                    return
+            # 完成：以 checkpoint 权威重建全文（崩溃续跑时被中断节点整段重放，
+            # 「DB 半截 + 续跑流」直拼会有重复前缀），失败退回拼接值；同时清除断点标记
+            final_text = await collect_final_answer(agent, str(user_msg.id))
+            ai_msg.content = final_text if final_text is not None else (base_content + streamed)
+            ai_msg.meta = stream_meta.build()
+            db.commit()
+
+            # 首轮就被中断的草稿会话：补做标题总结（与 chat 端点对齐）
+            new_title = None
+            conv = db.get(Conversation, ai_msg.conversation_id)
+            if conv and conv.status == ConversationStatus.draft.value:
+                new_title = conversation_service.summarize_conversation_title(
+                    db, conv, user_msg.content, ai_msg.content, user_id=current_user.id)
+                conv.title = new_title
+                conv.status = ConversationStatus.active.value
+                db.commit()
+
+            yield _sse_event("done", {
+                "message_id": str(ai_msg.id),
+                "conversation_id": conv_id_str,
+                "title": new_title,
+                # 权威全文：崩溃续跑时被中断节点整段重放，前端本地拼接的显示会有
+                # 重复前缀，done 时用 DB 权威内容整体替换。
+                "content": ai_msg.content,
+            })
+        except asyncio.CancelledError:
+            # 再次中断：更新同一条 partial（保留 incomplete 标记），不新建消息
+            try:
+                db.rollback()
+                ai_msg.content = base_content + streamed
+                ai_msg.meta = {**(stream_meta.build() or {}), "incomplete": True}
+                db.commit()
+            except Exception:
+                db.rollback()
+            status = "failed"
+            err = "client_cancelled"
+            raise
+        except Exception as e:
+            status = "failed"
+            err = e
+            logger.exception("resume SSE 端点异常（已友好化转发前端）")
+            try:
+                db.rollback()
+                ai_msg.content = base_content + streamed
+                ai_msg.meta = {**(stream_meta.build() or {}), "incomplete": True}
+                db.commit()
+            except Exception:
+                db.rollback()
+            yield _sse_event("error", {"code": "llm_error", "message": _friendly_llm_error(e)})
+        finally:
+            try:
+                _uid = current_user.id
+                _pid = section.project_id
+            except Exception:
+                _uid = None
+                _pid = None
+            db.rollback()
+            _log_llm_call(
+                db,
+                user_id=_uid,
+                project_id=_pid,
+                action="chat_resume",
+                model=_resolve_model(llm_config),
+                provider=_resolve_provider(llm_config),
+                status=status,
+                tokens=usage or None,
+                duration_ms=int((time.monotonic() - start) * 1000),
+                error=err,
             )
 
     return StreamingResponse(generate(), media_type="text/event-stream")

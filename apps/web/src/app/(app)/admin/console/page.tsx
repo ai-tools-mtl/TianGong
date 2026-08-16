@@ -1,6 +1,6 @@
 'use client'
 
-import { BarChart3, Database, FileText, ImageIcon, Plug, ScanText, Search, Settings } from 'lucide-react'
+import { BarChart3, Database, FileText, ImageIcon, Plug, ScanText, Search, Settings, ShieldQuestion } from 'lucide-react'
 import Link from 'next/link'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
@@ -30,6 +30,12 @@ const CONSOLE_SECTIONS = [
     icon: ImageIcon,
     title: '附图风格预设',
     description: '专利附图配色与渲染规格（黑白/彩色/灰度）',
+  },
+  {
+    href: '/admin/console/hitl',
+    icon: ShieldQuestion,
+    title: '工具确认（HITL）',
+    description: 'agent 工具执行前的用户确认拦截清单',
   },
   {
     href: '/admin/console/stats',
