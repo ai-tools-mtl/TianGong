@@ -18,7 +18,7 @@ include 顺序：子 router 间的路径冲突已无（不同前缀），但子 
 
 from fastapi import APIRouter
 
-from . import chunks, console, content, invites, mcp, retrieval, review, skills, users
+from . import chunks, console, content, invites, mcp, retrieval, review, skills, support, users
 
 router = APIRouter(tags=["admin"])
 router.include_router(users.router)
@@ -30,3 +30,4 @@ router.include_router(invites.router)
 router.include_router(retrieval.router)
 router.include_router(mcp.router)
 router.include_router(chunks.router)
+router.include_router(support.router)

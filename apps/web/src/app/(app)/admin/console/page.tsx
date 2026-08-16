@@ -1,6 +1,6 @@
 'use client'
 
-import { BarChart3, Database, FileText, ImageIcon, Plug, ScanText, Search, Settings, ShieldQuestion } from 'lucide-react'
+import { BarChart3, Database, FileText, ImageIcon, LifeBuoy, Plug, ScanText, Search, Settings, ShieldQuestion } from 'lucide-react'
 import Link from 'next/link'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
@@ -36,6 +36,12 @@ const CONSOLE_SECTIONS = [
     icon: ShieldQuestion,
     title: '工具确认（HITL）',
     description: 'agent 工具执行前的用户确认拦截清单',
+  },
+  {
+    href: '/admin/console/support-view',
+    icon: LifeBuoy,
+    title: '支持查看',
+    description: '凭用户授权码限时只读查看项目（全程审计）',
   },
   {
     href: '/admin/console/stats',

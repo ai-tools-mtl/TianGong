@@ -41,9 +41,11 @@ def upgrade() -> None:
     bind = op.get_bind()
 
     # 清理历史脏数据：同一 user 若有多条未落地 init 会话，保留最新一条。
-    # 哨兵值：把多余的会话标成已落地（project_id 指向一个不存在的 UUID），
-    # 让它们不被部分唯一索引（WHERE project_id IS NULL）覆盖。
-    # 用纯 SQL 子查询批量处理，避免逐条循环。
+    # 改写方式：把多余会话的 kind 置为 'init_dup'——避开部分唯一索引的
+    # kind='init' 条件。原先的写法是把 project_id 指向哨兵 UUID，但
+    # project_id 有 FK 约束（fk_conversations_project_id），哨兵值不存在
+    # 必触发 ForeignKeyViolation（有重复数据的库无法完成迁移）；
+    # 改 kind 不碰外键且保留数据。用纯 SQL 子查询批量处理，避免逐条循环。
     if bind.dialect.name == "postgresql":
         bind.execute(sa.text("""
             WITH ranked AS (
@@ -53,7 +55,7 @@ def upgrade() -> None:
                 WHERE kind = 'init' AND project_id IS NULL
             )
             UPDATE conversations
-            SET project_id = '00000000-0000-0000-0000-000000000000'
+            SET kind = 'init_dup'
             FROM ranked
             WHERE conversations.id = ranked.id AND ranked.rn > 1
         """))

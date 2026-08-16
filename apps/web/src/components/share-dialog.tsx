@@ -1,7 +1,7 @@
 'use client'
 
-import { Copy, Link2, Loader2, Trash2, UserPlus, Users } from 'lucide-react'
-import { useState } from 'react'
+import { Copy, LifeBuoy, Link2, Loader2, Trash2, UserPlus, Users } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -16,6 +16,7 @@ import { EmptyState } from '@/components/ui/empty-state'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import {
   useAddMember,
@@ -25,7 +26,7 @@ import {
   useRevokeShareLink,
   useShareLinks,
 } from '@/lib/queries'
-import type { Member, ShareLink } from '@/types/api'
+import type { Member, ShareLink, SupportCode } from '@/types/api'
 
 interface ShareDialogProps {
   projectId: string
@@ -53,12 +54,19 @@ export function ShareDialog({ projectId, open, onOpenChange }: ShareDialogProps)
               <Link2 className="size-3.5" />
               分享链接
             </TabsTrigger>
+            <TabsTrigger value="support" className="flex-1 gap-1.5">
+              <LifeBuoy className="size-3.5" />
+              技术支持
+            </TabsTrigger>
           </TabsList>
           <TabsContent value="members">
             <MembersTab projectId={projectId} />
           </TabsContent>
           <TabsContent value="links">
             <LinksTab projectId={projectId} />
+          </TabsContent>
+          <TabsContent value="support">
+            <SupportTab projectId={projectId} />
           </TabsContent>
         </Tabs>
       </DialogContent>
@@ -301,4 +309,153 @@ function LinksTab({ projectId }: { projectId: string }) {
 function buildShareUrl(token: string): string {
   const origin = typeof window !== 'undefined' ? window.location.origin : ''
   return `${origin}/shared/${token}`
+}
+
+// ── Tab 3: 技术支持（§8.3 经授权临时查看）──
+
+const _SUPPORT_STATUS_LABEL: Record<SupportCode['status'], string> = {
+  active: '待核销',
+  redeemed: '查看中',
+  expired: '已失效',
+  revoked: '已吊销',
+}
+
+function SupportTab({ projectId }: { projectId: string }) {
+  const [codes, setCodes] = useState<SupportCode[] | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [creating, setCreating] = useState(false)
+  const [ttl, setTtl] = useState(30)
+
+  async function refresh() {
+    try {
+      setCodes(await api.listSupportCodes(projectId))
+    } catch {
+      toast.error('加载授权码失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { void refresh() }, [projectId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleCreate() {
+    setCreating(true)
+    try {
+      const code = await api.createSupportCode(projectId, { ttl_minutes: ttl })
+      navigator.clipboard?.writeText(code.code).then(
+        () => toast.success(`授权码 ${code.code} 已复制，请发给管理员（${ttl} 分钟内有效）`),
+        () => toast.success(`授权码已生成：${code.code}`),
+      )
+      await refresh()
+    } catch (err: unknown) {
+      toast.error((err as { message?: string })?.message ?? '生成失败')
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  async function handleRevoke(code: SupportCode) {
+    try {
+      await api.revokeSupportCode(projectId, code.id)
+      toast.success('授权已吊销')
+      await refresh()
+    } catch (err: unknown) {
+      toast.error((err as { message?: string })?.message ?? '吊销失败')
+    }
+  }
+
+  return (
+    <div className="space-y-3 pt-2">
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        遇到问题需要管理员协助排查时，生成一次性授权码发给管理员。对方凭码可获得
+        <span className="mx-1 font-medium text-foreground">30 分钟</span>
+        的本项目只读查看权限，全程留审计记录；你也可随时吊销。
+      </p>
+      <div className="flex items-end gap-2">
+        <div className="flex-1 space-y-1">
+          <label className="text-[11px] text-muted-foreground">有效期（须在此窗口内被核销）</label>
+          <Select
+            value={String(ttl)}
+            onChange={(e) => setTtl(Number(e.target.value))}
+            className="h-8 px-2 text-[13px]"
+          >
+            <option value="15">15 分钟</option>
+            <option value="30">30 分钟</option>
+            <option value="60">1 小时</option>
+          </Select>
+        </div>
+        <Button
+          size="sm"
+          onClick={handleCreate}
+          disabled={creating}
+          className="gap-1.5"
+        >
+          {creating ? <Loader2 className="size-3.5 animate-spin" /> : <LifeBuoy className="size-3.5" />}
+          生成授权码
+        </Button>
+      </div>
+
+      <div className="space-y-1.5">
+        {loading ? (
+          <div className="flex items-center justify-center py-6 text-sm text-muted-foreground">
+            <Loader2 className="mr-2 size-4 animate-spin" />
+            加载中...
+          </div>
+        ) : (codes ?? []).length === 0 ? (
+          <EmptyState description="暂无授权码" />
+        ) : (
+          (codes ?? []).map((c) => (
+            <div key={c.id} className="rounded-lg border px-3 py-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span
+                    className={cn(
+                      'rounded px-1.5 py-0.5 text-[10px] font-medium',
+                      c.status === 'active' && 'bg-info/10 text-info',
+                      c.status === 'redeemed' && 'bg-warning/10 text-warning',
+                      (c.status === 'expired' || c.status === 'revoked') && 'bg-muted text-muted-foreground',
+                    )}
+                  >
+                    {_SUPPORT_STATUS_LABEL[c.status]}
+                  </span>
+                  <code className="font-mono text-[12px] tracking-widest">{c.code}</code>
+                </div>
+                <div className="flex shrink-0 items-center gap-1">
+                  {c.status === 'active' && (
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      onClick={() => navigator.clipboard?.writeText(c.code).then(() => toast.success('已复制'))}
+                      aria-label="复制授权码"
+                      title="复制授权码"
+                    >
+                      <Copy className="size-3.5" />
+                    </Button>
+                  )}
+                  {(c.status === 'active' || c.status === 'redeemed') && (
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      onClick={() => handleRevoke(c)}
+                      aria-label="吊销授权"
+                      title="吊销授权"
+                    >
+                      <Trash2 className="size-3.5 text-destructive" />
+                    </Button>
+                  )}
+                </div>
+              </div>
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                {c.status === 'redeemed' && c.view_expires_at
+                  ? `管理员查看中，窗口至 ${new Date(c.view_expires_at).toLocaleTimeString('zh-CN')}`
+                  : c.expires_at
+                    ? `有效期至 ${new Date(c.expires_at).toLocaleTimeString('zh-CN')}`
+                    : ''}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  )
 }

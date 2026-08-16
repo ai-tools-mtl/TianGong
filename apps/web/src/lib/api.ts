@@ -1003,6 +1003,30 @@ export const api = {
   revokeShareLink: (projectId: string, linkId: string) =>
     request<void>(`/projects/${projectId}/share-links/${linkId}`, { method: 'DELETE' }),
 
+  // ── 经授权临时查看（§8.3：一次性授权码 + admin 限时只读）──
+  listSupportCodes: (projectId: string) =>
+    request<import('@/types/api').SupportCode[]>(`/projects/${projectId}/support-codes`),
+
+  createSupportCode: (projectId: string, data: { ttl_minutes?: number }) =>
+    request<import('@/types/api').SupportCode>(`/projects/${projectId}/support-codes`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  revokeSupportCode: (projectId: string, codeId: string) =>
+    request<void>(`/projects/${projectId}/support-codes/${codeId}`, { method: 'DELETE' }),
+
+  /** admin 凭码核销（一次性）→ 返回项目只读视图 + 30 分钟查看窗口。 */
+  redeemSupportCode: (code: string) =>
+    request<import('@/types/api').SupportView>('/admin/support-codes/redeem', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    }),
+
+  /** admin 查看窗口内重复查看（仅核销该码的 admin）。 */
+  viewSupportProject: (code: string) =>
+    request<import('@/types/api').SupportView>(`/admin/support-codes/${code}/view`),
+
   getSharedInfo: (token: string) =>
     request<SharedInfo>(`/shared/${token}`),
 

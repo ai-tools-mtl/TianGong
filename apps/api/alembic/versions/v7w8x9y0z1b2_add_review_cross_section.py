@@ -28,7 +28,7 @@ def upgrade() -> None:
         "review_records",
         sa.Column(
             "cross_section_issues",
-            postgresql.JSONB(astext_text=sa.Text()),
+            postgresql.JSONB(astext_type=sa.Text()),
             nullable=False,
             server_default=sa.text("'[]'"),
         ),
@@ -37,7 +37,7 @@ def upgrade() -> None:
         "review_records",
         sa.Column(
             "section_issues",
-            postgresql.JSONB(astext_text=sa.Text()),
+            postgresql.JSONB(astext_type=sa.Text()),
             nullable=False,
             server_default=sa.text("'[]'"),
         ),
