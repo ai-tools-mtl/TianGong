@@ -1,7 +1,11 @@
 """多模态 vision 支持（设计 §9.5 推迟项的落地）。
 
-提供两个纯函数：
-- is_vision_model：按 model 名判断是否支持图片输入（保守名单，漏判只降级不报错）
+提供三个纯函数 + 一个配置解析：
+- is_vision_model：按 model 名判断是否支持图片输入（保守名单，漏判只降级不报错）；
+  markers 参数供注入 admin 配置的名单（resolve_vision_markers），None 用内置
+- resolve_vision_markers：读 SystemSetting vision_model_markers——
+  {"enabled": bool, "extra_markers": [str]}，extra 与内置合并；enabled=False
+  返回空元组（禁用 vision，全部走文字降级）；无配置/脏数据/异常返回 None（内置）
 - build_caption_messages：构造图注润色消息，vision 分支产出多模态 HumanMessage
 
 llm_client.astream_llm 原生支持 list[BaseMessage]，HumanMessage(content=[...])
@@ -11,6 +15,8 @@ llm_client.astream_llm 原生支持 list[BaseMessage]，HumanMessage(content=[..
 import base64
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+
+VISION_MARKERS_KEY = "vision_model_markers"
 
 # 已知 vision 模型名片段（小写子串匹配）。
 # 刻意保守：非 vision 模型误判为 True 会触发不支持的图片请求导致报错（危险），
@@ -27,10 +33,45 @@ _VISION_MARKERS = (
 )
 
 
-def is_vision_model(model: str | None) -> bool:
-    """判断 model 名是否（很可能）支持图片输入。保守，漏判安全。"""
+def is_vision_model(model: str | None, markers: tuple[str, ...] | None = None) -> bool:
+    """判断 model 名是否（很可能）支持图片输入。保守，漏判安全。
+
+    markers：探测名单（resolve_vision_markers 的返回值）。None 用内置默认；
+    空元组 = 显式禁用（恒 False）。
+    """
     m = (model or "").lower()
-    return any(marker in m for marker in _VISION_MARKERS)
+    effective = _VISION_MARKERS if markers is None else markers
+    return any(marker in m for marker in effective)
+
+
+def resolve_vision_markers(db) -> tuple[str, ...] | None:
+    """解析生效的 vision 探测名单（admin 可配）。
+
+    返回 None = 无配置，用内置默认（行为与历史版本完全一致）；
+    返回 ()  = enabled=False，禁用 vision；
+    否则 = 内置 ∪ extra_markers（小写化去空白）。
+    任何异常 fail-open 返回 None——配置读取失败不该影响 caption 主流程。
+    """
+    try:
+        from sqlalchemy import select
+
+        from app.models import SystemSetting
+
+        setting = db.scalar(select(SystemSetting).where(
+            SystemSetting.key == VISION_MARKERS_KEY))
+        stored = setting.value if setting and setting.value else None
+        if not isinstance(stored, dict):
+            return None
+        if not stored.get("enabled", True):
+            return ()
+        extra = stored.get("extra_markers")
+        if not isinstance(extra, list):
+            return None
+        extras = tuple(
+            m.strip().lower() for m in extra if isinstance(m, str) and m.strip())
+        return tuple(_VISION_MARKERS) + extras
+    except Exception:  # noqa: BLE001 — fail-open 到内置名单
+        return None
 
 
 def build_caption_messages(

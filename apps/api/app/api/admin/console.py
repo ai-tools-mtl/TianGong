@@ -503,3 +503,58 @@ def set_hitl_config(
         detail={"enabled": payload.enabled, "tools": payload.tools},
     )
     return updated
+
+
+# ── Vision 模型名单配置 ───────────────────────────────────────────────────────
+
+
+class VisionMarkersUpdate(BaseModel):
+    """admin 配置 vision 探测名单。extra_markers 与内置名单合并；enabled=False 禁用。"""
+    enabled: bool = True
+    extra_markers: list[str] = Field(default_factory=list)
+
+
+@router.get("/admin/console/vision-markers")
+def get_vision_markers(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """读取 vision 名单配置（无配置时返回空 extra + enabled=True 即纯内置）。"""
+    from app.ai.vision import VISION_MARKERS_KEY
+    from app.models import SystemSetting
+
+    setting = db.scalar(select(SystemSetting).where(SystemSetting.key == VISION_MARKERS_KEY))
+    stored = setting.value if setting and isinstance(setting.value, dict) else {}
+    return {
+        "enabled": bool(stored.get("enabled", True)),
+        "extra_markers": stored.get("extra_markers") or [],
+    }
+
+
+@router.put("/admin/console/vision-markers")
+def set_vision_markers(
+    payload: VisionMarkersUpdate,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """保存 vision 名单配置（全量覆盖）。写审计。"""
+    from app.ai.vision import VISION_MARKERS_KEY
+    from app.models import SystemSetting
+
+    value = {
+        "enabled": payload.enabled,
+        "extra_markers": [m.strip().lower() for m in payload.extra_markers if m.strip()],
+    }
+    setting = db.scalar(select(SystemSetting).where(SystemSetting.key == VISION_MARKERS_KEY))
+    if setting:
+        setting.value = value
+        setting.updated_by = admin.id
+    else:
+        db.add(SystemSetting(key=VISION_MARKERS_KEY, value=value, updated_by=admin.id))
+    db.commit()
+    admin_service._audit(
+        db, actor=admin, action="set_vision_markers",
+        target_type="system_setting", target_id=VISION_MARKERS_KEY,
+        detail=value,
+    )
+    return value
