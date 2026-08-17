@@ -170,6 +170,8 @@ export interface CrossSectionIssue {
   description: string
   location_sections: string[]
   suggestion: string
+  /** T2：涉及章节 key（后端兜底回填；旧数据无此字段，为空时仅展示不提供修订入口） */
+  location_section_keys?: string[]
 }
 
 export interface SectionIssue {
