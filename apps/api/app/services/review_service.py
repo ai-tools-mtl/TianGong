@@ -72,7 +72,13 @@ def run_review(db: Session, *, user_id, project_id: str) -> ReviewRecord:
     resolved, remaining = _compare_issues(dimension_scores, last_review)
 
     # ③b 跨章节一致性检查（全篇质量报告新增，+1 次 LLM 调用）
-    cross_issues = _check_cross_section_consistency(sections, llm_config)
+    # T2 spec §3.2.1：传 title→key 映射，产出 location_section_keys 结构化定位
+    title_key_map = {
+        s.title: s.key for s in db.scalars(
+            select(Section).where(Section.project_id == pid)
+        )
+    }
+    cross_issues = _check_cross_section_consistency(sections, llm_config, title_key_map=title_key_map)
 
     # ③c 问题按章节定位聚合（把 dimension 的 evidence/suggestion 归到对应章节）
     section_issues = _aggregate_section_issues(db, pid, dimension_scores)
@@ -209,35 +215,57 @@ def _compare_issues(
 
 
 def _check_cross_section_consistency(
-    sections: dict[str, str], llm_config: ResolvedChatConfig
+    sections: dict[str, str], llm_config: ResolvedChatConfig,
+    title_key_map: dict[str, str] | None = None,
 ) -> list[dict]:
     """跨章节一致性检查（+1 次 LLM 调用，结构化输出）。
 
     检测术语统一性、权利要求-实施例对应、三段论呼应、逻辑矛盾。
     失败时降级返回空列表（不阻断审查主流程）。
+
+    title_key_map（T2 spec §3.2.1）：{章节标题: 章节 key}。给出时：
+    - prompt 附 key 清单，要求 LLM 输出 location_section_keys 从清单取值；
+    - 后处理兜底（单点化，前端不做二次匹配，D14）：过滤清单外的幻觉 key；
+      keys 为空时按 location_sections 标题精确匹配回填。None 时行为同旧版。
     """
     from app.ai.review_prompts import CONSISTENCY_SYSTEM_PROMPT, build_consistency_prompt
     from app.ai.schemas.review_schema import ConsistencyReport
 
     llm = get_llm(llm_config)
-    prompt = build_consistency_prompt(sections)
+    prompt = build_consistency_prompt(sections, title_key_map=title_key_map)
     messages = [
         SystemMessage(content=CONSISTENCY_SYSTEM_PROMPT),
         HumanMessage(content=prompt),
     ]
+
+    def _postprocess(issues: list[dict]) -> list[dict]:
+        if not title_key_map:
+            return issues
+        valid_keys = set(title_key_map.values())
+        for issue in issues:
+            keys = [k for k in (issue.get("location_section_keys") or []) if k in valid_keys]
+            if not keys:
+                # LLM 未给/全被过滤：按标题精确匹配回填（无匹配留空——前端仅展示）
+                keys = [
+                    title_key_map[t] for t in (issue.get("location_sections") or [])
+                    if t in title_key_map
+                ]
+            issue["location_section_keys"] = keys
+        return issues
+
     try:
         structured_llm = llm.with_structured_output(ConsistencyReport)
         result = structured_llm.invoke(messages)
         if isinstance(result, ConsistencyReport):
-            return [issue.model_dump() for issue in result.issues]
+            return _postprocess([issue.model_dump() for issue in result.issues])
         # dict 兜底
-        return result.get("issues", [])
+        return _postprocess(result.get("issues", []))
     except (NotImplementedError, AttributeError):
         # provider 不支持 structured output，退回文本解析
         try:
             resp = llm.invoke(messages)
             data = _parse_json_response(resp.content)
-            return data.get("issues", [])
+            return _postprocess(data.get("issues", []))
         except Exception:
             return []
     except Exception:

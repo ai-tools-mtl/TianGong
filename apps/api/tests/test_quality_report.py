@@ -127,3 +127,139 @@ def test_trend_endpoint(client, registered_user, db_session):
     assert data[0]["total_score"] == 60
     assert data[1]["total_score"] == 75
     assert "clarity" in data[0]["dimension_scores"]
+
+
+# ── T2 批 2：跨章节 issue 结构化定位（location_section_keys）──────────────────
+
+
+class TestLocationSectionKeys:
+    """spec §3.2.1：keys 从 prompt 清单取值；LLM 未给时按标题回填；幻觉 key 过滤。"""
+
+    def test_schema_field_default_empty(self):
+        """新字段默认空列表——旧 ReviewRecord JSON（无此字段）可解析（向后兼容）。"""
+        from app.ai.schemas.review_schema import CrossSectionIssue
+        issue = CrossSectionIssue(
+            type="terminology", description="d",
+            location_sections=["技术问题"], suggestion="s",
+        )
+        assert issue.location_section_keys == []
+
+    def test_schema_accepts_keys(self):
+        from app.ai.schemas.review_schema import CrossSectionIssue
+        issue = CrossSectionIssue(
+            type="terminology", description="d",
+            location_sections=["技术问题"], suggestion="s",
+            location_section_keys=["problem", "solution"],
+        )
+        assert issue.location_section_keys == ["problem", "solution"]
+
+    def test_prompt_lists_key_manifest(self):
+        """build_consistency_prompt 传 title_key_map 时附「key: 标题」清单，
+        并要求 location_section_keys 从清单取值（spec §3.2.1-2）。"""
+        from app.ai.review_prompts import build_consistency_prompt
+        prompt = build_consistency_prompt(
+            {"技术问题": "内容A", "技术方案": "内容B"},
+            title_key_map={"技术问题": "problem", "技术方案": "solution"},
+        )
+        assert "problem: 技术问题" in prompt
+        assert "solution: 技术方案" in prompt
+        assert "location_section_keys" in prompt
+
+    def test_prompt_without_map_unchanged_shape(self):
+        """不传 title_key_map（旧调用方）：prompt 无 key 清单，正常构造。"""
+        from app.ai.review_prompts import build_consistency_prompt
+        prompt = build_consistency_prompt({"技术问题": "内容A"})
+        assert "技术问题" in prompt
+        assert "location_section_keys" not in prompt
+
+    def _mock_structured_llm(self, monkeypatch, report):
+        """mock get_llm：with_structured_output 正常工作，invoke 返回预置 ConsistencyReport。"""
+        from unittest.mock import MagicMock
+        from app.services import review_service
+
+        mock_llm = MagicMock()
+        structured = MagicMock()
+        structured.invoke.return_value = report
+        mock_llm.with_structured_output.return_value = structured
+        monkeypatch.setattr(review_service, "get_llm", lambda cfg: mock_llm)
+
+    def test_structured_output_keeps_keys(self, db_session, registered_user, monkeypatch):
+        """LLM 正常返回 keys → 保留（roundtrip）。"""
+        from app.ai.schemas.review_schema import ConsistencyReport, CrossSectionIssue
+        from app.services import review_service
+        from app.services.llm_config_service import ResolvedChatConfig
+
+        report = ConsistencyReport(issues=[
+            CrossSectionIssue(
+                type="terminology", description="术语不一致",
+                location_sections=["技术问题", "技术方案"], suggestion="统一为「控制器」",
+                location_section_keys=["problem", "solution"],
+            ),
+        ])
+        self._mock_structured_llm(monkeypatch, report)
+        config = ResolvedChatConfig(base_url="http://t", api_key="k", model="m", source="global")
+        result = review_service._check_cross_section_consistency(
+            {"技术问题": "A", "技术方案": "B"}, config,
+            title_key_map={"技术问题": "problem", "技术方案": "solution"},
+        )
+        assert result[0]["location_section_keys"] == ["problem", "solution"]
+
+    def test_backfill_keys_from_titles(self, db_session, registered_user, monkeypatch):
+        """LLM 只给标题（未给 keys）→ 按 title_key_map 回填（spec §3.2.1-3）。"""
+        from app.ai.schemas.review_schema import ConsistencyReport, CrossSectionIssue
+        from app.services import review_service
+        from app.services.llm_config_service import ResolvedChatConfig
+
+        report = ConsistencyReport(issues=[
+            CrossSectionIssue(
+                type="terminology", description="术语不一致",
+                location_sections=["技术方案"], suggestion="统一",
+            ),
+        ])
+        self._mock_structured_llm(monkeypatch, report)
+        config = ResolvedChatConfig(base_url="http://t", api_key="k", model="m", source="global")
+        result = review_service._check_cross_section_consistency(
+            {"技术方案": "B"}, config,
+            title_key_map={"技术方案": "solution"},
+        )
+        assert result[0]["location_section_keys"] == ["solution"]
+
+    def test_backfill_no_match_leaves_empty(self, db_session, registered_user, monkeypatch):
+        """标题在 map 中无匹配 → keys 留空（前端仅展示不提供 chip 入口，spec 边界 #11）。"""
+        from app.ai.schemas.review_schema import ConsistencyReport, CrossSectionIssue
+        from app.services import review_service
+        from app.services.llm_config_service import ResolvedChatConfig
+
+        report = ConsistencyReport(issues=[
+            CrossSectionIssue(
+                type="other", description="d",
+                location_sections=["不存在的标题"], suggestion="s",
+            ),
+        ])
+        self._mock_structured_llm(monkeypatch, report)
+        config = ResolvedChatConfig(base_url="http://t", api_key="k", model="m", source="global")
+        result = review_service._check_cross_section_consistency(
+            {"A": "B"}, config, title_key_map={"A": "a"},
+        )
+        assert result[0]["location_section_keys"] == []
+
+    def test_hallucinated_key_filtered(self, db_session, registered_user, monkeypatch):
+        """LLM 给了不在 map 值集合的 key（幻觉）→ 过滤掉（spec §3.2.1-3 后处理）。"""
+        from app.ai.schemas.review_schema import ConsistencyReport, CrossSectionIssue
+        from app.services import review_service
+        from app.services.llm_config_service import ResolvedChatConfig
+
+        report = ConsistencyReport(issues=[
+            CrossSectionIssue(
+                type="terminology", description="d",
+                location_sections=["技术方案"], suggestion="s",
+                location_section_keys=["claims", "solution"],  # claims 不存在
+            ),
+        ])
+        self._mock_structured_llm(monkeypatch, report)
+        config = ResolvedChatConfig(base_url="http://t", api_key="k", model="m", source="global")
+        result = review_service._check_cross_section_consistency(
+            {"技术方案": "B"}, config,
+            title_key_map={"技术方案": "solution"},
+        )
+        assert result[0]["location_section_keys"] == ["solution"]

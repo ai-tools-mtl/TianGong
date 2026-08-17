@@ -19,10 +19,13 @@ CONSISTENCY_SYSTEM_PROMPT = """你是专利交底书质量审查专家。你的�
 每个问题需：类型（terminology/reference/contradiction/other）、具体描述、涉及哪些章节、修复建议。"""
 
 
-def build_consistency_prompt(section_texts: dict[str, str]) -> str:
+def build_consistency_prompt(section_texts: dict[str, str], title_key_map: dict[str, str] | None = None) -> str:
     """构造跨章节一致性检查 prompt。
 
     section_texts: {章节标题: 章节文本}，全量传入（非单维度）。
+    title_key_map: {章节标题: 章节 key}（T2 spec §3.2.1）——给出时在 prompt 末尾附
+    「key: 标题」清单，要求 location_section_keys 从清单取值（供前端结构化路由到
+    章节发起修订）。None（旧调用方）时行为与原先完全一致。
     """
     parts = ["请检查以下专利交底书各章节的跨章节一致性：\n"]
     for title, text in section_texts.items():
@@ -34,4 +37,12 @@ def build_consistency_prompt(section_texts: dict[str, str]) -> str:
         "重点关注：术语是否前后统一、权利要求与实施例是否对应、"
         "技术问题-方案-效果是否连贯、有无逻辑矛盾。"
     )
+    if title_key_map:
+        manifest = "\n".join(f"- {key}: {title}" for title, key in title_key_map.items())
+        parts.append(
+            "\n## 章节定位清单\n"
+            f"{manifest}\n"
+            "每个问题的 location_section_keys 必须从上述清单的 key 中取值，"
+            "不要编造清单外的 key。"
+        )
     return "\n".join(parts)

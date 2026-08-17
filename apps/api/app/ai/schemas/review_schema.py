@@ -26,6 +26,12 @@ class CrossSectionIssue(BaseModel):
     description: str = Field(description="问题描述，需具体")
     location_sections: list[str] = Field(description="涉及哪些章节标题")
     suggestion: str = Field(description="修复建议")
+    # T2 spec §3.2.1：结构化定位（章节 key，供前端路由到章节发起修订）。
+    # 旧数据无此字段（默认空，向后兼容）；LLM 未给时由后端按标题兜底回填。
+    location_section_keys: list[str] = Field(
+        default_factory=list,
+        description="涉及章节的 key（从用户消息给出的 key 清单中取值，不要编造）",
+    )
 
 
 class ConsistencyReport(BaseModel):
