@@ -1,8 +1,8 @@
 'use client'
 
-import { ArrowLeft, ExternalLink, Scale, Search } from 'lucide-react'
+import { ArrowLeft, ExternalLink, Scale, Search, Wand2 } from 'lucide-react'
 import Link from 'next/link'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import { useRef, useState } from 'react'
 import { toast } from 'sonner'
 
@@ -11,21 +11,30 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Textarea } from '@/components/ui/textarea'
 import { api } from '@/lib/api'
 import { getChatDefaultSource } from '@/lib/llm-source'
-import { usePriorArt, useSearchPatents } from '@/lib/queries'
-import type { PatentResult } from '@/types/api'
+import { usePriorArt, useSearchPatents, useSections } from '@/lib/queries'
+import { launchRevision } from '@/stores/revision-store'
+import type { PatentResult, Section } from '@/types/api'
 
 export default function PatentsPage() {
   const params = useParams<{ id: string }>()
+  const router = useRouter()
   const [query, setQuery] = useState('')
   // 新颖性评估：流式报告 + 进行中标记
   const [assessment, setAssessment] = useState('')
   const [assessing, setAssessing] = useState(false)
   const assessAbort = useRef<AbortController | null>(null)
+  // T2 批4：手动兜底修订（无结构化建议时复制建议文本发起）
+  const [manualOpen, setManualOpen] = useState(false)
+  const [manualText, setManualText] = useState('')
+  const [manualTarget, setManualTarget] = useState('')
 
   const { data: priorArt } = usePriorArt(params.id)
   const searchMut = useSearchPatents(params.id)
+  const { data: sectionsData } = useSections(params.id)
+  const sections: Section[] = sectionsData ?? []
 
   const onSearch = () => {
     if (!query.trim()) {
@@ -41,6 +50,21 @@ export default function PatentsPage() {
   const results: PatentResult[] = searchMut.data?.results ?? priorArt?.results ?? []
   const lastQuery = searchMut.data?.query ?? priorArt?.query
   const savedAssessment = priorArt?.assessment?.content ?? ''
+  const suggestions = priorArt?.assessment?.suggestions
+
+  // 目标章节前置校验（spec §3.5.5）：不存在或无内容的章节禁用「去修订」
+  function sectionUsable(key: string): Section | undefined {
+    const s = sections.find((x) => x.key === key)
+    return s && s.content ? s : undefined
+  }
+
+  function handleRevise(key: string, text: string) {
+    const ok = launchRevision(sections, key, [text], 'novelty', router, params.id)
+    if (!ok) toast.error('目标章节不存在（可能已被调整）')
+  }
+
+  // 手动兜底：仅列出有内容的章节
+  const contentSections = sections.filter((s) => s.content)
 
   async function onAssess() {
     const source = getChatDefaultSource()
@@ -129,6 +153,86 @@ export default function PatentsPage() {
                 <Markdown className="prose prose-sm max-w-none dark:prose-invert">
                   {assessment || savedAssessment}
                 </Markdown>
+              </div>
+            )}
+
+            {/* T2 批4：结构化建议卡（spec §3.5.5）——逐条「去修订」走统一修订管线 */}
+            {!assessing && suggestions && suggestions.length > 0 && (
+              <div className="space-y-1.5">
+                <p className="text-[12px] font-medium text-muted-foreground">
+                  差异化撰写建议（点击逐条修订）
+                </p>
+                {suggestions.map((s: { section_key: string; text: string }, i: number) => {
+                  const target = sectionUsable(s.section_key)
+                  const title = sections.find((x) => x.key === s.section_key)?.title ?? s.section_key
+                  return (
+                    <div
+                      key={i}
+                      className="flex items-center justify-between gap-2 rounded-lg border border-amber-300/50 bg-amber-50/60 px-3 py-2 dark:border-amber-700/40 dark:bg-amber-950/20"
+                    >
+                      <span className="min-w-0 flex-1 text-[12px]">
+                        <span className="mr-1 font-medium">{title}</span>
+                        <span className="text-muted-foreground">{s.text}</span>
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 shrink-0 gap-1 px-2 text-xs"
+                        disabled={!target}
+                        title={target ? `修订「${title}」章节` : '目标章节不存在或尚无内容'}
+                        onClick={() => handleRevise(s.section_key, s.text)}
+                      >
+                        <Wand2 className="size-3" />
+                        去修订
+                      </Button>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            {/* T2 批4：手动兜底（无结构化建议：旧数据/解析失败） */}
+            {!assessing && (assessment || savedAssessment) && (!suggestions || suggestions.length === 0) && (
+              <div className="space-y-2">
+                <button
+                  className="text-[12px] text-muted-foreground underline-offset-2 hover:underline"
+                  onClick={() => {
+                    setManualOpen((v) => !v)
+                    setManualTarget(contentSections[0]?.key ?? '')
+                  }}
+                >
+                  {manualOpen ? '收起手动修订' : '手动复制建议去修订'}
+                </button>
+                {manualOpen && (
+                  <div className="space-y-2 rounded-lg border p-3">
+                    <Textarea
+                      value={manualText}
+                      onChange={(e) => setManualText(e.target.value)}
+                      placeholder="粘贴评估报告中的建议要点（如：突出特征X的连接方式…）"
+                      className="min-h-[64px] text-[13px]"
+                    />
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={manualTarget}
+                        onChange={(e) => setManualTarget(e.target.value)}
+                        className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                      >
+                        {contentSections.map((s) => (
+                          <option key={s.key} value={s.key}>{s.title}</option>
+                        ))}
+                      </select>
+                      <Button
+                        size="sm"
+                        className="h-8 gap-1 text-xs"
+                        disabled={!manualText.trim() || !manualTarget}
+                        onClick={() => handleRevise(manualTarget, manualText.trim())}
+                      >
+                        <Wand2 className="size-3" />
+                        开始修订
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </CardContent>

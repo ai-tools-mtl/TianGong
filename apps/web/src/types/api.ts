@@ -878,10 +878,17 @@ export interface PatentSearchResponse {
 }
 
 /** AI 新颖性评估报告（存于 prior_art_refs.assessment） */
+export interface NoveltySuggestion {
+  section_key: string
+  text: string
+}
+
 export interface NoveltyAssessment {
   content: string
   assessed_at: string
   model: string
+  /** T2 批4：结构化差异化建议（lite 解析 fail-open，可能缺失） */
+  suggestions?: NoveltySuggestion[]
 }
 
 export interface PriorArtRefs {

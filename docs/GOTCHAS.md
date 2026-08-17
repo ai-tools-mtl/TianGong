@@ -215,3 +215,26 @@ items.map((a) => ...)                  //    a: any
 - **修复**：commit 73926f9 —— ① 改 `astext_type`；② 改为把多余会话 `kind='init_dup'`（避开部分索引条件，不碰外键、不删数据）
 - **预防**：迁移文件要在一个**有历史脏数据的真实库**上验证过才算数；写「哨兵值」前先查目标列的约束
 - **影响任务**：feat/support-access（本机 PG 实测通过到 head）
+
+### E7: langgraph「有 checkpointer 必须有 thread_id」入口级 ValueError ⚠️（已修）
+
+**坑**：langgraph 的 `pregel/main.py:2589` 有入口级检查——图带 checkpointer 且
+config 无任何 `configurable` key 时，`astream_events` **无条件抛**
+`ValueError: Checkpointer requires one or more of the following 'configurable' keys: thread_id, checkpoint_ns, checkpoint_id`。
+与是否触发 interrupt 无关。
+
+**后果**：orchestrator 三路 `build_agent` 均传 `get_checkpointer()`，而 generate 端点
+是唯一不传 thread_id 的 agent loop 路径（`_astream_agent_events` 里 config=None）——
+**generate（AI 生成草稿）自 2026-08-13 checkpoint 合并起在 PG 环境（checkpointer
+初始化成功）下每次调用都以 llm_error 告终**。chat/resume 传 thread_id 幸免。单测
+未暴露：test_orchestrator 全 mock build_agent，走不到 langgraph 入口检查。
+
+**修复**（T2 批1，2026-08-17）：generate 去 checkpointer（它无 message、无 resume
+能力，checkpoint 零收益纯隐患）；revise 从设计上就不传。探针测试
+`test_langgraph_probe.py` 四条钉死行为，升级 langgraph 时的回归警报。
+
+**顺带观察**：`astream_events(version="v2")` 对原生 StateGraph 的 interrupt **不
+emit `on_interrupt` 事件**（只出现在 `astream(stream_mode='updates')` 的
+`__interrupt__` 块）；生产 orchestrator 的 on_interrupt 监听在 deepagents
+middleware 路径有效（HITL 卡片已验证）——两套图的事件形态不同，勿用最小图推断
+deepagents 行为。
