@@ -1,6 +1,6 @@
 'use client'
 
-import { Archive, CheckCircle2, Eye, History, MoreHorizontal, PanelLeft, PanelRight, ScanSearch, Search, Send, Share2 } from 'lucide-react'
+import { Archive, CheckCircle2, Eye, History, MoreHorizontal, PanelLeft, PanelRight, ScanSearch, Search, Send, Share2, Wand2, X } from 'lucide-react'
 import { useParams } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
@@ -21,6 +21,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { api } from '@/lib/api'
 import { queryKeys, useArchiveProject, useProject, useSections, useUpdateSection } from '@/lib/queries'
 import { cn } from '@/lib/utils'
+import { useRevisionStore } from '@/stores/revision-store'
 import { useUIStore } from '@/stores/ui'
 import type { Section } from '@/types/api'
 
@@ -68,6 +69,32 @@ export default function ProjectDetailPage() {
       setCurrentId(sections[0].id)
     }
   }, [sections, currentId])
+
+  // ?section={key} 深链定位（T2 spec §3.5.1）：报告页/新颖性页/术语面板发起修订
+  // （launchRevision）后跳转至此。挂载时读一次并切到目标章节，随后清参防刷新重复跳转。
+  // 用 window.location.search 而非 useSearchParams：'use client' 页面直接用后者
+  // 需要 Suspense 边界（Next 15 构建要求），此处只读一次，无需响应式。
+  useEffect(() => {
+    const key = new URLSearchParams(window.location.search).get('section')
+    if (!key || !sections?.length) return
+    const target = sections.find((s) => s.key === key)
+    if (target) {
+      setCurrentId(target.id)
+      window.history.replaceState(null, '', `/projects/${projectId}`)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sections?.length])
+
+  // 滞留修订任务提示条（T2 spec §3.5.1）：store 有 pending 但当前章节不匹配时，
+  // 顶部轻提示引导切换（用户可能刷新/绕路，任务单值滞留需可见）。
+  const pendingRevision = useRevisionStore((s) => s.pending)
+  const clearRevision = useRevisionStore((s) => s.clear)
+  const pendingTarget = pendingRevision
+    ? sections.find((s) => s.key === pendingRevision.sectionKey)
+    : undefined
+  const showPendingBar = Boolean(
+    pendingRevision && current && pendingTarget && pendingTarget.id !== current.id,
+  )
 
   useEffect(() => {
     if (sections && currentId) {
@@ -377,6 +404,32 @@ export default function ProjectDetailPage() {
             </div>
           )}
         </div>
+        {showPendingBar && pendingTarget && (
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b bg-amber-50 px-4 py-1.5 text-xs text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+            <span className="flex items-center gap-1.5">
+              <Wand2 className="size-3.5" />
+              有待执行的 AI 修订任务（{pendingTarget.title}）
+            </span>
+            <span className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 px-2 text-xs"
+                onClick={() => setCurrentId(pendingTarget.id)}
+              >
+                前往
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label="丢弃修订任务"
+                onClick={clearRevision}
+              >
+                <X className="size-3.5" />
+              </Button>
+            </span>
+          </div>
+        )}
         <div className="flex-1 overflow-y-auto px-6 py-4">
           <div className="h-full">
             {current && current.key === 'drawings' && (
