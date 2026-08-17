@@ -170,3 +170,88 @@ def test_assess_without_prior_art_409(client, db_session, user_with_config):
     res = client.post(f"/api/v1/projects/{p.id}/patents/assess")
     assert res.status_code == 409
     assert "先执行专利检索" in res.json()["message"]
+
+
+# ── T2 批4：建议结构化（parse_suggestions + persist 集成）───────────────────
+
+def _mock_parse_llm(monkeypatch, content: str):
+    """mock novelty_service 的 get_llm：invoke 返回固定文本。"""
+    from unittest.mock import MagicMock
+    from app.services import novelty_service
+    mock_llm = MagicMock()
+    resp = MagicMock()
+    resp.content = content
+    mock_llm.invoke.return_value = resp
+    monkeypatch.setattr(novelty_service, "get_llm", lambda cfg: mock_llm)
+    return mock_llm
+
+
+class TestParseSuggestions:
+    def test_parses_and_filters_whitelist(self, db_session, user_with_config, monkeypatch):
+        """正常解析 + section_key 白名单过滤（非法 key 丢弃，spec §3.4）。"""
+        from app.services.novelty_service import parse_suggestions
+        _mock_parse_llm(monkeypatch, '{"suggestions": ['
+            '{"section_key": "solution", "text": "突出特征X的连接方式"},'
+            '{"section_key": "claims", "text": "非法key应被丢弃"},'
+            '{"section_key": "problem", "text": "对准区别技术问题"}]}')
+        got = parse_suggestions(db_session, user_id=user_with_config.id, content="报告全文")
+        assert got is not None and len(got) == 2
+        assert {s["section_key"] for s in got} == {"solution", "problem"}
+        assert got[0]["text"]
+
+    def test_prompt_targets_third_section_only(self):
+        """parse prompt 明确只解析「## 三、差异化撰写建议」段（v1.2 补充）。"""
+        from app.services.novelty_service import _build_parse_prompt
+        prompt = _build_parse_prompt("报告")
+        assert "三、差异化撰写建议" in prompt
+        assert "suggestions" in prompt
+
+    def test_parse_failure_returns_none(self, db_session, user_with_config, monkeypatch):
+        """LLM 输出解析失败 → None（fail-open：assessment 仅存 content）。"""
+        from app.services.novelty_service import parse_suggestions
+        _mock_parse_llm(monkeypatch, "不是JSON")
+        assert parse_suggestions(db_session, user_id=user_with_config.id, content="x") is None
+
+    def test_persist_includes_suggestions(self, db_session, user_with_config):
+        """persist_assessment 传 suggestions → assessment dict 含该键；None → 不含。"""
+        from app.services.novelty_service import persist_assessment
+        p = _mk_project(db_session, user_with_config)
+        persist_assessment(db_session, p, content="报告A", model="m",
+                           suggestions=[{"section_key": "solution", "text": "建议"}])
+        db_session.expire_all()
+        assert db_session.get(Project, p.id).prior_art_refs["assessment"]["suggestions"] == [
+            {"section_key": "solution", "text": "建议"}]
+
+        p2 = _mk_project(db_session, user_with_config)
+        persist_assessment(db_session, p2, content="报告B", model="m")
+        db_session.expire_all()
+        assert "suggestions" not in db_session.get(Project, p2.id).prior_art_refs["assessment"]
+
+
+def test_assess_endpoint_persists_suggestions(
+        client, db_session, user_with_config, monkeypatch):
+    """端点集成：主报告流完成 → done 前同步解析 → suggestions 随 assessment 落库。"""
+    p = _mk_project(db_session, user_with_config, prior_art={
+        "query": "图像识别",
+        "results": [{"patent_number": "CN1", "title": "t", "applicant": "a",
+                     "abstract": "abs", "url": "u", "publication_date": "d",
+                     "legal_status": "有效", "relevance": 0.9}],
+    })
+    _mk_section(db_session, p, "solution", "技术方案", ["本方案采用特征X"])
+    db_session.commit()
+    _login(client, user_with_config)
+
+    async def _fake_astream(messages, *, llm_config, usage_sink=None):
+        yield "## 三、差异化撰写建议\n突出特征X的连接方式。"
+
+    monkeypatch.setattr("app.ai.llm_client.astream_llm", _fake_astream)
+    from app.services import novelty_service
+    _mock_parse_llm(monkeypatch, '{"suggestions": [{"section_key": "solution", "text": "突出特征X的连接方式"}]}')
+
+    res = client.post(f"/api/v1/projects/{p.id}/patents/assess")
+    assert res.status_code == 200
+    assert "event: done" in res.text
+
+    db_session.expire_all()
+    saved = db_session.get(Project, p.id).prior_art_refs["assessment"]
+    assert saved["suggestions"][0]["section_key"] == "solution"

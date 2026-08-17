@@ -19,6 +19,7 @@ from app.services import patent_service
 from app.services.novelty_service import (
     build_assessment_messages,
     load_assessment_context,
+    parse_suggestions,
     persist_assessment,
 )
 
@@ -104,10 +105,15 @@ async def assess_novelty(
             ):
                 report += token
                 yield _sse("token", {"text": token})
-            persist_assessment(db, project, content=report, model=llm_config.model)
+            # T2 批4：done 前同步解析结构化建议（lite，通常 1-3s；
+            # fail-open——失败仅存 content，前端走手动兜底入口）
+            suggestions = parse_suggestions(db, user_id=current_user.id, content=report)
+            persist_assessment(db, project, content=report, model=llm_config.model,
+                               suggestions=suggestions)
             yield _sse("done", {
                 "content": report,
                 "project_id": str(project.id),
+                **({"suggestions": suggestions} if suggestions else {}),
             })
         except Exception as e:
             from app.ai.llm_errors import friendly_llm_error
