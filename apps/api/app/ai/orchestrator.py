@@ -113,6 +113,42 @@ def build_generate_instruction(section: Section) -> str:
     )
 
 
+def build_revise_instruction(db, section: Section, directives: list[str]) -> str:
+    """[T2 spec §3.1.4] 构造章节针对性修订指令（评估建议 → 最小改动修订）。
+
+    与 build_generate_instruction 的关键差异：
+    - generate 从零写稿（吸收对话意图）；revise 对已成文内容做定点修改，
+      现文 + 建议已自包含，不嵌对话历史（spec D2）。
+    - 现有内容用 _tiptap_to_markdown 转换后嵌入——与 /diff 端点同款转换器，
+      LLM 看到的原文 = diff 比较的原文，从源头减少格式伪 hunk（spec §7 R2）。
+    - 术语优先级链（spec D13）：术语表 > 沿用现状 > 最小改动——现文含变体时
+      指令明确「按标准术语修正（即使修订指令未提及）」，与 system prompt 的
+      项目术语表层一致，不产生矛盾指令。
+    """
+    from app.services.export_service import _tiptap_to_markdown
+
+    current_md = _tiptap_to_markdown(db, section.content) if section.content else ""
+    numbered = "\n".join(f"{i}. {d}" for i, d in enumerate(directives, 1))
+    return (
+        f"你要对章节【{section.title}】执行一次针对性修订。\n\n"
+        f"# 修订指令（逐条落实，全部处理）\n"
+        f"{numbered}\n\n"
+        f"# 修订约束（必须遵守）\n"
+        f"- 最小改动原则：只修改与修订指令相关的段落；未涉及的段落保持原文，"
+        f"禁止重排结构、调整编号、改写无关句子。\n"
+        f"- 逐字保留：未涉及段落连同其格式（标题层级、列表标记、空行、表格结构）"
+        f"原样输出，不做任何风格化改写。\n"
+        f"- 术语：若系统提示中给出了本项目术语表，以其为准——正文中不符合术语表的"
+        f"用法一并修正为标准术语（即使修订指令未提及）；未给术语表时，沿用全文"
+        f"已确立的用法，不引入新的同义表述。\n"
+        f"- 若某条指令与章节现状冲突（如建议修改的内容不存在），在相应位置合理落实，"
+        f"不虚构不相关内容。\n"
+        f"- 输出修订后的整章 Markdown（完整正文，不要输出 diff、解释或前后对照）。\n\n"
+        f"# 现有章节内容（你的输出必须与它逐段对齐，格式风格保持一致）\n"
+        f"{current_md}"
+    )
+
+
 def _extract_hitl_payload(data) -> dict | None:
     """从 on_interrupt 事件 data 提取 HITL 请求（{"actions": [{name,args,description}]}）。
 
@@ -296,7 +332,6 @@ async def astream_generate(
     （astream_rewrite 仍在用）也正确填充 usage_sink。
     """
     from app.ai.agent import build_agent
-    from app.ai.checkpoint import get_checkpointer
 
     # [L1] 传 section + user_input，让 build_agent 装配动态 system prompt（spec §3.3.1）
     # generate 场景无新输入，用 history 最后一条 user message 作为记忆检索信号
@@ -305,9 +340,14 @@ async def astream_generate(
         (m.content for m in reversed(history) if m.role == "user"), None
     )
     # [S2-2] generate 场景无新输入，意图恒为「代写草稿」——直接传 draft（比让规则层猜更准）
+    # [T2 探针坐实 2026-08-17] checkpointer 显式 None：generate 无 thread_id（config=None），
+    # langgraph 入口级要求「有 checkpointer 必须有 configurable」（pregel/main.py:2589）——
+    # 传 checkpointer 时 generate 在 PG 环境（checkpointer 初始化成功）下每次调用都抛
+    # ValueError（test_langgraph_probe.py）。generate 无 message、无 resume 能力，
+    # checkpoint 零收益纯隐患，去除。
     agent = await build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section),
                         section=section, user_input=gen_query, intent="draft",
-                        checkpointer=get_checkpointer())
+                        checkpointer=None)
     # [S4-2] 用 build_generate_instruction 构造含 CoT 分步思考的指令
     instruction = build_generate_instruction(section)
 
@@ -414,6 +454,39 @@ async def collect_final_answer(agent, thread_id: str) -> str | None:
     except Exception as e:  # noqa: BLE001 — fail-open，退回拼接值
         logger.warning("collect_final_answer 失败，退回拼接值: %s", e)
         return None
+
+
+async def astream_revise(
+    db, section: Section, directives: list[str],
+    *, llm_config: ResolvedChatConfig, usage_sink: dict | None = None,
+) -> AsyncIterator[tuple[str, dict | str]]:
+    """章节针对性修订（T2 spec §3.1.2）：建议 directives → 流式修订稿（Markdown）。
+
+    与 astream_generate 的三点差异（spec D2）：
+    - **不传 checkpointer（显式 None）**：探针坐实 config=None + checkpointer 会
+      入口级 ValueError（test_langgraph_probe.py）；revise 无 resume 能力，
+      checkpoint 零收益，interrupt_on 随 checkpointer=None 一并禁用（工具直通）。
+    - **不带聊天历史、不 compress_history**：generate 需吸收对话意图从零写稿；
+      revise 针对已成文内容定点修改，现文 + 建议自包含，历史只引入无关噪音。
+    - **不落库**：产出候选稿，全文经 done 事件返回，由前端走 /diff + apply-diff
+      人工审核应用（spec D8：不提供跳过审核的路径）。
+
+    yield (kind, payload) 与 astream_generate 同协议（token/thinking/tool_call/
+    tool_result；interrupt 不会出现——已禁用）。
+    """
+    from app.ai.agent import build_agent
+
+    agent = await build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section),
+                        section=section, user_input=None, intent="edit",
+                        checkpointer=None)
+    instruction = build_revise_instruction(db, section, directives)
+
+    async for item in _astream_agent_events(
+        agent, {"messages": [{"role": "user", "content": instruction}]}, thread_id=None,
+        usage_sink=usage_sink,
+        timeout_notice="\n\n[系统提示：修订生成超时，已中止。可重新发起修订。]",
+    ):
+        yield item
 
 
 async def astream_rewrite(

@@ -1,6 +1,6 @@
 'use client'
 
-import { GitCompare, Loader2, PanelRight, Sparkles, Square, Trash2 } from 'lucide-react'
+import { GitCompare, Loader2, PanelRight, Sparkles, Square, Trash2, Wand2 } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -23,6 +23,8 @@ import {
   useRewriteDiff,
 } from '@/lib/queries'
 import { cn } from '@/lib/utils'
+import { useRevisionStore } from '@/stores/revision-store'
+import type { PendingRevision } from '@/stores/revision-store'
 import { useUIStore } from '@/stores/ui'
 import type { Conversation, Hunk, MessageMeta, Section, ToolEvent } from '@/types/api'
 
@@ -65,7 +67,7 @@ function handleStaleSourceError() {
   toast.error('当前 LLM 源已失效（授权被撤销或配置已删除），已清除默认源，请前往「设置」重新选择')
 }
 
-type AIPhase = 'idle' | 'chatting' | 'generating' | 'done' | 'diff-review'
+type AIPhase = 'idle' | 'chatting' | 'generating' | 'revising' | 'done' | 'diff-review'
 
 /**
  * 当前 DiffReviewPanel 展示的 hunks 来自哪条路径——决定 apply 时该把什么当作
@@ -111,6 +113,9 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
   // diff 审核的来源 + 选区重写路径专用的整章 ai 文本（apply 时必须原样回传）。
   const [diffOrigin, setDiffOrigin] = useState<DiffOrigin>('full')
   const [rewriteAiFull, setRewriteAiFull] = useState('')
+  // T2 修订确认卡片（spec §3.5.2）：报告页/新颖性页/术语面板 launch 后跳转过来，
+  // 目标章节匹配时从 revision store 取出 pending 弹卡片；用户勾选 directives 后发起。
+  const [reviseCard, setReviseCard] = useState<(PendingRevision & { checked: boolean[] }) | null>(null)
   const [currentConvId, setCurrentConvId] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -181,7 +186,21 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
     setHunks([])
     setRewriteAiFull('')
     setDiffOrigin('full')
+    setReviseCard(null)
   }, [sectionId])
+
+  // T2 修订任务消费（spec §3.5.2）：store 有 pending 且 sectionKey 匹配当前章节时
+  // 取出弹确认卡片。不匹配则留在 store（page.tsx 顶部提示条引导切换章节）。
+  const sectionKey = section.key
+  useEffect(() => {
+    const pending = useRevisionStore.getState().pending
+    if (pending && pending.sectionKey === sectionKey) {
+      const p = useRevisionStore.getState().consume()
+      if (p) {
+        setReviseCard({ ...p, checked: p.directives.map(() => true) })
+      }
+    }
+  }, [sectionKey])
 
   // 自动滚到底部
   useEffect(() => {
@@ -512,15 +531,90 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
     }
   }
 
-  async function handleOpenDiff() {
-    if (!aiDraft.trim()) {
+  // T2 修订流（spec §3.5.2）：确认卡片勾选 directives → streamRevise 流式渲染
+  // （复用 generating 的预览样式与 AgentSteps）→ done 的权威全文替换本地拼接
+  // → 自动进 diff 审核（diffOrigin='full'，复用 generate 的「审查差异」链路）。
+  async function handleStartRevise(card: PendingRevision & { checked: boolean[] }) {
+    const source = getChatDefaultSource()
+    if (!source) {
+      toast.error('请先在设置中选择 LLM 源')
+      return
+    }
+    // 超 500 字的 directive 截断（后端 422，前端先截+提示，spec 边界 #2）
+    const directives = card.directives
+      .filter((_, i) => card.checked[i])
+      .map((d) => {
+        if (d.length > 500) {
+          toast.info('部分修订指令过长，已截断至 500 字')
+          return d.slice(0, 500)
+        }
+        return d
+      })
+    if (directives.length === 0) {
+      toast.error('请至少勾选一条修订建议')
+      return
+    }
+    setReviseCard(null) // 单飞：revising 中不显示卡片（spec 边界 #16）
+    setPhase('revising')
+    setAiDraft('')
+    abortRef.current = new AbortController()
+    let md = ''
+    let revThinking = ''
+    const revToolEvents: ToolEvent[] = []
+    setGenSteps({ thinking: '', toolEvents: [] })
+    try {
+      await api.streamRevise(
+        sectionId,
+        { directives, origin: card.origin, chat_source: source },
+        (token) => {
+          md += token
+          setAiDraft(md)
+        },
+        abortRef.current.signal,
+        {
+          onThinking: (t) => { revThinking += t; setGenSteps({ thinking: revThinking, toolEvents: [...revToolEvents] }) },
+          onToolCall: (e) => { revToolEvents.push({ kind: 'call', name: e.name, args: e.args }); setGenSteps({ thinking: revThinking, toolEvents: [...revToolEvents] }) },
+          onToolResult: (e) => { revToolEvents.push({ kind: 'result', name: e.name, result: e.result }); setGenSteps({ thinking: revThinking, toolEvents: [...revToolEvents] }) },
+        },
+        (done) => {
+          // done.content 为后端权威全文（spec §3.1.1）：整体替换本地拼接缓冲
+          if (done?.content) {
+            md = done.content
+            setAiDraft(done.content)
+          }
+        },
+      )
+      // 候选稿产出 → 直接进人工 diff 审核（spec D8：不提供跳过审核的路径）
+      await handleOpenDiff(md)
+    } catch (err: unknown) {
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        // 中断：丢弃缓冲，恢复确认卡片可重新发起（spec 边界 #3）
+        setAiDraft('')
+        setPhase('idle')
+        setReviseCard({ ...card, checked: card.checked })
+      } else if (isForbiddenSourceError(err)) {
+        handleStaleSourceError()
+        setPhase('idle')
+      } else {
+        const e = err as { message?: string }
+        toast.error(e?.message || '修订失败')
+        setPhase('idle')
+      }
+    }
+  }
+
+  async function handleOpenDiff(explicitText?: string) {
+    // explicitText：revising 流程在 done 回调里拿到权威全文后立即审查——
+    // 此时 setAiDraft 尚未反映到本闭包（React state 异步），须显式传入。
+    const text = explicitText ?? aiDraft
+    if (!text.trim()) {
       toast.error('没有可审查的内容')
       return
     }
     setPhase('diff-review')
     setDiffOrigin('full')
     try {
-      const res = await computeDiff.mutateAsync(aiDraft)
+      const res = await computeDiff.mutateAsync(text)
       setHunks(res.hunks)
       if (res.hunks.length === 0) {
         toast.info('AI 内容与当前章节无差异')
@@ -626,10 +720,10 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
     )
   }
 
-  const busy = phase === 'chatting' || phase === 'generating'
+  const busy = phase === 'chatting' || phase === 'generating' || phase === 'revising'
 
   return (
-    <div className={cn('flex min-h-0 w-full flex-1 flex-col', phase === 'generating' && 'ai-generating')}>
+    <div className={cn('flex min-h-0 w-full flex-1 flex-col', (phase === 'generating' || phase === 'revising') && 'ai-generating')}>
       {/* 标题栏 */}
       <div className="flex h-10 shrink-0 items-center justify-between gap-1 border-b px-2">
         <h3 className="flex items-center gap-1.5 px-1 text-[13px] font-semibold">
@@ -637,7 +731,7 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
           AI 助手
         </h3>
         <div className="flex items-center gap-0.5">
-          {messages.length > 0 && phase !== 'generating' && phase !== 'done' && (
+          {messages.length > 0 && phase !== 'generating' && phase !== 'revising' && phase !== 'done' && (
             <Button
               variant="ghost"
               size="icon-xs"
@@ -648,7 +742,7 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
               <Trash2 className="size-3.5" />
             </Button>
           )}
-          {phase === 'generating' ? (
+          {phase === 'generating' || phase === 'revising' ? (
             <Button size="xs" variant="destructive" onClick={handleStop}>
               停止
             </Button>
@@ -670,7 +764,7 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
       </div>
 
       {/* 会话选择栏 */}
-      {phase !== 'generating' && phase !== 'done' && (
+      {phase !== 'generating' && phase !== 'revising' && phase !== 'done' && (
         <ConversationList
           conversations={conversations ?? []}
           currentConvId={currentConvId}
@@ -685,24 +779,74 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
 
       {/* 内容区 */}
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-3">
-        {phase === 'generating' || phase === 'done' ? (
-          // 生成草稿的 markdown 预览
+        {reviseCard && (
+          // T2 修订确认卡片（spec §3.5.2）：顶部卡片而非聊天消息——修订不是对话行为。
+          // 勾选将要应用的 directives（用户可见可控，D3），可关闭丢弃。
+          <div className="rounded-lg border border-amber-300/60 bg-amber-50 px-3 py-2.5 dark:border-amber-700/50 dark:bg-amber-950/30">
+            <div className="flex items-center justify-between">
+              <h4 className="flex items-center gap-1.5 text-[13px] font-semibold">
+                <Wand2 className="size-3.5 text-amber-600 dark:text-amber-400" />
+                AI 修订本章
+                <span className="text-[11px] font-normal text-muted-foreground">
+                  （来源：
+                  {reviseCard.origin === 'review' ? '审查报告' : reviseCard.origin === 'novelty' ? '新颖性评估' : '术语检查'}）
+                </span>
+              </h4>
+              <Button variant="ghost" size="icon-xs" aria-label="放弃修订" onClick={() => setReviseCard(null)}>
+                ×
+              </Button>
+            </div>
+            <div className="mt-1.5 space-y-1">
+              {reviseCard.directives.map((d, i) => (
+                <label key={i} className="flex cursor-pointer items-start gap-1.5 text-xs leading-relaxed">
+                  <input
+                    type="checkbox"
+                    checked={reviseCard.checked[i]}
+                    onChange={() =>
+                      setReviseCard((c) =>
+                        c ? { ...c, checked: c.checked.map((v, j) => (j === i ? !v : v)) } : c,
+                      )
+                    }
+                    className="mt-0.5 size-3.5 shrink-0 accent-amber-600"
+                  />
+                  <span className={cn('text-ellipsis', reviseCard.checked[i] ? '' : 'text-muted-foreground line-through')}>
+                    {d.length > 500 ? `${d.slice(0, 500)}…` : d}
+                  </span>
+                </label>
+              ))}
+            </div>
+            <Button
+              size="sm"
+              className="mt-2 gap-1.5"
+              disabled={!reviseCard.checked.some(Boolean)}
+              onClick={() => handleStartRevise(reviseCard)}
+            >
+              <Wand2 className="size-3.5" />
+              开始修订
+            </Button>
+            <p className="mt-1.5 text-[11px] text-muted-foreground">
+              修订产出经差异审核后应用，未勾选的部分不会改动。
+            </p>
+          </div>
+        )}
+        {phase === 'generating' || phase === 'revising' || phase === 'done' ? (
+          // 生成草稿 / 修订的 markdown 预览
           <div className="space-y-3">
             <div className="rounded-lg border border-ai/20 bg-ai-muted/50 px-3 py-2.5">
-              {/* agent 透明化：生成阶段的思考过程 + 工具调用 */}
+              {/* agent 透明化：生成/修订阶段的思考过程 + 工具调用 */}
               <AgentSteps
                 thinking={genSteps.thinking}
                 toolEvents={genSteps.toolEvents}
-                streaming={phase === 'generating' && !aiDraft}
+                streaming={(phase === 'generating' || phase === 'revising') && !aiDraft}
               />
-              {phase === 'generating' && !genSteps.thinking && !genSteps.toolEvents?.length && !aiDraft && (
+              {(phase === 'generating' || phase === 'revising') && !genSteps.thinking && !genSteps.toolEvents?.length && !aiDraft && (
                 <div className="mb-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
                   <span className="flex gap-0.5">
                     <span className="size-1.5 animate-bounce rounded-full bg-ai [animation-delay:0ms]" />
                     <span className="size-1.5 animate-bounce rounded-full bg-ai [animation-delay:150ms]" />
                     <span className="size-1.5 animate-bounce rounded-full bg-ai [animation-delay:300ms]" />
                   </span>
-                  AI 正在生成...
+                  {phase === 'revising' ? 'AI 正在按建议修订...' : 'AI 正在生成...'}
                 </div>
               )}
               <Markdown className="prose prose-sm max-w-none dark:prose-invert">
@@ -711,7 +855,7 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
             </div>
             {phase === 'done' && (
               <div className="flex items-center gap-2">
-                <Button size="sm" onClick={handleOpenDiff} disabled={computeDiff.isPending} className="gap-1.5">
+                <Button size="sm" onClick={() => handleOpenDiff()} disabled={computeDiff.isPending} className="gap-1.5">
                   {computeDiff.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <GitCompare className="size-3.5" />}
                   审查差异
                 </Button>

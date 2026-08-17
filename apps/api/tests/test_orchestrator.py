@@ -335,3 +335,20 @@ def test_collect_final_answer_fail_open_returns_none():
             raise RuntimeError("checkpoint gone")
 
     assert asyncio.run(collect_final_answer(_Boom(), "T")) is None
+
+
+def test_astream_generate_checkpointer_none(db_session, monkeypatch):
+    """[T2 探针修复回归] generate 不传 checkpointer：config=None + checkpointer 会
+    入口级 ValueError（test_langgraph_probe.py 坐实，PG 环境 generate 全坏根因）。
+    generate 无 resume 能力，checkpointer 零收益——显式 None。"""
+    from app.ai import orchestrator as orch_mod
+    from app.ai import agent as agent_mod
+    from app.services.llm_config_service import ResolvedChatConfig
+
+    section = _build_section_with_project(db_session)
+    captured: dict = {}
+    monkeypatch.setattr(agent_mod, "build_agent", _make_fake_build_agent(captured))
+
+    config = ResolvedChatConfig(base_url="http://x", api_key="k", model="glm-4.7", source="env")
+    _consume(orch_mod.astream_generate(db_session, section, [], llm_config=config))
+    assert captured["build_args"].get("checkpointer") is None

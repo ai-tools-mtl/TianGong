@@ -317,6 +317,30 @@ export const api = {
     return _consumeSSE(res, onToken, undefined, agentHandlers)
   },
 
+  /** 章节针对性修订（T2：建议 directives → 流式修订稿；done 事件带权威全文，
+   *  产出候选稿由前端走 /diff + apply-diff 人工审核应用）。 */
+  streamRevise: async (
+    sectionId: string,
+    body: { directives: string[]; origin: 'review' | 'novelty' | 'terms' | 'manual'; chat_source?: string | null },
+    onToken: (t: string) => void,
+    signal?: AbortSignal,
+    agentHandlers?: AgentStreamHandlers,
+    onDone?: (d: { content: string; section_id: string }) => void,
+  ) => {
+    const res = await authFetch(`/sections/${sectionId}/revise`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        directives: body.directives,
+        origin: body.origin,
+        ...(body.chat_source ? { chat_source: body.chat_source } : {}),
+      }),
+      signal,
+    })
+    if (!res.ok) throw await _sseHttpError(res)
+    return _consumeSSE(res, onToken, onDone, agentHandlers)
+  },
+
   /** 续跑中断/未完成的 turn（崩溃续跑 decision=undefined；HITL 决策 approve/reject）。 */
   streamResume: async (
     sectionId: string,
