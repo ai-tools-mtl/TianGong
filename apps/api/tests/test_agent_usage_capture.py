@@ -34,8 +34,12 @@ def _chunk(content="", usage=None, reasoning=None):
 
 
 def _make_fake_agent(events):
-    """构造假 CompiledStateGraph，astream_events 产出预设事件列表。"""
-    async def _astream_events(input, *, version=None):
+    """构造假 CompiledStateGraph，astream_events 产出预设事件列表。
+
+    签名含 config（checkpoint 批次起 _astream_agent_events 以
+    astream_events(input, version="v2", config=...) 调用——config 可为 None）。
+    """
+    async def _astream_events(input, *, version=None, config=None):
         for evt in events:
             yield evt
     agent = MagicMock()

@@ -286,7 +286,11 @@ def test_get_llm_uses_resolved_config_fields(monkeypatch):
 
 
 def test_get_llm_streaming_enables_stream_usage(monkeypatch):
-    """streaming=True 时同步开启 stream_usage（断链 C3：流式回传 token 用量给 usage_sink）。"""
+    """streaming/stream_usage 参数透传（断链 C3：流式回传 token 用量给 usage_sink）。
+
+    两参数独立（agent.py 调用方显式传 stream_usage=True）——streaming=True
+    不隐式开启 stream_usage。
+    """
     from app.ai.llm_client import get_llm
     from app.services.llm_config_service import ResolvedChatConfig
 
@@ -306,9 +310,15 @@ def test_get_llm_streaming_enables_stream_usage(monkeypatch):
         model="global-model",
         source="global",
     )
-    get_llm(cfg, streaming=True)
+    get_llm(cfg, streaming=True, stream_usage=True)
     assert captured["streaming"] is True
     assert captured["stream_usage"] is True
+
+    # 独立性：只开 streaming 不带 stream_usage
+    captured.clear()
+    get_llm(cfg, streaming=True)
+    assert captured["streaming"] is True
+    assert captured["stream_usage"] is False
 
     # 非 streaming 时两者均 False
     captured.clear()
@@ -332,7 +342,7 @@ def test_chat_summarizes_title_on_first_message(client, registered_user, db_sess
     # mock 标题总结，避免真实 LLM 调用
     monkeypatch.setattr(
         "app.api.ai.conversation_service.summarize_conversation_title",
-        lambda db, conv, u, a, llm_config=None: "权利要求讨论",
+        lambda db, conv, u, a, user_id=None: "权利要求讨论",  # 对齐真实签名（db, conversation, first_user, first_ai, user_id）
     )
 
     res = client.post(f"/api/v1/sections/{section.id}/chat", json={"message": "我想讨论权利要求"})
@@ -372,7 +382,7 @@ def test_chat_does_not_resummarize_active_conversation(client, registered_user, 
     conv_id = str(conv.id)
 
     summarize_called = {"n": 0}
-    def fake_summarize(db, c, u, a, llm_config=None):
+    def fake_summarize(db, c, u, a, user_id=None):
         summarize_called["n"] += 1
         return "不应被调用"
 

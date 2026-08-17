@@ -283,7 +283,7 @@ def test_compute_rewrite_diff_basic(db_session, registered_user):
     section.content = _tiptap_para("本发明涉及一种机械装置")
     db_session.commit()
 
-    hunks, ai_full = compute_rewrite_diff(section, "涉及", "归属于")
+    hunks, ai_full = compute_rewrite_diff(db_session, section, "涉及", "归属于")
     assert len(hunks) == 1
     h = hunks[0]
     assert h.type == "replace"
@@ -303,7 +303,7 @@ def test_compute_rewrite_diff_not_found_raises(db_session, registered_user):
     db_session.commit()
 
     with pytest.raises(ValidationError):
-        compute_rewrite_diff(section, "不存在的文字", "新内容")
+        compute_rewrite_diff(db_session, section, "不存在的文字", "新内容")
 
 
 def test_compute_rewrite_diff_first_occurrence_only(db_session, registered_user):
@@ -315,7 +315,7 @@ def test_compute_rewrite_diff_first_occurrence_only(db_session, registered_user)
     section.content = _tiptap_para("所述装置包括所述凸轮")
     db_session.commit()
 
-    hunks, ai_full = compute_rewrite_diff(section, "所述", "该")
+    hunks, ai_full = compute_rewrite_diff(db_session, section, "所述", "该")
     # 只替换首次：'该装置包括所述凸轮' vs '所述装置包括所述凸轮'
     # diff 应只产生 1 个 replace hunk（首次'所述'→'该'），第二次'所述'保留
     assert len(hunks) == 1
@@ -334,7 +334,7 @@ def test_compute_rewrite_diff_empty_section(db_session, registered_user):
     db_session.commit()
 
     with pytest.raises(ValidationError):
-        compute_rewrite_diff(section, "任意文字", "新内容")
+        compute_rewrite_diff(db_session, section, "任意文字", "新内容")
 
 
 def test_compute_rewrite_diff_identical_ai_no_hunks(db_session, registered_user):
@@ -345,7 +345,7 @@ def test_compute_rewrite_diff_identical_ai_no_hunks(db_session, registered_user)
     section.content = _tiptap_para("本发明涉及一种机械装置")
     db_session.commit()
 
-    hunks, ai_full = compute_rewrite_diff(section, "涉及", "涉及")  # 相同
+    hunks, ai_full = compute_rewrite_diff(db_session, section, "涉及", "涉及")  # 相同
     assert hunks == []
     # AI 与选区相同时，ai_full 等于原文（注入无变化）
     assert ai_full == "本发明涉及一种机械装置"

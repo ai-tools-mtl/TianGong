@@ -64,7 +64,7 @@ def _mock_chat_openai(token_text="hello"):
 
     用法：
         mock_inst, mock_chat = _mock_chat_openai("你好")
-        with patch("app.ai.llm_client.ChatOpenAI", return_value=mock_inst) as mock_chat:
+        with patch("app.ai.llm_client.ReasoningChatOpenAI", return_value=mock_inst) as mock_chat:
             ...
             _assert_custom_kwargs(mock_chat)  # mock_chat.call_args 捕获构造参数
     """
@@ -122,12 +122,17 @@ def _fake_agent_factory(token_text, captured):
     """
 
     class _FakeAgent:
-        async def astream_events(self, input_, *, version="v2"):
+        async def astream_events(self, input_, *, version="v2", config=None):
             chunk = MagicMock()
             chunk.content = token_text
+            # MagicMock 自动属性 truthy——usage 捕获/extract_reasoning 路径会把
+            # 它们当真值塞进 SSE payload 或 LLMCallLog 后 JSON 序列化炸
+            chunk.usage_metadata = None
+            chunk.additional_kwargs = {}
+            chunk.response_metadata = {}
             yield {"event": "on_chat_model_stream", "data": {"chunk": chunk}}
 
-    async def _build_agent(db, *, llm_config, user_id, section=None, user_input=None, intent=None):
+    async def _build_agent(db, *, llm_config, user_id, section=None, user_input=None, intent=None, **kw):
         if captured is not None:
             captured.append(llm_config)
         return _FakeAgent()
@@ -180,7 +185,7 @@ def test_rewrite_uses_user_custom_config_not_env(client, registered_user, db_ses
     section = sections[0]
 
     mock_inst = _mock_chat_openai("重写后的文字")
-    with patch("app.ai.llm_client.ChatOpenAI", return_value=mock_inst) as mock_chat:
+    with patch("app.ai.llm_client.ReasoningChatOpenAI", return_value=mock_inst) as mock_chat:
         res = client.post(f"/api/v1/sections/{section.id}/rewrite", json={
             "selected_text": "原文", "instruction": "更简洁",
         })
@@ -196,7 +201,7 @@ def test_caption_figures_uses_user_custom_config_not_env(client, registered_user
     drawings = next(s for s in sections if s.key == "drawings")
 
     mock_inst = _mock_chat_openai("图 1 是本发明装置示意图。")
-    with patch("app.ai.llm_client.ChatOpenAI", return_value=mock_inst) as mock_chat:
+    with patch("app.ai.llm_client.ReasoningChatOpenAI", return_value=mock_inst) as mock_chat:
         res = client.post(
             f"/api/v1/sections/{drawings.id}/caption-figures",
             json={"descriptions": ["图1是装置结构图"]},

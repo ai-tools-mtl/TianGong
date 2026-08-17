@@ -183,7 +183,8 @@ def test_on_startup_calls_recovery_without_crashing(monkeypatch):
 
     from app.main import on_startup
 
-    on_startup()  # 不应抛异常
+    import asyncio
+    asyncio.run(on_startup())  # on_startup 已是 async——同步调用只建协程不执行
 
     assert called["n"] == 1
 
@@ -200,7 +201,8 @@ def test_on_startup_swallows_recovery_error(monkeypatch):
 
     from app.main import on_startup
 
-    on_startup()  # 不应抛异常
+    import asyncio
+    asyncio.run(on_startup())  # 不应抛异常
 
 
 # ──────────────────────────────────────────────────────────────
