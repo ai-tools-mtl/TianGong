@@ -21,6 +21,7 @@ from app.ai.orchestrator import (
     astream_chat,
     astream_generate,
     astream_resume,
+    astream_revise,
     astream_rewrite,
     build_resume_agent,
     collect_final_answer,
@@ -36,6 +37,7 @@ from app.schemas.ai import (
     ConversationUpdate,
     GenerateRequest,
     ResumeRequest,
+    ReviseRequest,
     RewriteRequest,
 )
 from app.services import conversation_service, llm_config_service, section_service
@@ -766,6 +768,104 @@ async def rewrite(
                 tokens=usage or None,
                 duration_ms=int((time.monotonic() - start) * 1000),
                 error=err,
+            )
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@router.post("/sections/{section_id}/revise")
+@limiter.limit(AI_LIMIT, key_func=_user_or_ip_key)
+async def revise_section(
+    request: Request,
+    section_id: str,
+    payload: ReviseRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """章节针对性修订（T2 spec §3.1）：评估建议 directives → 流式修订稿。
+
+    与 generate 的本质差异：产出是**候选稿**——不写 section.content、不建 Message、
+    不建 conversation，全文经 done.content 返回，前端走 /diff + apply-diff 人工审核
+    应用（spec D8）。astream_revise 内部 checkpointer=None（spec §3.1.3）。
+    """
+    section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
+
+    # 空内容 409：判据 content 抽纯文本非全空白（不看 status——drafting 也可能断连半截空）
+    from app.services.novelty_service import _extract_text
+    if not section.content or not _extract_text(section.content).strip():
+        raise ConflictError("章节尚无内容，请先撰写或生成草稿")
+
+    # 开流前解析，确保 ForbiddenError 转成真实 HTTP 403（chat/generate 同款约定）
+    llm_config = llm_config_service.resolve_chat_config(db, user_id=current_user.id, chat_source=payload.chat_source)
+
+    async def generate():
+        db.rollback()
+        full_md = ""
+        usage = {}
+        start = time.monotonic()
+        status = "success"
+        err = None
+        if llm_config is None:
+            yield _sse_event("error", {"code": "no_llm_config", "message": "未配置 LLM，请先在设置中配置"})
+            _log_llm_call(
+                db, user_id=current_user.id, project_id=section.project_id, action="revise",
+                model=_resolve_model(llm_config), provider=_resolve_provider(llm_config),
+                status="failed", duration_ms=int((time.monotonic() - start) * 1000),
+                error="no_llm_config",
+            )
+            return
+        try:
+            async for kind, data in _yield_with_heartbeat_tuple(
+                astream_revise(db, section, payload.directives,
+                                llm_config=llm_config, usage_sink=usage)
+            ):
+                if kind == "heartbeat":
+                    yield _sse_event("heartbeat", {})
+                elif kind == "token":
+                    full_md += data
+                    yield _sse_event("token", {"text": data})
+                elif kind == "thinking":
+                    yield _sse_event("thinking", {"text": data})
+                elif kind == "tool_call":
+                    yield _sse_event("tool_call", {
+                        "name": data["name"], "args": data["args"],
+                    })
+                elif kind == "tool_result":
+                    yield _sse_event("tool_result", {
+                        "name": data["name"], "result": data["result"],
+                    })
+            # 不落库（spec §3.1.2-4）：done 带权威全文，候选稿交前端走 diff 审核
+            yield _sse_event("done", {"content": full_md, "section_id": str(section.id)})
+        except asyncio.CancelledError:
+            # 客户端断开：丢弃缓冲（不落库）——建议源在报告页持久存在，可重新发起
+            status = "failed"
+            err = "client_cancelled"
+            raise
+        except Exception as e:
+            status = "failed"
+            err = e
+            logger.exception("SSE 流式端点异常（已友好化转发前端）")
+            yield _sse_event("error", {"code": "llm_error", "message": _friendly_llm_error(e)})
+        finally:
+            try:
+                _uid = current_user.id
+                _pid = section.project_id
+            except Exception:
+                _uid = None
+                _pid = None
+            db.rollback()
+            _log_llm_call(
+                db,
+                user_id=_uid,
+                project_id=_pid,
+                action="revise",
+                model=_resolve_model(llm_config),
+                provider=_resolve_provider(llm_config),
+                status=status,
+                tokens=usage or None,
+                duration_ms=int((time.monotonic() - start) * 1000),
+                error=err,
+                context_meta={"origin": payload.origin},
             )
 
     return StreamingResponse(generate(), media_type="text/event-stream")
