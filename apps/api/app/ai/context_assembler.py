@@ -408,6 +408,16 @@ def build_system_prompt(
 
     # 知识库预注入层：系统自动检索与当前章节最相关的历史案例，让 agent 从一开始就
     # 带着参考上下文工作。放在已写章节之后（同属结构性上下文），用户记忆之前。
+    # 【T2 术语表层插在它之前】（spec §3.3.3）：术语约束紧贴正文上下文，优先级高于外部参考。
+
+    # 【T2】项目术语表层（强约束，D13：术语表 > 沿用现状 > 最小改动——与
+    # revise instruction 的术语优先级条款一致，不产生矛盾指令）。
+    # 每次装配现查（动态生效，无会话固化）；仅 enabled 条目；上限 100 条。
+    try:
+        parts.extend(_project_terms_lines(db, section.project_id))
+    except Exception:  # noqa: BLE001 — 读取失败静默降级（防事务毒化，与其他层一致）
+        db.rollback()
+
     if knowledge_context:
         parts.append(
             "# 知识库参考（你历史案例中与本章节最相关的内容，请参考其术语与风格）"
@@ -525,3 +535,45 @@ def build_system_prompt(
     parts.append(SYSTEM_PROMPT)
 
     return "\n\n".join(parts)
+
+
+# ── T2 项目术语表层（spec §3.3.3）────────────────────────────────────────────
+
+# 注入条数上限：专利项目术语表通常 <50 条，100 条为防御性上限（超出截断 + warning）
+_TERMS_INJECT_LIMIT = 100
+# definition 注入截断（字符）——超限优先截断 definition 而非丢条目（spec §7 R4）
+_TERM_DEFINITION_LIMIT = 200
+
+
+def _project_terms_lines(db, project_id) -> list[str]:
+    """装配项目术语表层 parts 行。空表/全 disabled 返回空列表（整层跳过）。
+
+    失败由调用方 try/except 静默（防事务毒化）。
+    """
+    from sqlalchemy import select
+
+    from app.models import ProjectTerm
+
+    rows = db.scalars(
+        select(ProjectTerm).where(
+            ProjectTerm.project_id == project_id,
+            ProjectTerm.enabled.is_(True),
+        ).order_by(ProjectTerm.term)
+    ).fetchmany(_TERMS_INJECT_LIMIT + 1)
+    if not rows:
+        return []
+    if len(rows) > _TERMS_INJECT_LIMIT:
+        logger.warning("项目术语表超过 %d 条，注入截断（project=%s）",
+                       _TERMS_INJECT_LIMIT, project_id)
+        rows = rows[:_TERMS_INJECT_LIMIT]
+
+    lines = ["# 本项目术语表（写作与修订必须使用标准术语，禁止使用其变体）"]
+    for r in rows:
+        entry = r.term
+        if r.variants:
+            entry += f"（禁用：{'、'.join(r.variants)}）"
+        if r.definition:
+            definition = r.definition[:_TERM_DEFINITION_LIMIT]
+            entry += f"：{definition}"
+        lines.append(f"- {entry}")
+    return lines

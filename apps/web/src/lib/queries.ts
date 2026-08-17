@@ -24,6 +24,7 @@ import type {
   TagMerge,
   TemplateSummary,
   InviteCode,
+  TermEntry,
 } from '@/types/api'
 
 export const queryKeys = {
@@ -1195,5 +1196,41 @@ export function useInvalidateAssistantList() {
   return () => qc.invalidateQueries({
     queryKey: queryKeys.assistant.conversations,
     exact: true,
+  })
+}
+
+// ── T2 项目术语表 ────────────────────────────────────────────────────────────
+
+export function useTerms(projectId: string) {
+  return useQuery<TermEntry[]>({
+    queryKey: ['terms', projectId],
+    queryFn: () => api.listTerms(projectId),
+    enabled: !!projectId,
+  })
+}
+
+export function useCreateTerm(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (data: { term: string; definition?: string | null; variants?: string[]; source?: string }) =>
+      api.createTerm(projectId, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['terms', projectId] }),
+  })
+}
+
+export function useUpdateTerm(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, ...data }: { id: string; term?: string; definition?: string | null; variants?: string[]; enabled?: boolean }) =>
+      api.updateTerm(id, data),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['terms', projectId] }),
+  })
+}
+
+export function useDeleteTerm(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.deleteTerm(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['terms', projectId] }),
   })
 }

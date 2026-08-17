@@ -1,6 +1,6 @@
 'use client'
 
-import { Archive, CheckCircle2, Eye, History, MoreHorizontal, PanelLeft, PanelRight, ScanSearch, Search, Send, Share2, Wand2, X } from 'lucide-react'
+import { Archive, BookA, CheckCircle2, Eye, History, MoreHorizontal, PanelLeft, PanelRight, ScanSearch, Search, Send, Share2, Wand2, X } from 'lucide-react'
 import { useParams } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
@@ -16,6 +16,7 @@ import { TiptapEditor } from '@/components/editor/tiptap-editor'
 import type { TiptapEditorRef } from '@/components/editor/tiptap-editor'
 import { VersionDrawer } from '@/components/version-drawer'
 import { ShareDialog } from '@/components/share-dialog'
+import { TermsPanel } from '@/components/terms-panel'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { api } from '@/lib/api'
@@ -43,6 +44,7 @@ export default function ProjectDetailPage() {
   const [current, setCurrent] = useState<Section | null>(null)
   const [versionOpen, setVersionOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
+  const [termsOpen, setTermsOpen] = useState(false)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const editorRef = useRef<TiptapEditorRef>(null)
   // AIChatPanel 的 imperative ref：选区重写气泡（在下方 <TiptapEditor> 内）触发
@@ -327,6 +329,15 @@ export default function ProjectDetailPage() {
                 </a>
               </Button>
               <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 gap-1.5"
+                onClick={() => setTermsOpen(true)}
+              >
+                <BookA className="size-3.5" />
+                术语
+              </Button>
+              <Button
                 size="sm"
                 className="h-8 gap-1.5"
                 onClick={handleConfirm}
@@ -496,6 +507,15 @@ export default function ProjectDetailPage() {
         open={shareOpen}
         onOpenChange={setShareOpen}
       />
+
+      {current && (
+        <TermsPanel
+          projectId={projectId}
+          sections={sections}
+          open={termsOpen}
+          onOpenChange={setTermsOpen}
+        />
+      )}
     </div>
   )
 }

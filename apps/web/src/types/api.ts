@@ -889,3 +889,52 @@ export interface PriorArtRefs {
   results: PatentResult[]
   assessment?: NoveltyAssessment
 }
+
+// ── T2 批3：项目术语表 ───────────────────────────────────────────────────────
+
+export interface TermEntry {
+  id: string
+  project_id: string
+  term: string
+  definition?: string | null
+  variants: string[]
+  enabled: boolean
+  source: 'manual' | 'ai' | string
+  created_at: string
+  updated_at: string
+}
+
+export interface TermCandidate {
+  term: string
+  definition?: string | null
+  variants: string[]
+  occurrences: number
+}
+
+export interface ExtractResult {
+  candidates: TermCandidate[]
+  warning?: string
+}
+
+/** 规则路命中：变体在正文中被扫描到（子串匹配提示性质，可能含复合词误报） */
+export interface RuleIssue {
+  term: string
+  variant: string
+  section_keys: string[]
+  count: number
+  /** llm_verify 开启时的复核判定（缺省 true——未获判定的条目保守保留） */
+  verified?: boolean
+}
+
+/** LLM 路建议：表外漂移（同概念多种说法均未登记），可一键加入术语表 */
+export interface DriftSuggestion {
+  concept: string
+  variants: string[]
+  section_keys: string[]
+}
+
+export interface CheckResult {
+  rule_issues: RuleIssue[]
+  llm_suggestions: DriftSuggestion[]
+  warning?: string
+}

@@ -412,6 +412,36 @@ export const api = {
     return _consumeSSE(res, onToken, onDone)
   },
 
+  // ── T2 项目术语表 ──
+  listTerms: (projectId: string) =>
+    request<import('@/types/api').TermEntry[]>(`/projects/${projectId}/terms`),
+
+  createTerm: (projectId: string, data: { term: string; definition?: string | null; variants?: string[]; source?: string }) =>
+    request<import('@/types/api').TermEntry>(`/projects/${projectId}/terms`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  updateTerm: (termId: string, data: { term?: string; definition?: string | null; variants?: string[]; enabled?: boolean }) =>
+    request<import('@/types/api').TermEntry>(`/terms/${termId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  deleteTerm: (termId: string) =>
+    request<{ ok: boolean }>(`/terms/${termId}`, { method: 'DELETE' }),
+
+  extractTerms: (projectId: string) =>
+    request<import('@/types/api').ExtractResult>(`/projects/${projectId}/terms/extract`, {
+      method: 'POST',
+    }),
+
+  checkTerms: (projectId: string, llmVerify = false) =>
+    request<import('@/types/api').CheckResult>(`/projects/${projectId}/terms/check`, {
+      method: 'POST',
+      body: JSON.stringify({ llm_verify: llmVerify }),
+    }),
+
   // ── 项目初始化助手（ChatGPT 式独立对话页）──
   listAssistantConversations: () =>
     request<{ id: string; title: string; status: string; created_at: string; updated_at: string }[]>(

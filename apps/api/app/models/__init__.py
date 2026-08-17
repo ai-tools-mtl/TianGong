@@ -28,6 +28,7 @@ from app.models.user import User
 from app.models.user_global_llm_grant import UserGlobalLLMGrant
 from app.models.user_llm_config import UserLLMConfig
 from app.models.user_memory import UserMemory
+from app.models.project_term import ProjectTerm
 from app.models.writing_profile import WritingProfile
 from app.models.web_ingestion_job import WebIngestionJob
 
@@ -48,5 +49,6 @@ __all__ = [
     "SupportAccessCode",
     "WebIngestionJob",
     "UserMemory",
+    "ProjectTerm",
     "WritingProfile",
 ]
