@@ -238,3 +238,14 @@ emit `on_interrupt` 事件**（只出现在 `astream(stream_mode='updates')` 的
 `__interrupt__` 块）；生产 orchestrator 的 on_interrupt 监听在 deepagents
 middleware 路径有效（HITL 卡片已验证）——两套图的事件形态不同，勿用最小图推断
 deepagents 行为。
+
+### E8: 两个 pytest 进程并发跑会互相污染（共享 docker PG）⚠️
+
+**坑**：同时起两个 pytest（如全量 + 单文件调试），TestClient startup 与测试数据
+写的是**同一个 docker postgres 库**——两进程并发写同名表/唯一键互踩，产生大片
+与代码无关的 flaky 失败。实测：串行重放（--lf）141 个失败里 113 个是并发污染，
+真实失败仅 28 个。
+
+**规矩**：跑全量期间**不要**并行起任何 pytest/uvicorn（连测试库的都算）；需要
+调试时等全量跑完，或用 --lf 按失败清单分组验证。判定基线失败时，串行复跑是
+唯一可信手段。
