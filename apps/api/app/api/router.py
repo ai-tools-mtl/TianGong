@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
 from app.api import (
-    admin, ai, assistant, attachments, auth, export, figures, health, knowledge, memories, patents, projects, review, sections, settings, share, skills, support, tags, templates, versions,
+    admin, ai, assistant, attachments, auth, export, figures, health, knowledge, memories, patents, projects, review, sections, settings, share, skills, support, tags, terms, templates, versions,
 )
 
 api_router = APIRouter(prefix="/api/v1")
@@ -22,6 +22,8 @@ api_router.include_router(knowledge.router)
 # /memories/* 用户长期记忆 CRUD（Task 13-14）
 api_router.include_router(memories.router)
 api_router.include_router(review.router)
+# /projects/{pid}/terms/* /terms/{tid} 项目级术语表（T2：CRUD + AI 抽取 + 一致性检查）
+api_router.include_router(terms.router)
 # /projects/{pid}/patents/* 专利检索（智慧芽，无 key 走 Mock）
 api_router.include_router(patents.router)
 api_router.include_router(share.router)
