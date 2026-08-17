@@ -1,8 +1,8 @@
 'use client'
 
-import { ArrowLeft, CheckCircle2, Download, FileText, Layers, Play, TrendingDown, TrendingUp, TriangleAlert } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, Download, FileText, Layers, Play, TrendingDown, TrendingUp, TriangleAlert, Wand2 } from 'lucide-react'
 import Link from 'next/link'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
@@ -12,8 +12,10 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { api } from '@/lib/api'
+import { useSections } from '@/lib/queries'
 import { cn } from '@/lib/utils'
-import type { CrossSectionIssue, DimensionScore, ReviewRecord, ReviewTrendPoint } from '@/types/api'
+import { launchRevision } from '@/stores/revision-store'
+import type { CrossSectionIssue, DimensionScore, ReviewRecord, ReviewTrendPoint, Section } from '@/types/api'
 
 const ISSUE_TYPE_LABELS: Record<string, string> = {
   terminology: '术语不一致',
@@ -24,6 +26,7 @@ const ISSUE_TYPE_LABELS: Record<string, string> = {
 
 export default function ReviewPage() {
   const params = useParams<{ id: string }>()
+  const router = useRouter()
   const qc = useQueryClient()
   const [reviewing, setReviewing] = useState(false)
   const [issueView, setIssueView] = useState<'dimension' | 'section'>('dimension')
@@ -38,7 +41,24 @@ export default function ReviewPage() {
     queryFn: () => api.getReviewTrend(params.id),
   })
 
+  // T2：sections 供修订入口定位（章节存在性校验 + key→对象映射）与时效提示
+  const { data: sectionsData } = useSections(params.id)
+  const sections: Section[] = sectionsData ?? []
+
   const latest: ReviewRecord | undefined = reviews?.[0]
+
+  // T2 报告时效提示（spec §3.2.2，近似判断宁可多提示）：任何章节在本轮审查后
+  // 被修改过（含确认章节等 touch updated_at 的操作——确认本身也改变后续 AI 输入，
+  // 「重新审查」提示依然合理）。
+  const staleReport =
+    sections.length > 0 &&
+    sections.some((s) => new Date(s.updated_at).getTime() > new Date(latest?.created_at ?? 0).getTime())
+
+  // T2：按章节组发起 AI 修订（spec §3.2.3-1）——跳编辑器目标章节弹确认卡片
+  function handleReviseSection(sectionKey: string, directives: string[]) {
+    const ok = launchRevision(sections, sectionKey, directives, 'review', router, params.id)
+    if (!ok) toast.error('目标章节不存在（可能已被调整），请手动前往该章节修订')
+  }
 
   const runReview = useMutation({
     mutationFn: () => api.runReview(params.id),
@@ -97,6 +117,13 @@ export default function ReviewPage() {
 
       {latest ? (
         <div className="space-y-4 py-6">
+          {/* T2 报告时效提示（spec §3.2.2）：修订应用/编辑后旧报告无标记易误判「已处理」 */}
+          {staleReport && (
+            <div className="flex items-center gap-2 rounded-lg border border-amber-300/60 bg-amber-50 px-4 py-2.5 text-[13px] text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-200">
+              <TriangleAlert className="size-4 shrink-0" />
+              交底书在本轮审查后有修改，建议重新审查以获得最新评估
+            </div>
+          )}
           {/* 趋势图（≥2 轮展示） */}
           {showTrend && (
             <Card>
@@ -284,7 +311,18 @@ export default function ReviewPage() {
                     <div className="space-y-4">
                       {latest.section_issues.map((sec, i) => (
                         <div key={i}>
-                          <p className="mb-1.5 text-[14px] font-medium">{sec.section_title}</p>
+                          <div className="mb-1.5 flex items-center justify-between">
+                            <p className="text-[14px] font-medium">{sec.section_title}</p>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-7 gap-1.5 px-2 text-xs"
+                              onClick={() => handleReviseSection(sec.section_key, sec.issues)}
+                            >
+                              <Wand2 className="size-3.5" />
+                              AI 修订本章
+                            </Button>
+                          </div>
                           <ul className="space-y-1 text-[13px] text-muted-foreground">
                             {sec.issues.map((issue, j) => (
                               <li key={j} className="flex gap-2"><span>→</span><span>{issue}</span></li>
