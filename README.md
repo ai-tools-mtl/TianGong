@@ -209,7 +209,17 @@ docker compose --env-file .env.production --profile full up -d --build
 | 7b 管理后台+自定义配置 | ✅ 完成 | 管理员 API + 三级 Provider 解析 + 全局开关 + 用户自配 Key + 前端管理/设置页 |
 | 8 内部产品化 | ✅ 完成 | 关闭开放注册 + 邀请码发号 + admin 创建用户 + 全容器化一键部署 |
 
-> **MVP 全部 P0 功能已落地并端到端验证。** 下一步见设计文档 11.2（P1 迭代：专利检索 / PDF 导出 / 全篇质量报告 / 灵感补全 / agent 记忆）。
+> **MVP 全部 P0 功能已落地并端到端验证。**
+
+### MVP 后迭代（P1 增强 + 框架红利）
+
+| 批次 | 状态 | 说明 |
+|---|---|---|
+| P1 增强（2026-08-11） | ✅ 完成 | 写作画像 / 专利检索（PatSnap+Mock）/ PDF 导出（weasyprint）/ 全篇质量报告 / 游客浏览（ShareLink）/ AI 看图写注（vision 多模态）/ Checkpoint 基础设施 / 记忆热度淘汰 + NLI 去重 / RAG 混合检索（BM25+RRF+rerank）/ MCP 工具 / Firecrawl 网页摄入。灵感补全（Tab 补全）已砍 |
+| LangGraph 三件套（2026-08-16） | ✅ 完成 | Resume 断点续跑（崩溃/HITL 中断的 turn 经 resume 端点续跑，checkpoint 权威重建全文）+ HITL 工具确认（admin 可配拦截清单，默认 generate_figure）+ Store 统一记忆（CompositeAgentStore 路由 user_memories，热门记忆常驻注入） |
+| §8.3 经授权临时查看（2026-08-16） | ✅ 完成 | 一次性授权码（30 分钟核销）+ admin 限时只读查看窗口 + 每次访问审计 |
+| vision 名单配置 + 附图上传图注（2026-08-16） | ✅ 完成 | `vision_model_markers` admin 可配；figure-upload 重构为「预览 → AI 看图写注 → 插入」两步流 |
+| AI 新颖性评估（2026-08-16） | ✅ 完成 | 对比文件（含 legal_status）× 核心章节 → 流式 Markdown 报告，持久化 prior_art_refs.assessment；AI 辅助参考，不构成法律意见 |
 
 ## 文档
 

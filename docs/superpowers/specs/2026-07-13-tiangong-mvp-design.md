@@ -15,6 +15,7 @@
   - v1.4 (2026-07-13): 新增管理员角色（MVP 做 C 系统运维版，数据模型预留 A/B 演进），明确角色权限矩阵与数据可见性红线（用户私人数据默认不可见）
   - v1.5 (2026-07-13): 新增 LLM Key 管理与自定义配置（管理员全局开关 + 用户可覆盖 + 任意 OpenAI 兼容 Provider），新增 SystemSetting 表与 UserLLMConfig 实体，明确 Provider 解析优先级
   - v1.5.1 (2026-07-14): ⚠️ **实现现状校正**。v1.3 计划的 LangGraph + LlamaIndex 双框架在落地中调整，本文档原描述保留作为设计意图，差异见下方「实现现状」说明
+  - v1.5.2 (2026-08-16): ⚠️ **实现现状再校正**——LangGraph 三件套（Checkpoint 续跑 / HITL 工具确认 / Store 统一记忆）已落地；原「不做」范围调整两项：法律状态/新颖性评估已作为 AI 辅助功能实现（§1.4/§2.3），§8.3 临时授权查看已实现。差异见下方 2026-08-16 校正块
 
 ---
 
@@ -30,6 +31,20 @@
 > | **依赖** | — | `pyproject.toml` 装了 `langgraph` 但源码**零 import**（预留，未启用）|
 >
 > **结论**：MVP 的 AI 能力（撰写流式、审查 Rubric 评分、RAG 检索注入）均已用 LangChain 实现，功能完整；LangGraph 带来的 Checkpoint 断点恢复 / HITL 暂停 / 跨会话 Store 记忆等「框架红利」暂缺，如需引入后续可作为增强项。本文档涉及 LlamaIndex/LangGraph 的具体描述（尤其第 4.2 技术选型表、第 5 章 AI 编排、第 10 章 RAG 架构、附录 A 决策记录）请结合本说明阅读。
+
+---
+
+> ## ⚠️ 实现现状（2026-08-16 再校正）
+>
+> 上表的「框架红利暂缺」自 2026-08-16 起**已补齐**（agent 仍是 deepagents/LangChain 路线，未回到 StateGraph 手写图）：
+>
+> | 红利 | 落地方式 |
+> |---|---|
+> | **Checkpoint 断点续跑** | `app/ai/checkpoint.py`（PostgresSaver/InMemorySaver，fail-open）+ 每 turn `thread_id`（= user 消息 id）+ `POST /sections/{sid}/messages/{mid}/resume`（崩溃续跑 input=None；完成时以 checkpoint 权威重建全文） |
+> | **HITL 工具确认** | deepagents 原生 `interrupt_on`（`HumanInTheLoopMiddleware`），`SystemSetting agent_hitl_config` admin 可配拦截清单（默认 generate_figure，approve/reject）；checkpointer 不可用时自动放行 |
+> | **Store 统一记忆** | `app/ai/store.py` CompositeAgentStore 按 namespace 路由：`("memories", user_id)` → user_memories 表（单一真源，fail-open），其余 → MinIOSkillStore；热门记忆 top-15 常驻注入 |
+>
+> 同时，「法律状态判断 / 新颖性评估」从 §1.4 排除表移入已实现（AI 辅助定位，明示不构成法律意见）；§8.3「经授权临时查看」完整版已实现（一次性授权码 + 限时只读 + 审计）。RAG 侧 Hybrid 检索（BM25+tsvector/RRF+rerank）与 agent 记忆（user_memories + 写作画像）此前已陆续落地。
 
 ---
 
@@ -62,7 +77,7 @@
 | 排除项 | 说明 |
 |---|---|
 | 真实专利检索 | 留接口（`SearchService` 抽象 + `prior_art_refs` 字段），后续集成 |
-| 法律状态判断 / 新颖性评估 | 属专业服务，不做 |
+| 法律状态判断 / 新颖性评估 | ~~属专业服务，不做~~ **2026-08-16 调整**：已作为 AI 辅助参考落地（专利检索页「AI 新颖性评估」，含 legal_status 提示，明示不构成法律意见） |
 | 正式专利申请文件撰写 | 产出物是**交底书**（给代理人的技术输入），非法律文件 |
 | 移动端 | 桌面 Web 优先 |
 | 多语言 | MVP 仅中文 |
@@ -511,7 +526,7 @@ User (1) ──── (N) Project ──── (1) Template
 | 状态管理 | Zustand（UI）+ TanStack Query（服务端） | 同 | 轻量、分工清晰 |
 | AI 流式 | SSE (Server-Sent Events) | 同 | 单向流足够、自动重连 |
 | 后端框架 | FastAPI + Python 3.11+ | 同 | 异步、类型友好、AI 生态最佳 |
-| **Agent 编排** | **LangChain `ChatOpenAI` + 手搓编排器**（`app/ai/orchestrator.py`） | ~~LangGraph StateGraph + Checkpoint + Store + HITL~~ | ⚠️ 未用 LangGraph，编排为手搓 generator 流式；Checkpoint/HITL/Store 框架红利暂缺（详见顶部「实现现状」） |
+| **Agent 编排** | **deepagents agent loop（LangChain 基座）+ 手搓编排器**（`app/ai/orchestrator.py`） | ~~LangGraph StateGraph~~ | 编排为 generator 流式 + deepagents；Checkpoint 续跑/HITL/Store 红利已于 2026-08-16 经 langgraph 1.2.9 落地（详见顶部「实现现状」再校正块） |
 | **RAG 检索** | **LangChain `OpenAIEmbeddings` + pgvector 直连** | ~~LlamaIndex~~ | ⚠️ 弃用 LlamaIndex：其 `OpenAIEmbedding` 不支持国产 embedding 模型名（GOTCHAS E3） |
 | LLM/Embedding 抽象 | **LangChain `ChatOpenAI` / `OpenAIEmbeddings`**（OpenAI 兼容协议接 GLM） | 同 | 经 OpenAI 兼容协议，可切换 Provider |
 | ORM | SQLAlchemy 2.0 + Alembic | 同 | Python ORM 事实标准 |
@@ -1027,7 +1042,7 @@ agent 技能是可挂载的"插件"，定义 agent 能做什么额外的事。MV
 | 系统日志（含错误堆栈，可能含用户数据片段） | ⚠️ 脱敏可见 | 日志里的用户内容需脱敏处理 |
 | LLM 调用的 prompt/completion 内容 | ❌ 不可见 | 即使为排查问题，也只看元数据（耗时/token/状态），不看内容 |
 
-**"经授权临时查看"机制（P1，MVP 不做）**：用户主动求助时，可生成一次性授权码，管理员凭码在限时内查看该用户指定项目的只读视图，全程记审计日志。MVP 阶段排查问题靠日志元数据 + 用户主动提供信息。
+**"经授权临时查看"机制（✅ 2026-08-16 已实现）**：用户主动求助时，可生成一次性授权码（ShareDialog「技术支持」tab，`support_access_codes` 表，30 分钟内须核销），管理员凭码核销后获得 30 分钟只读查看窗口（仅核销 admin 可看，console「支持查看」页），每次访问写审计 `support_view_project`（detail 不含码明文）。与游客浏览（ShareLink 公开 token、无审计）正交；所有失败统一 404 防探测。
 
 ### 8.4 LLM Key 管理与 Provider 解析
 
@@ -1385,15 +1400,15 @@ Word 的自动编号（1. / 1.1 / 1.1.1）是**渲染时由 Word 计算**的，d
 
 ### 11.2 P1（后续迭代）
 
-**阶段① 增强**：
-- 专利检索（接口已预留）
-- PDF 导出
-- 全篇质量检查报告
-- 灵感补全（Tab 补全）
-- agent 记忆（写作偏好/技术领域画像，7.8）
+**阶段① 增强**（✅ 2026-08-11/16 全部处理完毕）：
+- ~~专利检索（接口已预留）~~ ✅ 智慧芽 PatSnap（无 key 走 Mock）+ legal_status 字段 + AI 新颖性评估（2026-08-16）
+- ~~PDF 导出~~ ✅ weasyprint（2026-08-11）
+- ~~全篇质量检查报告~~ ✅ 趋势 + 章节定位 + 跨章节一致性 + 导出（2026-08-11）
+- ~~灵感补全（Tab 补全）~~ ❌ 已砍（2026-08-11 用户决策）
+- ~~agent 记忆（写作偏好/技术领域画像，7.8）~~ ✅ user_memories + 写作画像（结构化表单）+ 热度淘汰 + NLI 去重 + 热门常驻（2026-08-11/16）
 
 **知识库增强**：
-- 混合检索（向量 + 关键词 + rerank）
+- ~~混合检索（向量 + 关键词 + rerank）~~ ✅ trigram 关键词路 + RRF 融合 + rerank 微服务（fail-open）
 
 ### 11.4 非功能要求
 
@@ -1566,9 +1581,9 @@ Word 的自动编号（1. / 1.1 / 1.1.1）是**渲染时由 Word 计算**的，d
 | 知识库落地 | MVP 做基础 RAG（交底书归档+检索注入） | 让每份交底书沉淀为知识 |
 | 向量存储 | pgvector（业务库同库） | 无需独立向量库，运维简单 |
 | Embedding | 智谱 embedding API（OpenAI 兼容） | 与 LLM 同厂商，中文好 |
-| Agent 记忆 | MVP 不做，架构预留（UserMemory） | 主观画像复杂度高，后续迭代 |
+| Agent 记忆 | ~~MVP 不做，架构预留（UserMemory）~~ ✅ 已实现（user_memories + 写作画像 + CompositeAgentStore，2026-08-16） | 主观画像复杂度高，后续迭代 |
 | 案件主线 | Project 预留 stage 字段（MVP=disclosure） | 平滑升级到全生命周期 |
-| Agent 框架 | 设计：LangGraph（编排）+ LlamaIndex（RAG）；实际：**LangChain（编排手搓 + Embedding）+ pgvector**（v1.5.1 校正，详见顶部「实现现状」+ GOTCHAS E3）| 功能达成，框架红利（Checkpoint/Store）暂缺，后续可引入 |
+| Agent 框架 | 设计：LangGraph（编排）+ LlamaIndex（RAG）；实际：**deepagents/LangChain（编排 + Embedding）+ pgvector + langgraph 1.2.9（Checkpoint/HITL/Store，2026-08-16）**（v1.5.1/1.5.2 校正，详见顶部「实现现状」+ GOTCHAS E3）| 功能达成；框架红利已补齐 |
 | 审查功能 | MVP P0（非后续迭代） | 跨对话稳定是核心质量目标，须尽早验证 |
 | 评分机制 | Rubric 驱动 + 自一致性 | 根治标准漂移 + 平滑概率波动 |
 | Rubric 来源 | 系统默认 + 用户覆盖 | 开箱即用 + 可定制 |
