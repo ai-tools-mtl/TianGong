@@ -30,6 +30,8 @@ export default function ReviewPage() {
   const qc = useQueryClient()
   const [reviewing, setReviewing] = useState(false)
   const [issueView, setIssueView] = useState<'dimension' | 'section'>('dimension')
+  // T2「按维度」修订入口的各维度目标章节（key），默认第一个未确认章节（D12）
+  const [dimTargets, setDimTargets] = useState<Record<string, string>>({})
 
   const { data: reviews } = useQuery({
     queryKey: ['reviews', params.id],
@@ -59,6 +61,12 @@ export default function ReviewPage() {
     const ok = launchRevision(sections, sectionKey, directives, 'review', router, params.id)
     if (!ok) toast.error('目标章节不存在（可能已被调整），请手动前往该章节修订')
   }
+
+  // key→章节标题映射（chip 渲染用；不在 sections 中的 key 跳过）
+  const keyTitleMap = new Map(sections.map((s) => [s.key, s.title]))
+  // 「按维度」入口的默认落点章节：第一个未确认章节，否则第一个章节（D12）
+  const defaultDimTarget =
+    sections.find((s) => s.status !== 'confirmed')?.key ?? sections[0]?.key ?? ''
 
   const runReview = useMutation({
     mutationFn: () => api.runReview(params.id),
@@ -204,6 +212,33 @@ export default function ReviewPage() {
                   {d.evidence && <p className="text-foreground">{d.evidence}</p>}
                   {d.suggestion && <p className="text-muted-foreground">{d.suggestion}</p>}
                   <p className="text-xs text-muted-foreground">自一致性：{d.run_scores.join(' / ')}</p>
+                  {/* T2 维度级修订入口（D12）：补齐「suggestion 未提章节标题 → 按章节
+                      视图不可见」的聚合缺口；用户选落点章节，directives=[suggestion] */}
+                  {d.suggestion && d.suggestion !== '已达标' && (
+                    <div className="flex items-center gap-1.5 pt-1.5">
+                      <select
+                        value={dimTargets[d.key] ?? defaultDimTarget}
+                        onChange={(e) => setDimTargets((m) => ({ ...m, [d.key]: e.target.value }))}
+                        className="h-7 max-w-[9rem] rounded-md border border-input bg-background px-1.5 text-xs"
+                        aria-label="修订目标章节"
+                      >
+                        {sections.map((s) => (
+                          <option key={s.key} value={s.key}>{s.title}</option>
+                        ))}
+                      </select>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 gap-1 px-2 text-xs"
+                        onClick={() =>
+                          handleReviseSection(dimTargets[d.key] ?? defaultDimTarget, [d.suggestion])
+                        }
+                      >
+                        <Wand2 className="size-3" />
+                        按建议修订
+                      </Button>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             ))}
@@ -220,7 +255,7 @@ export default function ReviewPage() {
                 <div className="space-y-3">
                   {latest.cross_section_issues.map((issue: CrossSectionIssue, i) => (
                     <div key={i} className="rounded-lg bg-black/[0.02] p-3 dark:bg-white/[0.03]">
-                      <div className="mb-1 flex items-center gap-2">
+                      <div className="mb-1 flex flex-wrap items-center gap-2">
                         <Badge variant="outline" className="text-[11px]">
                           {ISSUE_TYPE_LABELS[issue.type] ?? issue.type}
                         </Badge>
@@ -229,6 +264,21 @@ export default function ReviewPage() {
                             涉及：{issue.location_sections.join('、')}
                           </span>
                         )}
+                        {/* T2 chip 入口（spec §3.2.3-2）：点任一涉及章节 → 单章节修订。
+                            keys 为空（旧数据/无匹配）仅展示不提供入口（D14：前端不做二次匹配） */}
+                        {(issue.location_section_keys ?? [])
+                          .filter((k) => keyTitleMap.has(k))
+                          .map((k) => (
+                            <button
+                              key={k}
+                              onClick={() => handleReviseSection(k, [issue.suggestion])}
+                              className="inline-flex items-center gap-1 rounded-full border border-amber-300/70 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-900 transition-colors hover:bg-amber-100 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-200"
+                              title={`按建议修订「${keyTitleMap.get(k)}」章节`}
+                            >
+                              <Wand2 className="size-3" />
+                              {keyTitleMap.get(k)}
+                            </button>
+                          ))}
                       </div>
                       <p className="text-[13px] text-foreground">{issue.description}</p>
                       {issue.suggestion && (
@@ -312,7 +362,15 @@ export default function ReviewPage() {
                       {latest.section_issues.map((sec, i) => (
                         <div key={i}>
                           <div className="mb-1.5 flex items-center justify-between">
-                            <p className="text-[14px] font-medium">{sec.section_title}</p>
+                            <p className="text-[14px] font-medium">
+                              {/* T2 标题 Link：跳编辑器并定位该章节（?section= 深链） */}
+                              <Link
+                                href={`/projects/${params.id}?section=${encodeURIComponent(sec.section_key)}`}
+                                className="hover:underline"
+                              >
+                                {sec.section_title}
+                              </Link>
+                            </p>
                             <Button
                               variant="outline"
                               size="sm"
