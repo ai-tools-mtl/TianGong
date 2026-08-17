@@ -55,7 +55,7 @@ async def test_astream_chat_compresses_long_history(monkeypatch):
     captured_messages = []
 
     class FakeAgent:
-        async def astream_events(self, payload, version=None):
+        async def astream_events(self, payload, version=None, config=None):
             captured_messages.extend(payload.get("messages", []))
             yield {"event": "on_chat_model_stream", "data": {"chunk": MagicMock(content="hi")}}
 
@@ -89,7 +89,7 @@ async def test_astream_chat_short_history_not_compressed(monkeypatch):
     captured_messages = []
 
     class FakeAgent:
-        async def astream_events(self, payload, version=None):
+        async def astream_events(self, payload, version=None, config=None):
             captured_messages.extend(payload.get("messages", []))
             if False:
                 yield {}
@@ -173,7 +173,7 @@ async def test_astream_chat_writes_meta_sink(monkeypatch):
     cfg = MagicMock(); cfg.model = "glm-4"; cfg.base_url = "x"; cfg.api_key = "y"
 
     class FakeAgent:
-        async def astream_events(self, payload, version=None):
+        async def astream_events(self, payload, version=None, config=None):
             yield {"event": "on_chat_model_stream", "data": {"chunk": MagicMock(content="hi")}}
 
     async def fake_build_agent(*a, **kw):

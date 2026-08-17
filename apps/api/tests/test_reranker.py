@@ -28,8 +28,8 @@ def test_rerank_returns_sorted_by_relevance(mock_post):
 
     candidates = ["doc0", "doc1", "doc2"]
     ranked = rerank("query", candidates, config=_config())
-    # 按 score 降序：doc2(0.95) > doc0(0.80) > doc1(0.60)
-    assert ranked == ["doc2", "doc0", "doc1"]
+    # 按 score 降序返回 (索引, 分数)：doc2(0.95) > doc0(0.80) > doc1(0.60)
+    assert ranked == [(2, 0.95), (0, 0.80), (1, 0.60)]
 
 
 @patch("app.rag.reranker.httpx.post")
@@ -51,7 +51,7 @@ def test_rerank_respects_top_n(mock_post):
     cfg.top_n = 2
     ranked = rerank("query", ["a", "b", "c"], config=cfg)
     assert len(ranked) == 2
-    assert ranked == ["b", "a"]
+    assert ranked == [(1, 0.9), (0, 0.8)]
 
 
 def test_rerank_disabled_returns_input_unchanged():
@@ -59,7 +59,7 @@ def test_rerank_disabled_returns_input_unchanged():
     cfg = _config()
     cfg.enabled = False
     ranked = rerank("query", ["a", "b", "c"], config=cfg)
-    assert ranked == ["a", "b", "c"]
+    assert ranked == [(0, 0.0), (1, 0.0), (2, 0.0)]
 
 
 def test_rerank_empty_documents_returns_empty():
@@ -74,7 +74,7 @@ def test_rerank_failure_returns_input_unchanged(mock_post):
     """API 失败时降级返回原序（D5，不报错）。"""
     mock_post.side_effect = Exception("network error")
     ranked = rerank("query", ["a", "b", "c"], config=_config())
-    assert ranked == ["a", "b", "c"]  # 降级，原序
+    assert ranked == [(0, 0.0), (1, 0.0), (2, 0.0)]  # 降级，原序零分
 
 
 @patch("app.rag.reranker.httpx.post")
@@ -86,7 +86,7 @@ def test_rerank_http_error_returns_input_unchanged(mock_post):
     mock_post.return_value = mock_resp
 
     ranked = rerank("query", ["a", "b"], config=_config())
-    assert ranked == ["a", "b"]  # 降级
+    assert ranked == [(0, 0.0), (1, 0.0)]  # 降级，原序零分
 
 
 @patch("app.rag.reranker.httpx.post")
@@ -144,4 +144,4 @@ def test_rerank_strict_success_returns_ranked(mock_post):
     mock_resp.raise_for_status = MagicMock()
     mock_post.return_value = mock_resp
     ranked = rerank("query", ["a", "b"], config=_config(), strict=True)
-    assert ranked == ["b", "a"]
+    assert ranked == [(1, 0.9), (0, 0.5)]

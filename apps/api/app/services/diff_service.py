@@ -224,7 +224,8 @@ def apply_diff_to_section(
         )
 
     # 2. Tiptap JSON → markdown 纯文本
-    original_text = _tiptap_to_markdown(section.content) if section.content else ""
+    # （fb339ac 起 _tiptap_to_markdown 需 db——图片 src inline 为 data URI 时查附件归属）
+    original_text = _tiptap_to_markdown(db, section.content) if section.content else ""
 
     # 3. 合并接受的 hunks
     merged_text = merge_accepted_hunks(original_text, ai_text, accepted_hunk_ids)
@@ -241,11 +242,11 @@ def apply_diff_to_section(
     return section
 
 
-def compute_rewrite_diff(section, selected_text: str, ai_text: str) -> tuple[list[Hunk], str]:
+def compute_rewrite_diff(db, section, selected_text: str, ai_text: str) -> tuple[list[Hunk], str]:
     """选区重写的整章 diff（方案 B：后端代算拼接，spec §3.4）。
 
     流程：
-    1. _tiptap_to_markdown(section.content) → 整章原文 markdown
+    1. _tiptap_to_markdown(db, section.content) → 整章原文 markdown
     2. 原文.find(selected_text) → 首次出现位置；找不到报 ValidationError
     3. 首次出现替换成 ai_text → ai_full_text（多次出现只替换首次，避免误伤）
     4. compute_section_diff(原文, ai_full_text) → hunks（复用已有函数）
@@ -257,7 +258,7 @@ def compute_rewrite_diff(section, selected_text: str, ai_text: str) -> tuple[lis
     from app.core.exceptions import ValidationError
     from app.services.export_service import _tiptap_to_markdown
 
-    original = _tiptap_to_markdown(section.content) if section.content else ""
+    original = _tiptap_to_markdown(db, section.content) if section.content else ""
     idx = original.find(selected_text)
     if idx == -1:
         raise ValidationError("无法在章节中定位选区，请重新选择")

@@ -91,7 +91,7 @@ def _make_agent_emitting_events(events: list):
     """
 
     class _FakeAgent:
-        def astream_events(self, input_, *, version="v2") -> AsyncIterator:
+        def astream_events(self, input_, *, version="v2", config=None) -> AsyncIterator:
             return self._iter()
 
         async def _iter(self):

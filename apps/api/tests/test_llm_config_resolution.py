@@ -20,7 +20,7 @@ def test_get_llm_uses_resolved_config_not_env():
         model="custom-model",
         source="user",
     )
-    with patch("app.ai.llm_client.ChatOpenAI") as mock:
+    with patch("app.ai.llm_client.ReasoningChatOpenAI") as mock:
         get_llm(cfg)
         _, kwargs = mock.call_args
         # 必须用 cfg 的值，不是 settings

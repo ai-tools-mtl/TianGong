@@ -100,7 +100,7 @@ def compute_rewrite_diff(
     再调 compute_section_diff。前端无需自行实现 Tiptap→markdown 转换。
     """
     section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
-    hunks, ai_full = diff_service.compute_rewrite_diff(section, payload.selected_text, payload.ai_text)
+    hunks, ai_full = diff_service.compute_rewrite_diff(db, section, payload.selected_text, payload.ai_text)
     # ai_full 透传给前端：apply-diff 时前端必须把它作为 ai_text 回传，
     # 后端按 (original, ai_text) 重算的 hunks 才能与这里的 hunk id 对齐。
     return DiffResponse(hunks=hunks, ai_full=ai_full)

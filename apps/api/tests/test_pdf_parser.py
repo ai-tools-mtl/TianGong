@@ -43,9 +43,9 @@ def test_dispatcher_rejects_scan_pdf():
 
 
 def test_dispatcher_rejects_unsupported_format():
-    """不支持的扩展名抛 ValueError。"""
+    """不支持的扩展名抛 ValueError（.txt/.md 已支持，用真不支持的扩展名）。"""
     with pytest.raises(ValueError):
-        extract_text("x.txt", b"hello")
+        extract_text("x.xyz", b"hello")
 
 
 def test_dispatcher_routes_docx():
