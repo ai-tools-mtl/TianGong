@@ -94,13 +94,21 @@ def _fake_agent_streaming(content_chunks):
     chunks = list(content_chunks)
 
     class _FakeAgent:
-        async def astream_events(self, input_, *, version="v2"):
+        async def astream_events(self, input_, *, version="v2", config=None):
             for text in chunks:
                 chunk = MagicMock()
                 chunk.content = text
+                # MagicMock 的属性是自动生成的 MagicMock（truthy）——usage_metadata
+                # 必须显式 None，否则被 usage 捕获路径当真值塞进 LLMCallLog 后
+                # JSON 序列化炸（"Object of type MagicMock is not JSON serializable"）
+                chunk.usage_metadata = None
+                chunk.additional_kwargs = {}
+                # extract_reasoning 防御性多路径读取：response_metadata 也必须
+                # 显式 dict（MagicMock 自动属性 truthy，会返回 MagicMock 炸 JSON）
+                chunk.response_metadata = {}
                 yield {"event": "on_chat_model_stream", "data": {"chunk": chunk}}
 
-    async def _build_agent(db, *, llm_config, user_id, section=None, user_input=None, intent=None):
+    async def _build_agent(db, *, llm_config, user_id, section=None, user_input=None, intent=None, **kw):
         return _FakeAgent()
 
     return _build_agent
@@ -160,7 +168,9 @@ def test_rewrite_logs_token_usage_from_stream(client, registered_user, db_sessio
     section = sections[0]
 
     mock_inst = _mock_chat_openai_with_usage(["重写"], {"input_tokens": 80, "output_tokens": 40})
-    with patch("app.ai.llm_client.ChatOpenAI", return_value=mock_inst):
+    # get_llm 返回 ReasoningChatOpenAI（ChatOpenAI 子类，定义期绑定基类，patch
+    # 基类名对其无效）——须 patch 子类（同 test_ai 的经验）
+    with patch("app.ai.llm_client.ReasoningChatOpenAI", return_value=mock_inst):
         res = client.post(f"/api/v1/sections/{section.id}/rewrite", json={
             "selected_text": "原文", "instruction": "更简洁",
         })
@@ -183,7 +193,9 @@ def test_caption_logs_token_usage_from_stream(client, registered_user, db_sessio
     mock_inst = _mock_chat_openai_with_usage(
         ["图 1 是装置示意图。"], {"input_tokens": 30, "output_tokens": 20},
     )
-    with patch("app.ai.llm_client.ChatOpenAI", return_value=mock_inst):
+    # get_llm 返回 ReasoningChatOpenAI（ChatOpenAI 子类，定义期绑定基类，patch
+    # 基类名对其无效）——须 patch 子类（同 test_ai 的经验）
+    with patch("app.ai.llm_client.ReasoningChatOpenAI", return_value=mock_inst):
         res = client.post(f"/api/v1/sections/{drawings.id}/caption-figures", json={
             "descriptions": ["图1是装置结构图"],
         })
