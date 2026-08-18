@@ -3,10 +3,18 @@
 import { cn } from '@/lib/utils'
 import type { Section } from '@/types/api'
 
-const STATUS_DOT: Record<string, string> = {
+/** 章节状态色点（大纲与连续模式章头共用，spec 2026-08-18 §3.3）。 */
+export const STATUS_DOT: Record<string, string> = {
   empty: 'bg-muted-foreground',
   drafting: 'bg-info',
   confirmed: 'bg-success',
+}
+
+/** 章节状态文案（连续模式章头徽标用）。 */
+export const SECTION_STATUS_LABEL: Record<string, string> = {
+  empty: '待填写',
+  drafting: '草稿中',
+  confirmed: '已确认',
 }
 
 interface SectionOutlineProps {
