@@ -1,6 +1,6 @@
 'use client'
 
-import { Archive, BookA, CheckCircle2, Eye, History, MoreHorizontal, PanelLeft, PanelRight, ScanSearch, Search, Send, Share2, Wand2, X } from 'lucide-react'
+import { Archive, BookA, CheckCircle2, Eye, History, MoreHorizontal, PanelLeft, PanelRight, PanelTop, Rows3, ScanSearch, Search, Send, Share2, Wand2, X } from 'lucide-react'
 import { useParams } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
@@ -10,6 +10,7 @@ import { AIChatPanel } from '@/components/ai-chat-panel'
 import type { AIChatPanelRef } from '@/components/ai-chat-panel'
 import { ResizeHandle } from '@/components/resize-handle'
 import { SectionOutline } from '@/components/section-outline'
+import { SectionBlock } from '@/components/section-block'
 import { FigureGenerate } from '@/components/editor/figure-generate'
 import { FigureUpload } from '@/components/editor/figure-upload'
 import { TiptapEditor } from '@/components/editor/tiptap-editor'
@@ -46,14 +47,21 @@ export default function ProjectDetailPage() {
   const [shareOpen, setShareOpen] = useState(false)
   const [termsOpen, setTermsOpen] = useState(false)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const editorRef = useRef<TiptapEditorRef>(null)
+  // 每章编辑器实例引用表（spec §3.7）：连续模式下多个编辑器同挂，单例 ref 会指向
+  // 最后挂载的实例，导致 apply-diff 重置 / 图章插入作用错章节。
+  const editorRefs = useRef<Record<string, TiptapEditorRef | null>>({})
+  // 每章内容缓存（spec §3.5）：handleSave 同步写入；编辑器挂载 content 一律读缓存，
+  // 避免快速回切章节时查询 refetch 未落地导致最后输入显示回退。
+  const contentCacheRef = useRef<Map<string, object>>(new Map())
+  // 连续模式章节块根节点引用表：点击激活后 scrollIntoView 用。
+  const blockRootRefs = useRef<Record<string, HTMLDivElement | null>>({})
   // AIChatPanel 的 imperative ref：选区重写气泡（在下方 <TiptapEditor> 内）触发
   // onRewriteComplete 时，通过此 ref 桥接到 AIChatPanel.handleRewriteComplete，
   // 复用 AIChatPanel 已有的 phase/hunks/DiffReviewPanel diff 审核流程。
   const aiChatRef = useRef<AIChatPanelRef>(null)
   // 缓存当前章节最新编辑内容（handleSave 同步写入）。
-  // 根因修复（crossover bug）：cleanup/handleConfirm 时不能读 editorRef.current.getJSON()，
-  // 因为 React passive-effect cleanup 晚于子组件 remount，此时 editorRef 已指向新章节 editor，
+  // 根因修复（crossover bug）：cleanup/handleConfirm 时不能读 editorRefs 里该章实例的 getJSON()，
+  // 因为 React passive-effect cleanup 晚于子组件 remount，此时引用表里可能已是新章节 editor，
   // 会把新章节内容当成旧章节内容 PATCH，导致章节内容串台。
   // lastContentRef 与 current 来自同一次渲染闭包，章节 id 与内容始终配对。
   const lastContentRef = useRef<object | null>(null)
@@ -65,6 +73,8 @@ export default function ProjectDetailPage() {
   const setRightWidth = useUIStore((s) => s.setRightWidth)
   const toggleLeft = useUIStore((s) => s.toggleLeft)
   const toggleRight = useUIStore((s) => s.toggleRight)
+  const editorMode = useUIStore((s) => s.editorMode)
+  const setEditorMode = useUIStore((s) => s.setEditorMode)
 
   useEffect(() => {
     if (sections && sections.length > 0 && !currentId) {
@@ -174,9 +184,10 @@ export default function ProjectDetailPage() {
 
   function handleSave(json: object) {
     if (!current) return
-    // 同步缓存最新内容到 ref（crossover 修复：cleanup 时 editorRef 已指向新章节，
+    // 同步缓存最新内容到 ref（crossover 修复：cleanup 时 editorRefs 已指向新章节实例，
     // 只能信任 handleSave 捕获的 json，它与 current 同属一次渲染闭包）。
     lastContentRef.current = json
+    contentCacheRef.current.set(current.id, json)
     // 防抖 2s（设计 13.4）
     if (saveTimer.current) clearTimeout(saveTimer.current)
     setSaveState('saving')
@@ -191,8 +202,8 @@ export default function ProjectDetailPage() {
 
   // flush pending 防抖保存：立即取出缓存内容同步发 PATCH，并清掉定时器。
   // 供确认按钮、切章节 cleanup 复用——避免用户输入停留在浏览器未落库。
-  // 注意：必须读 lastContentRef.current，不能读 editorRef.current.getJSON()——
-  // React passive-effect cleanup 晚于子组件 remount，此时 editorRef 已指向新章节 editor，
+  // 注意：必须读 lastContentRef.current，不能读 editorRefs 里实例的 getJSON()——
+  // React passive-effect cleanup 晚于子组件 remount，此时引用表里可能是新章节 editor，
   // 读它会把新章节内容回写到旧章节（crossover bug）。
   function flushPendingSave() {
     if (saveTimer.current) {
@@ -218,15 +229,42 @@ export default function ProjectDetailPage() {
       clearTimeout(saveTimer.current)
       saveTimer.current = null
     }
-    // 读 lastContentRef 而非 editorRef（同 flushPendingSave，避免 crossover）。
-    // 用户没编辑过（lastContentRef 为 null）时回退到 current.content，避免把内容清空。
-    const json = lastContentRef.current ?? current.content
+    // 读 lastContentRef 而非 editorRefs（同 flushPendingSave，避免 crossover）。
+    // 用户没编辑过（lastContentRef 为 null）时回退内容缓存（快速回切时查询缓存
+    // 可能未刷新）再回退 current.content，避免把最新内容清空。
+    const json = lastContentRef.current ?? contentCacheRef.current.get(current.id) ?? current.content
     sendPatch({
       content: json ?? undefined,
       status: 'confirmed',
       expected_version: current.version,
       onSuccess: () => toast.success('章节已确认'),
     })
+  }
+
+  // 模式切换（单章⇄全文）：先 flush 防抖保存再切——编辑器树整体重挂载前落库（spec §3.2）。
+  function handleToggleMode() {
+    flushPendingSave()
+    setEditorMode(editorMode === 'single' ? 'continuous' : 'single')
+  }
+
+  // 激活章切换入口（连续模式章头/大纲点击）：显式点击不受两把锁约束（spec §3.2），
+  // 切换后滚动定位该章。滚动跟随触发的激活（批 2）不走此函数，不触发滚动。
+  function handleActivate(id: string) {
+    if (id === currentId) return
+    setCurrentId(id)
+    requestAnimationFrame(() => {
+      blockRootRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }
+
+  // apply-diff 成功后（AIChatPanel 回调）：重置激活章编辑器 + 同步 ref 兜底缓存，
+  // 保证缓存与后端一致（spec §3.5）。
+  function handleAppliedContent(content: object) {
+    if (current) {
+      lastContentRef.current = content
+      contentCacheRef.current.set(current.id, content)
+      editorRefs.current[current.id]?.resetContent(content)
+    }
   }
 
   function handleArchive() {
@@ -288,7 +326,7 @@ export default function ProjectDetailPage() {
           <SectionOutline
             sections={sections}
             currentId={currentId}
-            onSelect={setCurrentId}
+            onSelect={handleActivate}
             collapsed={leftCollapsed}
           />
         </div>
@@ -298,6 +336,19 @@ export default function ProjectDetailPage() {
       <section className="flex min-w-0 flex-col overflow-hidden">
         <div className="flex h-10 shrink-0 items-center justify-between gap-2 border-b px-4">
           <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              onClick={handleToggleMode}
+              title={editorMode === 'single' ? '切换为全文视图' : '切换为单章视图'}
+              aria-label={editorMode === 'single' ? '切换为全文视图' : '切换为单章视图'}
+            >
+              {editorMode === 'single' ? (
+                <Rows3 className="size-4" />
+              ) : (
+                <PanelTop className="size-4" />
+              )}
+            </Button>
             <h1 className="truncate text-[15px] font-semibold tracking-tight">
               {current?.title ?? '未选择章节'}
             </h1>
@@ -426,7 +477,7 @@ export default function ProjectDetailPage() {
                 variant="ghost"
                 size="sm"
                 className="h-6 px-2 text-xs"
-                onClick={() => setCurrentId(pendingTarget.id)}
+                onClick={() => handleActivate(pendingTarget.id)}
               >
                 前往
               </Button>
@@ -442,32 +493,81 @@ export default function ProjectDetailPage() {
           </div>
         )}
         <div className="flex-1 overflow-y-auto px-6 py-4">
-          <div className="h-full">
-            {current && current.key === 'drawings' && (
-              <div className="mb-3 space-y-2">
-                <FigureUpload
+          {editorMode === 'single' ? (
+            <div className="h-full">
+              {current && current.key === 'drawings' && (
+                <div className="mb-3 space-y-2">
+                  <FigureUpload
+                    sectionId={current.id}
+                    projectId={projectId}
+                    onInsertImage={(src, alt) =>
+                      editorRefs.current[current.id]?.insertImage(src, alt)
+                    }
+                  />
+                  <FigureGenerate
+                    sectionId={current.id}
+                    projectId={projectId}
+                    onInsertImage={(src, alt) =>
+                      editorRefs.current[current.id]?.insertImage(src, alt)
+                    }
+                  />
+                </div>
+              )}
+              {current && (
+                <TiptapEditor
+                  key={current.id}
+                  ref={(r) => {
+                    editorRefs.current[current.id] = r
+                  }}
+                  content={contentCacheRef.current.get(current.id) ?? current.content}
+                  onChange={handleSave}
                   sectionId={current.id}
-                  projectId={projectId}
-                  onInsertImage={(src, alt) => editorRef.current?.insertImage(src, alt)}
+                  onRewriteComplete={handleRewriteComplete}
                 />
-                <FigureGenerate
-                  sectionId={current.id}
-                  projectId={projectId}
-                  onInsertImage={(src, alt) => editorRef.current?.insertImage(src, alt)}
+              )}
+            </div>
+          ) : (
+            <div className="mx-auto max-w-3xl space-y-6 pb-16">
+              {sections.map((s, i) => (
+                <SectionBlock
+                  key={s.id}
+                  section={s}
+                  index={i}
+                  isActive={s.id === currentId}
+                  initialContent={contentCacheRef.current.get(s.id) ?? s.content}
+                  onActivate={handleActivate}
+                  editorRef={(r) => {
+                    editorRefs.current[s.id] = r
+                  }}
+                  rootRef={(el) => {
+                    blockRootRefs.current[s.id] = el
+                  }}
+                  figureSlot={
+                    s.key === 'drawings' ? (
+                      <>
+                        <FigureUpload
+                          sectionId={s.id}
+                          projectId={projectId}
+                          onInsertImage={(src, alt) =>
+                            editorRefs.current[s.id]?.insertImage(src, alt)
+                          }
+                        />
+                        <FigureGenerate
+                          sectionId={s.id}
+                          projectId={projectId}
+                          onInsertImage={(src, alt) =>
+                            editorRefs.current[s.id]?.insertImage(src, alt)
+                          }
+                        />
+                      </>
+                    ) : undefined
+                  }
+                  onChange={handleSave}
+                  onRewriteComplete={handleRewriteComplete}
                 />
-              </div>
-            )}
-            {current && (
-              <TiptapEditor
-                key={current.id}
-                ref={editorRef}
-                content={current.content}
-                onChange={handleSave}
-                sectionId={current.id}
-                onRewriteComplete={handleRewriteComplete}
-              />
-            )}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 
@@ -487,7 +587,7 @@ export default function ProjectDetailPage() {
                 sectionId={current.id}
                 section={current}
                 projectId={projectId}
-                onAppliedContent={(content) => editorRef.current?.resetContent(content)}
+                onAppliedContent={handleAppliedContent}
               />
             </div>
           </aside>
