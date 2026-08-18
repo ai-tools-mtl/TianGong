@@ -50,6 +50,7 @@ export function SectionBlock({
   return (
     <div
       ref={rootRef}
+      data-section-id={section.id}
       className="space-y-2"
       onMouseDownCapture={() => {
         if (!isActive) onActivate(section.id)

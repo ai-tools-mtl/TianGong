@@ -67,7 +67,7 @@ function handleStaleSourceError() {
   toast.error('当前 LLM 源已失效（授权被撤销或配置已删除），已清除默认源，请前往「设置」重新选择')
 }
 
-type AIPhase = 'idle' | 'chatting' | 'generating' | 'revising' | 'done' | 'diff-review'
+export type AIPhase = 'idle' | 'chatting' | 'generating' | 'revising' | 'done' | 'diff-review'
 
 /**
  * 当前 DiffReviewPanel 展示的 hunks 来自哪条路径——决定 apply 时该把什么当作
@@ -97,6 +97,8 @@ interface AIChatPanelProps {
  */
 export interface AIChatPanelRef {
   handleRewriteComplete: (aiOutput: string, selectedText: string) => void
+  /** 当前相位（连续文档视图忙碌锁用，spec 2026-08-18 §3.2）：非 idle 即进行中/待审 */
+  getPhase: () => AIPhase
 }
 
 export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
@@ -106,6 +108,8 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [phase, setPhase] = useState<AIPhase>('idle')
+  // phase 的 ref 镜像：getPhase 经 useImperativeHandle 对外读，闭包会过期，读 ref 才准。
+  const phaseRef = useRef<AIPhase>('idle')
   const [aiDraft, setAiDraft] = useState('')
   // generate 场景的 agent 透明化状态（思考/工具），展示在草稿预览区上方
   const [genSteps, setGenSteps] = useState<{ thinking?: string; toolEvents?: ToolEvent[] }>({})
@@ -188,6 +192,11 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
     setDiffOrigin('full')
     setReviseCard(null)
   }, [sectionId])
+
+  // phase ref 同步（getPhase 经 imperative handle 对外读）
+  useEffect(() => {
+    phaseRef.current = phase
+  }, [phase])
 
   // T2 修订任务消费（spec §3.5.2）：store 有 pending 且 sectionKey 匹配当前章节时
   // 取出弹确认卡片。不匹配则留在 store（page.tsx 顶部提示条引导切换章节）。
@@ -700,8 +709,10 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
   // 把 handleRewriteComplete 暴露给 page.tsx——气泡在 page.tsx 的 <TiptapEditor>
   // 内触发 onRewriteComplete，page.tsx 通过 aiChatRef.current.handleRewriteComplete
   // 桥接到本组件，从而驱动本组件的 phase/hunks/DiffReviewPanel。
+  // getPhase 供连续文档视图的 AI 忙碌锁读取（spec 2026-08-18 §3.2）。
   useImperativeHandle(ref, () => ({
     handleRewriteComplete,
+    getPhase: () => phaseRef.current,
   }))
 
 
