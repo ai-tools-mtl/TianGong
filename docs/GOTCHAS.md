@@ -249,3 +249,19 @@ deepagents 行为。
 **规矩**：跑全量期间**不要**并行起任何 pytest/uvicorn（连测试库的都算）；需要
 调试时等全量跑完，或用 --lf 按失败清单分组验证。判定基线失败时，串行复跑是
 唯一可信手段。
+
+### E9: Windows 直接 `uvicorn app.main:app` 起 dev server，psycopg 异步池连不上库 ⚠️
+
+**坑**：Windows 默认事件循环策略是 ProactorEventLoop，psycopg3 async 不支持。
+直接 `uv run uvicorn app.main:app` 起来后日志反复刷
+`error connecting in 'pool-1': Psycopg cannot use the 'ProactorEventLoop' to run in async mode`，
+所有 DB 接口失败（login 等全 500/连接拒绝）。pytest 不受影响（TestClient 走 SQLite / 同步路径）。
+
+**修法**：启动前切 SelectorEventLoop：
+
+```bash
+cd apps/api && uv run python -c "import asyncio,sys,uvicorn; asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy()) if sys.platform=='win32' else None; uvicorn.run('app.main:app', host='localhost', port=8000)"
+```
+
+注意：startup 约 40s（应用启动期有 DB 探针重试）；`POST /api/v1/auth/login` 返回 200 即链路已通。
+
