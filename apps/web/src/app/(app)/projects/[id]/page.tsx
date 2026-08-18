@@ -55,6 +55,18 @@ export default function ProjectDetailPage() {
   const contentCacheRef = useRef<Map<string, object>>(new Map())
   // 连续模式章节块根节点引用表：点击激活后 scrollIntoView 用。
   const blockRootRefs = useRef<Record<string, HTMLDivElement | null>>({})
+  // 滚动容器引用（IntersectionObserver 的 root，spec §3.8）。
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  // 连续模式滚动跟随：候选章防抖定时器 + 各章在观察带内的可见性 + 激活章 id 镜像。
+  // 全部走 ref：observer 回调/定时器跨渲染存活，读 state 闭包会过期。
+  const followTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const visibleMapRef = useRef<Record<string, boolean>>({})
+  const currentIdRef = useRef<string | null>(null)
+  const sectionsRef = useRef<Section[]>([])
+  // 编辑锁的 dirty 标记（spec §3.2）：防抖窗口内有未 flush 输入时为 true。
+  const dirtyRef = useRef(false)
+  // 待滚动定位标记：点击/深链切换激活章后，由 currentId 变化 effect 统一滚动（挂载后执行）。
+  const pendingScrollRef = useRef(false)
   // AIChatPanel 的 imperative ref：选区重写气泡（在下方 <TiptapEditor> 内）触发
   // onRewriteComplete 时，通过此 ref 桥接到 AIChatPanel.handleRewriteComplete，
   // 复用 AIChatPanel 已有的 phase/hunks/DiffReviewPanel diff 审核流程。
@@ -91,11 +103,21 @@ export default function ProjectDetailPage() {
     if (!key || !sections?.length) return
     const target = sections.find((s) => s.key === key)
     if (target) {
+      pendingScrollRef.current = true
       setCurrentId(target.id)
       window.history.replaceState(null, '', `/projects/${projectId}`)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sections?.length])
+
+  // 激活章变化后的滚动定位（spec §3.6）：点击章头/大纲、?section= 深链、revision 前往
+  // 统一走 pendingScrollRef 标记，在目标章挂载后的本 effect 中滚动（首帧未挂载时
+  // scrollIntoView 无效）。滚动跟随触发的激活不置标记、不滚动。
+  useEffect(() => {
+    if (!pendingScrollRef.current || !currentId) return
+    pendingScrollRef.current = false
+    blockRootRefs.current[currentId]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [currentId, sections?.length, editorMode])
 
   // 滞留修订任务提示条（T2 spec §3.5.1）：store 有 pending 但当前章节不匹配时，
   // 顶部轻提示引导切换（用户可能刷新/绕路，任务单值滞留需可见）。
@@ -115,6 +137,9 @@ export default function ProjectDetailPage() {
       // flushPendingSave 当成本章节内容发出（crossover 修复配套）。
       lastContentRef.current = null
     }
+    // ref 镜像同步（滚动跟随 observer 回调/定时器内读，闭包会过期）
+    currentIdRef.current = currentId
+    sectionsRef.current = sections ?? []
   }, [sections, currentId])
 
   // 切换章节前 flush 防抖中的保存（根因修复：旧实现只 clearTimeout 不发请求，
@@ -127,6 +152,46 @@ export default function ProjectDetailPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentId])
+
+  // 连续模式滚动停稳跟随（spec §3.8）：IntersectionObserver 观察各章块与滚动容器
+  // 顶部 40% 观察带（rootMargin 下收 60%）的交集，取可见章为候选，500ms 防抖后切换。
+  // 两把锁（spec §3.2）在定时器触发时判定：
+  // - 编辑锁：激活章仍在观察带内 且（防抖窗口有未 flush 输入 或 焦点在编辑器内）
+  // - AI 忙碌锁：AI 面板相位非 idle（含 done/diff-review，防待审草稿被静默丢弃）
+  // 锁生效则不切换；显式点击（handleActivate）不受锁约束。
+  useEffect(() => {
+    if (editorMode !== 'continuous' || !sections?.length) return
+    const root = scrollRef.current
+    if (!root) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          const sid = (e.target as HTMLElement).dataset.sectionId
+          if (sid) visibleMapRef.current[sid] = e.isIntersecting
+        }
+        const candidate = sectionsRef.current.find((s) => visibleMapRef.current[s.id])
+        if (!candidate || candidate.id === currentIdRef.current) return
+        if (followTimerRef.current) clearTimeout(followTimerRef.current)
+        followTimerRef.current = setTimeout(() => {
+          if (candidate.id === currentIdRef.current) return
+          const activeVisible = visibleMapRef.current[currentIdRef.current ?? '']
+          const focusedInEditor = Boolean(document.activeElement?.closest('.tiptap'))
+          if (activeVisible && (dirtyRef.current || focusedInEditor)) return
+          if ((aiChatRef.current?.getPhase() ?? 'idle') !== 'idle') return
+          setCurrentId(candidate.id)
+        }, 500)
+      },
+      { root, rootMargin: '0px 0px -60% 0px', threshold: 0 },
+    )
+    for (const sid of Object.keys(blockRootRefs.current)) {
+      const el = blockRootRefs.current[sid]
+      if (el) observer.observe(el)
+    }
+    return () => {
+      observer.disconnect()
+      if (followTimerRef.current) clearTimeout(followTimerRef.current)
+    }
+  }, [editorMode, sections?.length])
 
   if (isLoading) {
     return (
@@ -188,6 +253,8 @@ export default function ProjectDetailPage() {
     // 只能信任 handleSave 捕获的 json，它与 current 同属一次渲染闭包）。
     lastContentRef.current = json
     contentCacheRef.current.set(current.id, json)
+    // 编辑锁 dirty 标记：防抖窗口内有未 flush 输入（spec §3.2）
+    dirtyRef.current = true
     // 防抖 2s（设计 13.4）
     if (saveTimer.current) clearTimeout(saveTimer.current)
     setSaveState('saving')
@@ -197,6 +264,8 @@ export default function ProjectDetailPage() {
         status: current.status === 'empty' ? 'drafting' : current.status,
         expected_version: current.version,
       })
+      // 防抖窗口清空：解除编辑锁的 dirty 部分（焦点判定仍由 observer 侧读 activeElement）
+      dirtyRef.current = false
     }, 2000)
   }
 
@@ -210,6 +279,7 @@ export default function ProjectDetailPage() {
       clearTimeout(saveTimer.current)
       saveTimer.current = null
     }
+    dirtyRef.current = false
     if (!current) return
     const json = lastContentRef.current
     if (!json) return
@@ -229,6 +299,7 @@ export default function ProjectDetailPage() {
       clearTimeout(saveTimer.current)
       saveTimer.current = null
     }
+    dirtyRef.current = false
     // 读 lastContentRef 而非 editorRefs（同 flushPendingSave，避免 crossover）。
     // 用户没编辑过（lastContentRef 为 null）时回退内容缓存（快速回切时查询缓存
     // 可能未刷新）再回退 current.content，避免把最新内容清空。
@@ -247,14 +318,13 @@ export default function ProjectDetailPage() {
     setEditorMode(editorMode === 'single' ? 'continuous' : 'single')
   }
 
-  // 激活章切换入口（连续模式章头/大纲点击）：显式点击不受两把锁约束（spec §3.2），
-  // 切换后滚动定位该章。滚动跟随触发的激活（批 2）不走此函数，不触发滚动。
+  // 激活章切换入口（连续模式章头/大纲点击）：显式点击不受两把锁约束（spec §3.2）。
+  // 滚动定位经 pendingScrollRef 标记 + currentId 变化 effect 统一执行（挂载后滚动）。
+  // 滚动跟随触发的激活（IntersectionObserver 路径）不走此函数，不置标记、不滚动。
   function handleActivate(id: string) {
     if (id === currentId) return
+    pendingScrollRef.current = true
     setCurrentId(id)
-    requestAnimationFrame(() => {
-      blockRootRefs.current[id]?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    })
   }
 
   // apply-diff 成功后（AIChatPanel 回调）：重置激活章编辑器 + 同步 ref 兜底缓存，
@@ -492,7 +562,7 @@ export default function ProjectDetailPage() {
             </span>
           </div>
         )}
-        <div className="flex-1 overflow-y-auto px-6 py-4">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-4">
           {editorMode === 'single' ? (
             <div className="h-full">
               {current && current.key === 'drawings' && (
