@@ -265,3 +265,28 @@ cd apps/api && uv run python -c "import asyncio,sys,uvicorn; asyncio.set_event_l
 
 注意：startup 约 40s（应用启动期有 DB 探针重试）；`POST /api/v1/auth/login` 返回 200 即链路已通。
 
+
+### E11: PG 专属部分唯一索引在 SQLite 测试库是盲区，「新对话」线上 500 ⚠️（已修）
+
+**坑**：t0p1u2v3w4x5（P0-1）加的部分唯一索引 `uq_conversations_init_one_unlanded`
+（同一 user 的未落地 init 会话最多 1 条）与 ChatGPT 式多会话设计直接冲突——
+用户已有一个未落地会话时点「+ 新对话」，INSERT 第二条必撞约束 →
+IntegrityError → 500（2026-08-19 线上报障）。而该索引**只存在于迁移**
+（模型层无定义；测试库走 `Base.metadata` 建表，从不跑 PG 专属迁移），所以
+`test_create_and_list_conversations`（连建两个会话）在 SQLite 上一直是绿的——
+**测试绿 ≠ 生产绿**，PG 专属约束的测试盲区。
+
+**坑中坑**：删索引迁移内部步骤顺序敏感——若先恢复 init_dup 数据再 drop 索引，
+恢复动作当场撞这个索引（同一 user 出现第二条未落地 init 会话）；必须
+**先 drop 索引、再 UPDATE 恢复数据**（同事务 DDL 顺序敏感，写反即回滚）。
+
+**修复**（z1a2b3c4d5e6）：drop 索引 + 恢复当年被旧迁移改 `kind='init_dup'`
+「牺牲」的真实会话；防双击重复落地收敛到行锁单防线——`create_project` 加
+`commit=False` 参数，落地路径「建项目 + 写 project_id 标记」同一事务提交，
+FOR UPDATE 持锁到 commit 完成。原先 create_project 自管 commit 会中途释放
+行锁（窗口期内并发请求可钻入），这才是当初需要索引兜底的根因——事务收紧后
+兜底不再必要。
+
+**规矩**：给生产加 DB 层约束前先问「SQLite 测试库能否等价建出」；PG 专属
+约束（部分索引、CONCURRENTLY 等）必须补 PG 环境验证或迁移内自测，不能只靠
+SQLite 测试套件背书。
