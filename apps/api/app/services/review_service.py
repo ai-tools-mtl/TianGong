@@ -7,10 +7,13 @@ import json
 import uuid as uuid_mod
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from loguru import logger
+from openai import BadRequestError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.ai.llm_client import get_llm
+from app.ai.llm_errors import friendly_llm_error
 from app.ai.rubric_prompts import SCORE_SYSTEM_PROMPT, build_score_prompt
 from app.core.exceptions import NotFoundError, ValidationError
 from app.models import Project, ReviewRecord, Section
@@ -46,13 +49,28 @@ def run_review(db: Session, *, user_id, project_id: str) -> ReviewRecord:
         raise ValidationError("未配置 LLM，无法执行审查")
 
     # ② score（Rubric 驱动 + 自一致性）
+    # 失败治理（dogfood 2026-08-19）：LLM 全挂（如余额不足 429/1113）时旧版静默吞异常，
+    # 落库一份全 50 分「评分失败」废报告、前端 toast「审查完成」——用户完全看不到真实原因。
+    # 现在：单 run 失败记 warning 降级兜底；全部 run 失败则拒绝落库、抛友好错误。
     dimension_scores = []
+    total_runs = 0
+    failed_runs = 0
+    last_exc: Exception | None = None
     for criterion in rubric.criteria:
         scores = []
         last_evidence = ""
         last_suggestion = ""
         for _ in range(runs):
-            score, evidence, suggestion = _score_dimension(criterion, sections, llm_config)
+            total_runs += 1
+            try:
+                score, evidence, suggestion = _score_dimension(criterion, sections, llm_config)
+            except Exception as e:  # noqa: BLE001 — 降级点：单 run 失败不阻断，全失败在下方统一报错
+                failed_runs += 1
+                last_exc = e
+                logger.warning(
+                    "审查评分调用失败 dimension={} error={}", criterion.get("key"), e
+                )
+                score, evidence, suggestion = 50, "评分失败", "请重试"
             scores.append(score)
             last_evidence = evidence
             last_suggestion = suggestion
@@ -66,6 +84,11 @@ def run_review(db: Session, *, user_id, project_id: str) -> ReviewRecord:
             "evidence": last_evidence,
             "suggestion": last_suggestion,
         })
+
+    # 全部评分调用失败 → 几乎必为 LLM 配置/账户级故障（余额不足、key 失效等），
+    # 此时报告没有任何信息量，拒绝落库，把真实原因（友好映射后）抛给用户。
+    if total_runs > 0 and failed_runs == total_runs:
+        raise ValidationError(friendly_llm_error(last_exc))
 
     # ③ aggregate
     total = sum(d["score"] * d["weight"] for d in dimension_scores)
@@ -127,7 +150,8 @@ def _score_dimension(
     [S5] 优先用 with_structured_output(DimensionScore) 强约束输出（替掉脆弱正则）。
     provider 不支持原生 structured output 时（NotImplementedError/AttributeError，
     D1 决策兼容国产 provider），fallback 到普通 invoke + _parse_json_response。
-    全部失败退回 (50, 评分失败, 请重试) 兜底。
+    失败时抛出原始异常——降级策略由调用方（run_review）统一决定：
+    部分 run 失败兜底 50 分，全部失败拒绝落库并报友好错误。
     """
     llm = get_llm(llm_config)
     prompt = build_score_prompt(criterion, sections)
@@ -135,27 +159,36 @@ def _score_dimension(
         SystemMessage(content=SCORE_SYSTEM_PROMPT),
         HumanMessage(content=prompt),
     ]
+    llm = get_llm(llm_config)
+    prompt = build_score_prompt(criterion, sections)
+    messages = [
+        SystemMessage(content=SCORE_SYSTEM_PROMPT),
+        HumanMessage(content=prompt),
+    ]
+
+    # 路径 A：结构化输出（首选）。支持 provider 会返回 DimensionScore 实例。
+    # 结构化不支持的两类信号都走路径 B：
+    # - NotImplementedError/AttributeError：本地 langchain 链不支持（D1 国产 provider 兼容）
+    # - BadRequestError：服务端拒绝 response_format（DeepSeek「This response_format
+    #   type is unavailable now」实测 400，2026-08-19 dogfood——普通 invoke 是通的）
+    from app.ai.schemas.review_schema import DimensionScore
     try:
-        # 路径 A：结构化输出（首选）。支持 provider 会返回 DimensionScore 实例。
-        from app.ai.schemas.review_schema import DimensionScore
-        try:
-            structured_llm = llm.with_structured_output(DimensionScore)
-            result = structured_llm.invoke(messages)
-            # result 是 DimensionScore 实例（结构化输出）；也可能退化为 dict（兜底）
-            if isinstance(result, DimensionScore):
-                return (result.score, result.evidence, result.suggestion)
-            data = result  # dict 形态
-        except (NotImplementedError, AttributeError):
-            # 路径 B：provider 不支持 structured output，退回文本 + 正则解析
-            resp = llm.invoke(messages)
-            data = _parse_json_response(resp.content)
-        return (
-            max(0, min(100, int(data.get("score", 50)))),
-            str(data.get("evidence", "")),
-            str(data.get("suggestion", "")),
-        )
-    except Exception:
-        return (50, "评分失败", "请重试")
+        structured_llm = llm.with_structured_output(DimensionScore)
+        result = structured_llm.invoke(messages)
+        # result 是 DimensionScore 实例（结构化输出）；也可能退化为 dict（兜底）
+        if isinstance(result, DimensionScore):
+            return (result.score, result.evidence, result.suggestion)
+        data = result  # dict 形态
+    except (NotImplementedError, AttributeError, BadRequestError):
+        # 路径 B：退回普通 invoke + 括号配平解析
+        resp = llm.invoke(messages)
+        data = _parse_json_response(resp.content)
+
+    return (
+        max(0, min(100, int(data.get("score", 50)))),
+        str(data.get("evidence", "")),
+        str(data.get("suggestion", "")),
+    )
 
 
 def _parse_json_response(text: str) -> dict:
@@ -260,15 +293,18 @@ def _check_cross_section_consistency(
             return _postprocess([issue.model_dump() for issue in result.issues])
         # dict 兜底
         return _postprocess(result.get("issues", []))
-    except (NotImplementedError, AttributeError):
-        # provider 不支持 structured output，退回文本解析
+    except (NotImplementedError, AttributeError, BadRequestError):
+        # provider 不支持 structured output（本地或服务端 400 拒绝 response_format），
+        # 退回普通 invoke + 文本解析（与 _score_dimension 路径 B 同策略）
         try:
             resp = llm.invoke(messages)
             data = _parse_json_response(resp.content)
             return _postprocess(data.get("issues", []))
-        except Exception:
+        except Exception as e:
+            logger.warning("跨章节一致性检查失败（降级为空，不阻断审查）: {}", e)
             return []
-    except Exception:
+    except Exception as e:
+        logger.warning("跨章节一致性检查失败（降级为空，不阻断审查）: {}", e)
         return []
 
 
