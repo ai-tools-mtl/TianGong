@@ -24,6 +24,12 @@ def test_bad_key_401():
     assert "API Key" in friendly_llm_error(_exc("401 Invalid API Key"))
 
 
+def test_insufficient_balance_402_deepseek():
+    """DeepSeek 402 英文报错应映射到「余额不足」提示，而非原始 JSON 透传。"""
+    msg = "Error code: 402 - {'error': {'message': 'Insufficient Balance', 'type': 'unknown_error'}}"
+    assert "余额不足" in friendly_llm_error(_exc(msg))
+
+
 def test_timeout():
     assert "超时" in friendly_llm_error(_exc("Request timed out after 30s"))
 
