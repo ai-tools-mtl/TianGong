@@ -254,17 +254,28 @@ deepagents 行为。
 
 **坑**：Windows 默认事件循环策略是 ProactorEventLoop，psycopg3 async 不支持。
 直接 `uv run uvicorn app.main:app` 起来后日志反复刷
-`error connecting in 'pool-1': Psycopg cannot use the 'ProactorEventLoop' to run in async mode`，
-所有 DB 接口失败（login 等全 500/连接拒绝）。pytest 不受影响（TestClient 走 SQLite / 同步路径）。
+`error connecting in 'pool-1': Psycopg cannot use the 'ProactorEventLoop' to run in async mode`。
 
-**修法**：启动前切 SelectorEventLoop：
+**关键事实（2026-08-19 修正）**：uvicorn 在 win32 上 `--reload` 或 `--workers >1`
+时（`Config.use_subprocess=True`）实际用 **SelectorEventLoop**，psycopg 异步完全
+可用——开发常态 `uvicorn --reload` 不踩此坑；只有单进程裸跑才落到 Proactor。
 
-```bash
-cd apps/api && uv run python -c "import asyncio,sys,uvicorn; asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy()) if sys.platform=='win32' else None; uvicorn.run('app.main:app', host='localhost', port=8000)"
-```
+**代码内已修（checkpoint.py，2026-08-19）**：`init_checkpointer` 对 win32 +
+ProactorEventLoop 提前探测、立即 fail-open 降级（warning 给出可行动原因），
+不再 30s 空等 + 后台无限重试刷屏。同日修复的三层叠加 bug（症状是
+`missing "=" after "postgresql+psycopg://..."` 刷屏 + Checkpointer 永远降级）：
 
-注意：startup 约 40s（应用启动期有 DB 探针重试）；`POST /api/v1/auth/login` 返回 200 即链路已通。
+1. **方言 URL 直喂 psycopg**：`postgresql+psycopg://` 是 SQLAlchemy 方言前缀，
+   psycopg 只认 `postgresql://`，须剥 `+driver` 后缀再传 `AsyncConnectionPool`；
+2. **pool 连接参数缺失**：须对齐官方 `from_conn_string` 的
+   `autocommit=True`（setup() 迁移含 `CREATE INDEX CONCURRENTLY`，不能在事务块内）
+   + `dict_row`（saver 查询按列名取值）+ `prepare_threshold=0`；
+3. **失败不关池**：fail-open 降级时必须 `await pool.close()`，否则 pool 后台
+   worker 持失败配置无限重试，WARNING 永续刷屏。另补 `close_checkpointer()`
+   挂到 app shutdown，否则 pool 挂活连接拖住优雅停机/脚本收尾。
 
+要完整持久化（checkpointer 生效）就带 `--reload` 跑；裸跑会优雅降级无持久化
+（resume/HITL 随之 fail-open）。`POST /api/v1/auth/login` 返回 200 即链路已通。
 
 ### E11: PG 专属部分唯一索引在 SQLite 测试库是盲区，「新对话」线上 500 ⚠️（已修）
 

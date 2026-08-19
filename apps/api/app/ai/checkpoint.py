@@ -11,6 +11,10 @@ fail-open：初始化失败降级 None，app 仍启动——checkpoint 是增强
 history 重建逻辑完全不变，checkpoint 只持久化 agent 内部进度。
 """
 
+import asyncio
+import re
+import sys
+from contextlib import suppress
 from logging import getLogger
 
 from langgraph.checkpoint.base import BaseCheckpointSaver
@@ -31,15 +35,51 @@ async def init_checkpointer(database_url: str, *, is_pg: bool) -> None:
     global _checkpointer
     try:
         if is_pg:
+            from psycopg.rows import dict_row
             from psycopg_pool import AsyncConnectionPool
 
             from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-            pool = AsyncConnectionPool(conninfo=database_url, open=False)
-            await pool.open()
-            saver = AsyncPostgresSaver(conn=pool)
-            await saver.setup()
-            _checkpointer = saver
+            # psycopg 异步不支持 Windows ProactorEventLoop（连接必败且要白等 30s 超时）。
+            # 提前探测立即降级：uvicorn --reload/多 worker 在 win32 用 SelectorEventLoop 可用，
+            # 单进程裸跑（Proactor）则降级无持久化，warning 给出可行动原因。
+            if sys.platform == "win32" and isinstance(
+                asyncio.get_running_loop(), asyncio.ProactorEventLoop
+            ):
+                raise RuntimeError(
+                    "Windows 下当前事件循环是 ProactorEventLoop，psycopg 异步不可用"
+                    "（改用 uvicorn --reload 或 --workers >1 可切到 SelectorEventLoop）"
+                )
+
+            # psycopg 只认 postgresql:// URI 或 key=value conninfo，
+            # SQLAlchemy 方言 URL（postgresql+psycopg://...）直接传入解析必败，
+            # 表现为 pool 每次重试报 missing "=" 且永远连不上。
+            conninfo = re.sub(r"^postgresql\+[^:]+://", "postgresql://", database_url)
+
+            # 连接参数对齐官方 from_conn_string（3.x 版已是单连接上下文管理器，
+            # 进程级单例须自建 pool）：autocommit 是 setup() 迁移里的
+            # CREATE INDEX CONCURRENTLY 的硬要求（不能跑在事务块内）；
+            # dict_row 因 saver 查询按列名取值；prepare_threshold=0 禁预编译缓存。
+            pool = AsyncConnectionPool(
+                conninfo=conninfo,
+                open=False,
+                kwargs={
+                    "autocommit": True,
+                    "prepare_threshold": 0,
+                    "row_factory": dict_row,
+                },
+            )
+            try:
+                await pool.open()
+                saver = AsyncPostgresSaver(conn=pool)
+                await saver.setup()
+                _checkpointer = saver
+            except Exception:
+                # 失败必须关池：不关的话 pool 后台 worker 持失败配置无限重试，
+                # 即使 fail-open 降级后 WARNING 也会持续刷屏。
+                with suppress(Exception):
+                    await pool.close()
+                raise
             logger.info("LangGraph Checkpointer 已启用（AsyncPostgresSaver，持久化）")
         else:
             _checkpointer = InMemorySaver()
@@ -52,3 +92,18 @@ async def init_checkpointer(database_url: str, *, is_pg: bool) -> None:
 def get_checkpointer() -> BaseCheckpointSaver | None:
     """返回单例；未初始化或 fail-open 后为 None（agent 跳过 checkpoint，功能不受影响）。"""
     return _checkpointer
+
+
+async def close_checkpointer() -> None:
+    """app shutdown 调用：关闭 AsyncPostgresSaver 持有的 pool。
+
+    saver.conn 可能是 pool（本项目用法）或单连接（from_conn_string 用法），两者
+    都有 async close()。不关的话进程退出阶段 pool 后台 worker 挂着活连接，
+    轻则拖慢优雅停机，重则（脚本/CLI 场景）卡死事件循环收尾。
+    """
+    global _checkpointer
+    cp, _checkpointer = _checkpointer, None
+    conn = getattr(cp, "conn", None)  # InMemorySaver 无 conn，getattr 兜 None
+    if conn is not None:
+        with suppress(Exception):
+            await conn.close()

@@ -192,3 +192,12 @@ async def on_startup():
         await init_checkpointer(settings.database_url, is_pg=(engine.dialect.name == "postgresql"))
     except Exception as e:
         loguru.logger.exception(f"Checkpointer 启动初始化失败（不阻塞启动）：{e}")
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    # 关闭 checkpointer 的 psycopg 异步连接池：不关的话 pool 后台 worker
+    # 挂着活连接拖住优雅停机（reload 重启时每次都会经历一遍）。
+    from app.ai.checkpoint import close_checkpointer
+
+    await close_checkpointer()
