@@ -76,7 +76,8 @@ export default function ReviewPage() {
       qc.invalidateQueries({ queryKey: ['reviews', params.id] })
       qc.invalidateQueries({ queryKey: ['review-trend', params.id] })
     },
-    onError: () => toast.error('审查失败'),
+    // 后端 message 已是友好文案（如「LLM 账户余额不足…」），别用写死文案把它吞了
+    onError: (e) => toast.error((e as { message?: string })?.message || '审查失败'),
     onSettled: () => setReviewing(false),
   })
 
