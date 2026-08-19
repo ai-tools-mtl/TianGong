@@ -329,3 +329,35 @@ FOR UPDATE 持锁到 commit 完成。原先 create_project 自管 commit 会中�
 SQLite 测试套件背书。
 
 
+### E12: with_structured_output 对国产 provider 是「双形态失败」，且静默吞异常会把故障伪装成成功 ⚠️（已修）
+
+**坑**（2026-08-19 dogfood，交底书审查「全 50 分评分失败」事故）：langchain
+`with_structured_output` 走 OpenAI `response_format`（json_schema），国产
+provider 不支持时有**两种失败形态**：
+
+1. **本地失败**：langchain 链不支持 → `NotImplementedError`/`AttributeError`；
+2. **远端失败**：链构造成功，服务端 API 返回 400 拒绝 response_format——
+   DeepSeek 实测报 `This response_format type is unavailable now`
+   （**普通 invoke 完全正常**，只有结构化通道挂）。
+
+旧 `_score_dimension` 只把形态 1 路由到文本 fallback，形态 2 穿透后又被外层
+`except Exception: return (50, "评分失败", "请重试")` 静默吞掉——于是 LLM
+每次调用都失败，审查却「成功」落库一份全 50 分废报告，前端 toast「审查完成」，
+真实错误（400）在服务端日志里一个字都没有。**吞异常 + 无日志 = 故障伪装成
+成功，比直接报错恶劣得多**。
+
+**修复**：
+
+1. fallback 触发条件扩为 `(NotImplementedError, AttributeError, BadRequestError)`
+   （`_score_dimension` 与 `_check_cross_section_consistency` 两处同策略）；
+2. 删除静默兜底：单 run 失败 → `logger.warning` + 该 run 兜底 50 分；**全部
+   run 失败 → 拒绝落库**，`raise ValidationError(friendly_llm_error(last_exc))`
+   把真实原因（余额不足/key 失效/response_format 不支持…）透给前端；
+3. 前端审查页 `onError` 展示后端 message（不再写死「审查失败」）。
+
+**规矩**：用 `with_structured_output` 的 provider 兼容判断不能只捕本地异常，
+`openai.BadRequestError`（服务端拒绝 response_format）是同等信号；任何 LLM
+调用点的 `except Exception` 兜底必须打日志，且「全部调用失败」绝不能伪装成
+成功出报告——宁可报错，不出废数据。
+
+
