@@ -405,13 +405,10 @@ async def astream_init_generate(
     # 1. 建项目 + 8 空章节（标题从会话标题提炼）
     title = (conversation.title or "新项目").strip() or "新项目"
 
-    # P0-1 防双击重复落地：在标记会话已落地前，先对 conversation 行加 FOR UPDATE 锁。
-    # 与 conversations 上的部分唯一索引（uq_conversations_init_one_unlanded）配合，
-    # 把 assistant.py 端点的「读时检查」升级为「写时锁」：并发请求到此串行化，
-    # 第二个请求等第一个 commit 后再读，project_id 已非空 → 被端点层 ConflictError 拦。
+    # P0-1 防双击重复落地：对 conversation 行 FOR UPDATE 加锁后，create_project
+    # 以 commit=False 并入同一事务，锁一直持有到「project_id 标记已落地」commit 完成。
+    # 并发请求在此串行化：第二个请求拿锁后 refresh，project_id 已非空 → ConflictError。
     # SQLite 测试库不支持 FOR UPDATE（静默忽略，不影响测试）。
-    # 注意：create_project 内部会 db.commit()，故锁必须在 create_project 之前对
-    # 独立查询的 conversation 行生效；此处的 refresh 让会话状态锁后取最新。
     from app.core.database import is_postgres
     if is_postgres(db):
         db.execute(
@@ -420,14 +417,18 @@ async def astream_init_generate(
             .with_for_update()
         )
         db.refresh(conversation)
-        # 锁内二次检查：若已被并发请求落地，立即拒绝（索引是兜底，这里更早返回）
+        # 锁内二次检查：若已被并发请求落地，立即拒绝（不白建项目）
         if conversation.project_id is not None:
             from app.core.exceptions import ConflictError
             raise ConflictError("该会话正在落地中，请勿重复点击")
 
-    project = create_project(db, user=user, title=title[:60])
+    # create_project 不得自管 commit：中途 commit 会释放上面的行锁，
+    # 并发请求就能在「项目已建、标记未写」窗口钻进来（z1a2b3c4d5e6 删掉了
+    # 部分唯一索引兜底，行锁是唯一防线，必须持锁到标记完成）。
+    project = create_project(db, user=user, title=title[:60], commit=False)
 
-    # 2. 标记会话已落地（project_id 填上 → 列表不再显示）
+    # 2. 标记会话已落地（project_id 填上 → 列表不再显示）。
+    # 与建项目同一事务提交——要么都成，要么都不落地。
     conversation.project_id = project.id
     db.commit()
 

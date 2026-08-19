@@ -1,17 +1,24 @@
 # apps/api/tests/test_init_landing_dedup.py
 """P0-1：init generate 双击重复落地的去重逻辑测试。
 
-生产用 PG 部分唯一索引（uq_conversations_init_one_unlanded）+ FOR UPDATE 行锁
-保证并发安全。SQLite 测试库两者都不支持（FOR UPDATE 静默忽略、部分唯一索引
-不建），故此处聚焦测「逻辑路径」：
+防线（z1a2b3c4d5e6 起）：init_orchestrator 对 conversation 行 FOR UPDATE 后，
+create_project(commit=False) 并入同一事务，行锁持有到「project_id 标记已落地」
+commit 完成——并发请求串行化，第二个拿锁后见 project_id 非空即拒绝。
+历史上的部分唯一索引 uq_conversations_init_one_unlanded 已删：它按 user_id
+限制「未落地 init 会话最多 1 条」，与多会话设计冲突（用户已有未落地会话时
+点「+ 新对话」直接 500，2026-08-19 线上报障）。
+
+SQLite 测试库不支持 FOR UPDATE（静默忽略），故此处聚焦测「逻辑路径」：
 
 1. astream_init_generate 在 conversation.project_id 已非空时（并发竞态中锁内
    二次检查命中）抛 ConflictError，且不再调 create_project。
 2. assistant.py generate 端点的 AppError 分支把 ConflictError 转成
    {code: "conflict"} SSE error 事件，而非走 llm_error 通用提示。
+3. 正常落地走单事务：create_project 收到 commit=False，project 建成与
+   project_id 标记同 commit 落库。
+4. 多会话并存合法：同一 user 可有多条未落地 init 会话（索引删除的回归锚点）。
 
-部分唯一索引 + FOR UPDATE 的真实并发正确性靠 PG 集成验证（迁移幂等性 + 脏数据
-清理在 PG 环境单独跑，此处不覆盖）。
+FOR UPDATE 的真实并发串行化靠 PG 集成验证，此处不覆盖。
 """
 import asyncio
 import uuid as _uuid
@@ -119,3 +126,88 @@ def test_generate_endpoint_translates_apperror_to_sse(client, registered_user, d
     assert '"code": "conflict"' in resp.text, (
         f"期望 conflict code，实际响应: {resp.text[:300]}"
     )
+
+
+def test_init_generate_lands_in_single_transaction(db_session, registered_user, monkeypatch):
+    """正常落地：create_project 收到 commit=False，project 与落地标记同事务提交。
+
+    z1a2b3c4d5e6 删除部分唯一索引后，行锁是防双落地的唯一防线——
+    锁能持到标记完成的前提是 create_project 不自管 commit（中途 commit
+    释放行锁，并发窗口复现双落地）。本测试锚定该事务形状。
+    """
+    from app.ai import init_orchestrator as mod
+    from app.core import database as db_mod
+    from app.models import User
+    from app.services import project_service
+    from app.services.seed_service import ensure_default_template
+    from sqlalchemy import select
+
+    ensure_default_template(db_session)
+    user_obj = db_session.get(User, _uuid.UUID(registered_user["id"]))
+    conv = _make_init_conv(db_session, user_obj)
+
+    # 走 PG 分支（FOR UPDATE 查询在 SQLite 静默忽略，锁内二次检查路径生效）
+    monkeypatch.setattr(db_mod, "is_postgres", lambda db=None: True)
+
+    real_create = project_service.create_project
+    seen_kwargs = {}
+
+    def _spy_create(db, **kwargs):
+        seen_kwargs.update(kwargs)
+        return real_create(db, **kwargs)
+
+    # orchestrator 函数内 import，须 patch 源模块（与上方 dedup 测试同模式）
+    monkeypatch.setattr(project_service, "create_project", _spy_create)
+
+    async def _fake_msgs(*a, **k):
+        return []
+
+    async def _fake_stream(*a, **k):
+        yield "# 初稿"
+
+    monkeypatch.setattr(mod, "_build_section_generate_messages", _fake_msgs)
+    monkeypatch.setattr(mod, "astream_llm", _fake_stream)
+
+    async def _run():
+        events = []
+        async for kind, data in mod.astream_init_generate(
+            db_session, conv, [], user_obj, llm_config=_fake_llm_config(),
+        ):
+            events.append((kind, data))
+        return events
+
+    events = asyncio.run(_run())
+
+    assert seen_kwargs.get("commit") is False, (
+        f"落地路径必须传 commit=False（自管 commit 会中途释放行锁），实际: {seen_kwargs}"
+    )
+    kinds = [k for k, _ in events]
+    assert "project_created" in kinds and kinds[-1] == "all_done"
+
+    from app.models import Project
+    project = db_session.scalars(select(Project).where(Project.user_id == user_obj.id)).one()
+    db_session.refresh(conv)
+    assert conv.project_id == project.id, "落地标记与建项目应同事务落库"
+
+
+def test_multiple_unlanded_init_conversations_allowed(client, registered_user):
+    """同一 user 的多条未落地 init 会话并存合法（ChatGPT 式多会话）。
+
+    回归锚点：uq_conversations_init_one_unlanded 索引曾把此场景判非法，
+    「+ 新对话」直接 500。SQLite 测试库从不建 PG 专属索引（该测试当时也是
+    绿的），故此处固化端点语义：连建两条未落地会话均 201，为 PG 集成环境
+    提供对照基线。
+    """
+    client.post("/api/v1/auth/login", json={
+        "username": registered_user["username"],
+        "password": registered_user["password"],
+    })
+
+    r1 = client.post("/api/v1/assistant/conversations", json={"title": "想法A"})
+    r2 = client.post("/api/v1/assistant/conversations", json={"title": "想法B"})
+    assert r1.status_code == 201 and r2.status_code == 201, (
+        f"多会话并存必须合法，实际: {r1.status_code} / {r2.status_code}"
+    )
+
+    titles = {c["title"] for c in client.get("/api/v1/assistant/conversations").json()}
+    assert titles == {"想法A", "想法B"}

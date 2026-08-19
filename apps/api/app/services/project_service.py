@@ -11,6 +11,7 @@ def create_project(
     db: Session, *, user: User, title: str,
     template_id: str | None = None,
     metadata: dict | None = None,
+    commit: bool = True,
 ) -> Project:
     # 解析模板：指定 > 默认 > 系统
     tpl = None
@@ -42,8 +43,14 @@ def create_project(
             )
             db.add(section)
 
-    db.commit()
-    db.refresh(project)
+    if commit:
+        db.commit()
+        db.refresh(project)
+    else:
+        # 调用方自管事务（如 init 落地路径须把落地标记并入同一事务，
+        # 保持 FOR UPDATE 行锁持有到 commit，见 init_orchestrator）。
+        # flush 已保证 project.id 可用；不 refresh，避免丢弃同事务内的对象状态。
+        db.flush()
     return project
 
 
