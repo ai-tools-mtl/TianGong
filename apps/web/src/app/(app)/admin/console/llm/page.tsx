@@ -106,31 +106,37 @@ export default function AdminLLMPage() {
             className="overflow-hidden rounded-2xl border border-black/[0.07] bg-card dark:border-white/10"
             style={{ boxShadow: 'var(--shadow-card)' }}
           >
-            <LLMConfigEditPanel
-              showName={false}
-              initial={
-                chatCfg
-                  ? {
-                      base_url: chatCfg.base_url,
-                      api_key_masked: chatCfg.api_key_masked,
-                      model: chatCfg.model,
-                    }
-                  : null
-              }
-              saveLabel="保存全局 Chat 配置"
-              onCancel={() => toast.info('全局配置无需取消（常驻）')}
-              onSave={async (d) => {
-                await saveMut.mutateAsync({
-                  enabled,
-                  chat_config: {
-                    base_url: d.base_url,
-                    api_key: d.api_key || undefined, // 留空=不改
-                    model: d.model,
-                  },
-                })
-                toast.success('全局 Chat 配置已更新')
-              }}
-            />
+            {/* 配置未就绪不挂载面板：面板 state 只在挂载时取 initial，
+                query pending 时先挂载会把字段永久固化为空（data 到达不回填） */}
+            {cfgQuery.isLoading ? (
+              <p className="p-5 text-[12px] text-muted-foreground">加载配置…</p>
+            ) : (
+              <LLMConfigEditPanel
+                showName={false}
+                initial={
+                  chatCfg
+                    ? {
+                        base_url: chatCfg.base_url,
+                        api_key_masked: chatCfg.api_key_masked,
+                        model: chatCfg.model,
+                      }
+                    : null
+                }
+                saveLabel="保存全局 Chat 配置"
+                onCancel={() => toast.info('全局配置无需取消（常驻）')}
+                onSave={async (d) => {
+                  await saveMut.mutateAsync({
+                    enabled,
+                    chat_config: {
+                      base_url: d.base_url,
+                      api_key: d.api_key || undefined, // 留空=不改
+                      model: d.model,
+                    },
+                  })
+                  toast.success('全局 Chat 配置已更新')
+                }}
+              />
+            )}
           </div>
         </div>
 
@@ -153,31 +159,36 @@ export default function AdminLLMPage() {
             className="overflow-hidden rounded-2xl border border-black/[0.07] bg-card dark:border-white/10"
             style={{ boxShadow: 'var(--shadow-card)' }}
           >
-            <LLMConfigEditPanel
-              showName={false}
-              initial={
-                liteCfg
-                  ? {
-                      base_url: liteCfg.base_url,
-                      api_key_masked: liteCfg.api_key_masked,
-                      model: liteCfg.model,
-                      provider_template_id: 'zhipu',
-                    }
-                  : { provider_template_id: 'zhipu' }
-              }
-              saveLabel="保存轻量任务模型"
-              onCancel={() => toast.info('轻量配置无需取消（常驻）')}
-              onSave={async (d) => {
-                await saveLite.mutateAsync({
-                  lite_config: {
-                    base_url: d.base_url,
-                    api_key: d.api_key || undefined, // 留空=不改
-                    model: d.model,
-                  },
-                })
-                toast.success('轻量任务模型配置已更新')
-              }}
-            />
+            {/* 同上：pending 期不挂载，避免 initial 空值固化 state */}
+            {liteQuery.isLoading ? (
+              <p className="p-5 text-[12px] text-muted-foreground">加载配置…</p>
+            ) : (
+              <LLMConfigEditPanel
+                showName={false}
+                initial={
+                  liteCfg
+                    ? {
+                        base_url: liteCfg.base_url,
+                        api_key_masked: liteCfg.api_key_masked,
+                        model: liteCfg.model,
+                        provider_template_id: 'zhipu',
+                      }
+                    : { provider_template_id: 'zhipu' }
+                }
+                saveLabel="保存轻量任务模型"
+                onCancel={() => toast.info('轻量配置无需取消（常驻）')}
+                onSave={async (d) => {
+                  await saveLite.mutateAsync({
+                    lite_config: {
+                      base_url: d.base_url,
+                      api_key: d.api_key || undefined, // 留空=不改
+                      model: d.model,
+                    },
+                  })
+                  toast.success('轻量任务模型配置已更新')
+                }}
+              />
+            )}
           </div>
         </div>
       </div>

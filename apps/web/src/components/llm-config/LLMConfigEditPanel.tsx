@@ -60,9 +60,12 @@ export function LLMConfigEditPanel({
 
   function pickTemplate(t: ProviderTemplate) {
     setSelectedTplId(t.id)
-    // 自动填（仅在字段为空时填，避免覆盖用户已输入）
-    if (!baseUrl) setBaseUrl(t.base_url)
-    if (!model) setModel(t.default_model)
+    // 点模板 = 明确切换供应商：base_url/模型直接跟随模板覆盖。
+    // 不能「空才填」——编辑态字段有旧值、或浏览器 autofill 塞了脏值时
+    // 点模板毫无反应；且换供应商后沿用旧模型名必错（DeepSeek 端点配
+    // glm 模型）。Key/名称不覆盖（模板不知道这两样）。
+    setBaseUrl(t.base_url)
+    setModel(t.default_model)
   }
 
   async function handleFetchModels() {
