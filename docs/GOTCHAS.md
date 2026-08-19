@@ -277,6 +277,32 @@ ProactorEventLoop 提前探测、立即 fail-open 降级（warning 给出可行�
 要完整持久化（checkpointer 生效）就带 `--reload` 跑；裸跑会优雅降级无持久化
 （resume/HITL 随之 fail-open）。`POST /api/v1/auth/login` 返回 200 即链路已通。
 
+### E10: 测试里 `get_settings.cache_clear()` 造成 settings 双实例精神分裂 ⚠️（已修）
+
+**坑**：`app.main` 等模块在**导入期**捕获 `settings = get_settings()`（实例 A）。
+任何测试调 `get_settings.cache_clear()` 后，后续 `get_settings()` 返回**新实例 B**——
+conftest 的 `_clear_cookie_domain`（autouse，monkeypatch 补丁 cookie_domain=""）
+打到 B 上，而 auth 读 A（cookie_domain 还是 'localhost'）→ Set-Cookie 带
+`Domain=localhost` → httpx 对 `http://testserver` 拒收该 cookie → **该文件之后
+（按收集序）所有 client 测试批量 401**。2026-08-19 实测 103 个失败横跨 22 个
+文件，单文件/小组重跑全绿，极具迷惑性。
+
+**触发条件微妙**：污染源是 `test_logging_security_config.py`，但只有**此前已有
+任何 client 测试**（先导入了 app.main、绑定了 A）才发作——单跑该文件不污染，
+与 `test_llm_token_logging.py`（或任意更早的 client 文件）组合必污染。
+
+**定位手法**：金丝雀二分（用 `test_terms_api.py` 做金丝雀，按收集序二分前缀文件），
+再写一次性探针测试打印 Set-Cookie 头 + `get_settings()` 与 `main.settings` 的
+`id()`——两者不同即坐实分叉。
+
+**修复**：该文件加 autouse fixture 把 `config_mod.get_settings` 整体替换成
+**替身**（`cache_clear` 空操作、每次调 `Settings.from_env()` 现建），真 lru_cache
+原封不动（3.14 起 `_lru_cache_wrapper` 无 `.cache` 内部字典可快照，故整函数换身）。
+`test_rag_config.py` 头注释早已记录同款坑（彼时选择直接不用 cache_clear）。
+
+**规矩**：测试里**永远别 `get_settings.cache_clear()`**。要按 env 验证 Settings
+validator，直接调 `Settings.from_env()`，或像本次一样模块属性换身。
+
 ### E11: PG 专属部分唯一索引在 SQLite 测试库是盲区，「新对话」线上 500 ⚠️（已修）
 
 **坑**：t0p1u2v3w4x5（P0-1）加的部分唯一索引 `uq_conversations_init_one_unlanded`
@@ -301,3 +327,5 @@ FOR UPDATE 持锁到 commit 完成。原先 create_project 自管 commit 会中�
 **规矩**：给生产加 DB 层约束前先问「SQLite 测试库能否等价建出」；PG 专属
 约束（部分索引、CONCURRENTLY 等）必须补 PG 环境验证或迁移内自测，不能只靠
 SQLite 测试套件背书。
+
+

@@ -7,6 +7,33 @@ P0-6：非测试环境下，Settings 检测到弱密钥打 ERROR 告警（不阻
 """
 import os
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_settings_cache(monkeypatch):
+    """把本文件的 get_settings 替换成替身，真 lru_cache 原封不动。
+
+    本文件需要绕过缓存、按当次 env 现建 Settings 验证 validator，原实现靠
+    cache_clear 清真缓存。但被清掉的缓存实例（A）已被 app.main 等模块在
+    导入期捕获；离场后缓存里是新实例（B），conftest 的 _clear_cookie_domain
+    会补丁到 B，而 auth 读 A（cookie_domain='localhost'）→ httpx 拒收
+    Domain=localhost 的 cookie → 全套后续 client 测试 401
+    （同 test_rag_config.py 头注释记录的坑；3.14 起 lru_cache 无 .cache
+    内部字典可快照，故整函数换身）。
+    """
+    from app.core import config as config_mod
+
+    class _SettingsStub:
+        @staticmethod
+        def cache_clear():
+            pass  # 替身无缓存，clear 是空操作
+
+        def __call__(self):
+            return config_mod.Settings.from_env()
+
+    monkeypatch.setattr(config_mod, "get_settings", _SettingsStub())
+
 
 # ── P0-7：diagnose=False ───────────────────────────────────────────────
 
