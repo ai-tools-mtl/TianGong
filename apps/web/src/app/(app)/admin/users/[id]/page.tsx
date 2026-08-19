@@ -260,6 +260,7 @@ export default function UserDetailPage() {
                     onChange={(e) => setNewPassword(e.target.value)}
                     minLength={8}
                     className="flex-1"
+                    autoComplete="new-password"
                   />
                   <Button
                     size="sm"

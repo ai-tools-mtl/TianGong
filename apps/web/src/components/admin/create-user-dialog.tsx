@@ -85,6 +85,7 @@ export function CreateUserDialog() {
               maxLength={32}
               pattern="^[a-zA-Z0-9_-]+$"
               placeholder="字母/数字/下划线/连字符,3-32 位"
+              autoComplete="off"
             />
           </div>
           <div className="space-y-2">
@@ -117,6 +118,7 @@ export function CreateUserDialog() {
               required
               minLength={8}
               placeholder="至少 8 位,创建后请告知对方"
+              autoComplete="new-password"
             />
           </div>
           <div className="space-y-2">

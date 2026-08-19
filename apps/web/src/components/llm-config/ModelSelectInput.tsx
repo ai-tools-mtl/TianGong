@@ -35,6 +35,7 @@ export function ModelSelectInput({
           onChange={(e) => onChange(e.target.value)}
           placeholder={placeholder}
           className="h-9 flex-1 rounded-lg border border-black/[0.1] bg-background px-3 text-[13px] outline-none focus:border-primary dark:border-white/15"
+          autoComplete="off"
         />
         {options.length > 0 && (
           <button

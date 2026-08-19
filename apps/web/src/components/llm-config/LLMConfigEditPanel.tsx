@@ -141,17 +141,17 @@ export function LLMConfigEditPanel({
         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
           <div className="space-y-1.5">
             <Label className="text-[12px]">名称</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="如：公司主 Key" />
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="如：公司主 Key" autoComplete="off" />
           </div>
           <div className="space-y-1.5">
             <Label className="text-[12px]">API Base URL</Label>
-            <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://..." />
+            <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://..." autoComplete="off" />
           </div>
         </div>
       ) : (
         <div className="space-y-1.5">
           <Label className="text-[12px]">API Base URL</Label>
-          <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://..." />
+          <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://..." autoComplete="off" />
         </div>
       )}
 
@@ -172,6 +172,7 @@ export function LLMConfigEditPanel({
             onChange={(e) => setApiKey(e.target.value)}
             placeholder={initial?.api_key_masked ? '输入新 Key（留空不改）' : '输入 API Key'}
             className="pr-10 font-mono"
+            autoComplete="new-password"
           />
           <button
             type="button"

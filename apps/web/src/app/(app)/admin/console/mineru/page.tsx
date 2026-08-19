@@ -119,6 +119,7 @@ export default function MineruConfigPage() {
             placeholder="sk-...（mineru.net API 管理页创建）"
             value={apiToken}
             onChange={(e) => setApiToken(e.target.value)}
+            autoComplete="new-password"
           />
           <p className="text-xs text-muted-foreground">
             在 mineru.net → API 管理页面创建 token

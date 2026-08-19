@@ -122,6 +122,7 @@ export default function IMAConfigPage() {
             value={clientId}
             onChange={(e) => setClientId(e.target.value)}
             className="font-mono"
+            autoComplete="new-password"
           />
         </div>
 
@@ -139,6 +140,7 @@ export default function IMAConfigPage() {
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
             className="font-mono"
+            autoComplete="new-password"
           />
         </div>
 
