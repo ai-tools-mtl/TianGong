@@ -140,6 +140,10 @@ export default function ReviewPage() {
       a.download = `审查报告-第${latest.round}轮.pdf`
       a.click()
       URL.revokeObjectURL(url)
+    } catch {
+      // 网络层异常（断网/服务不可达）时 authFetch reject 冒泡，不 catch 会成
+      // unhandled rejection——exporting 复位了但用户没有任何反馈
+      toast.error('导出失败：网络错误或服务不可达，请稍后重试')
     } finally {
       setExporting(false)
     }
