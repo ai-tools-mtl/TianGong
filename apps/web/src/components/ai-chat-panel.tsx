@@ -1,6 +1,7 @@
 'use client'
 
 import { GitCompare, Loader2, PanelRight, Sparkles, Square, Trash2, Wand2 } from 'lucide-react'
+import { useRouter } from 'next/navigation'
 import { useQueryClient } from '@tanstack/react-query'
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -104,6 +105,7 @@ export interface AIChatPanelRef {
 export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
   function AIChatPanel({ sectionId, section, projectId, onAppliedContent }, ref) {
   const qc = useQueryClient()
+  const router = useRouter()
   const toggleRight = useUIStore((s) => s.toggleRight)
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
@@ -117,9 +119,14 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
   // diff 审核的来源 + 选区重写路径专用的整章 ai 文本（apply 时必须原样回传）。
   const [diffOrigin, setDiffOrigin] = useState<DiffOrigin>('full')
   const [rewriteAiFull, setRewriteAiFull] = useState('')
-  // T2 修订确认卡片（spec §3.5.2）：报告页/新颖性页/术语面板 launch 后跳转过来，
-  // 目标章节匹配时从 revision store 取出 pending 弹卡片；用户勾选 directives 后发起。
-  const [reviseCard, setReviseCard] = useState<(PendingRevision & { checked: boolean[] }) | null>(null)
+  // T2 修订确认卡片：状态放 revision-store（跨重挂载存活——?section= 深链定位
+  // 过程中本地 state 会随重挂载丢失，pending 已被消费则卡片永远不弹）。
+  // 报告页/新颖性页/术语面板 launch 后跳转过来，目标章节匹配时消费 pending 弹卡片。
+  const reviseCard = useRevisionStore((s) => s.card)
+  const setReviseCard = useRevisionStore((s) => s.setCard)
+  const clearReviseCard = useRevisionStore((s) => s.clearCard)
+  // 一键修订队列剩余（确认卡片上展示进度 + 取消入口）
+  const revisionQueue = useRevisionStore((s) => s.queue)
   const [currentConvId, setCurrentConvId] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -190,7 +197,9 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
     setHunks([])
     setRewriteAiFull('')
     setDiffOrigin('full')
-    setReviseCard(null)
+    // 不清 store 卡片：面板在 ?section 深链定位过程中会重挂载（sections 加载→current
+    // 变化），重挂载的 reset 若清卡会把「已消费 pending 换来的卡片」永久丢掉
+    // （pending 已 null，无法二次消费）。卡片归属改为渲染时按 sectionKey 匹配。
   }, [sectionId])
 
   // phase ref 同步（getPhase 经 imperative handle 对外读）
@@ -563,7 +572,7 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
       toast.error('请至少勾选一条修订建议')
       return
     }
-    setReviseCard(null) // 单飞：revising 中不显示卡片（spec 边界 #16）
+    clearReviseCard() // 单飞：revising 中不显示卡片（spec 边界 #16）
     setPhase('revising')
     setAiDraft('')
     abortRef.current = new AbortController()
@@ -600,7 +609,7 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
         // 中断：丢弃缓冲，恢复确认卡片可重新发起（spec 边界 #3）
         setAiDraft('')
         setPhase('idle')
-        setReviseCard({ ...card, checked: card.checked })
+        setReviseCard(card) // 恢复原卡片（含勾选），可重新发起（spec 边界 #3）
       } else if (isForbiddenSourceError(err)) {
         handleStaleSourceError()
         setPhase('idle')
@@ -635,6 +644,28 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
     }
   }
 
+  // 一键修订队列推进：本章 diff 应用后进入下一章。失效章节（模板变更/被删）
+  // 自动跳过继续取；队列空则无事发生（普通单章修订路径不受影响）。
+  function proceedQueue() {
+    let next = useRevisionStore.getState().advanceQueue()
+    while (next) {
+      const secs = qc.getQueryData<Section[]>(queryKeys.sections(projectId)) ?? []
+      const target = secs.find((s) => s.key === next!.sectionKey)
+      if (target) {
+        const remaining = useRevisionStore.getState().queue.length
+        toast.success(
+          `已进入下一章修订：${target.title}${remaining > 0 ? `（剩余 ${remaining} 章）` : '（最后一章）'}`,
+        )
+        // 编辑器页深链 effect 只在挂载时读一次 URL，已挂载状态下的 push 不会触发
+        // 章节切换——用事件即时通知；router.push 保留（刷新/直开场景仍走深链）。
+        window.dispatchEvent(new CustomEvent('tiangong:goto-section', { detail: next.sectionKey }))
+        router.push(`/projects/${projectId}?section=${encodeURIComponent(next.sectionKey)}`)
+        return
+      }
+      next = useRevisionStore.getState().advanceQueue()
+    }
+  }
+
   async function handleApplyDiff(acceptedHunkIds: string[]) {
     if (acceptedHunkIds.length === 0) {
       toast.info('未选择任何变更')
@@ -661,6 +692,8 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
         onAppliedContent?.(updated.content)
       }
       await qc.invalidateQueries({ queryKey: queryKeys.sections(projectId) })
+      // 一键修订队列：本章应用完成，自动进入下一章（人工 diff 审核节奏不变）
+      proceedQueue()
     } catch (err: unknown) {
       const e = err as { code?: string; message?: string }
       if (e?.code === 'conflict') {
@@ -790,7 +823,8 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
 
       {/* 内容区 */}
       <div ref={scrollRef} className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 py-3">
-        {reviseCard && (
+        {/* 卡片归属匹配当前章节（store 卡片跨重挂载存活，切章后旧章节卡片不在此显示） */}
+        {reviseCard && reviseCard.sectionKey === section.key && (
           // T2 修订确认卡片（spec §3.5.2）：顶部卡片而非聊天消息——修订不是对话行为。
           // 勾选将要应用的 directives（用户可见可控，D3），可关闭丢弃。
           <div className="rounded-lg border border-amber-300/60 bg-amber-50 px-3 py-2.5 dark:border-amber-700/50 dark:bg-amber-950/30">
@@ -803,7 +837,7 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
                   {reviseCard.origin === 'review' ? '审查报告' : reviseCard.origin === 'novelty' ? '新颖性评估' : '术语检查'}）
                 </span>
               </h4>
-              <Button variant="ghost" size="icon-xs" aria-label="放弃修订" onClick={() => setReviseCard(null)}>
+              <Button variant="ghost" size="icon-xs" aria-label="放弃修订" onClick={() => clearReviseCard()}>
                 ×
               </Button>
             </div>
@@ -813,11 +847,11 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
                   <input
                     type="checkbox"
                     checked={reviseCard.checked[i]}
-                    onChange={() =>
-                      setReviseCard((c) =>
-                        c ? { ...c, checked: c.checked.map((v, j) => (j === i ? !v : v)) } : c,
-                      )
-                    }
+                    onChange={() => {
+                      const cur = useRevisionStore.getState().card
+                      if (!cur) return
+                      setReviseCard({ ...cur, checked: cur.checked.map((v, j) => (j === i ? !v : v)) })
+                    }}
                     className="mt-0.5 size-3.5 shrink-0 accent-amber-600"
                   />
                   <span className={cn('text-ellipsis', reviseCard.checked[i] ? '' : 'text-muted-foreground line-through')}>
@@ -838,6 +872,42 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
             <p className="mt-1.5 text-[11px] text-muted-foreground">
               修订产出经差异审核后应用，未勾选的部分不会改动。
             </p>
+            {revisionQueue.length > 0 && (
+              <div className="mt-1.5 flex items-center justify-between text-[11px] text-muted-foreground">
+                <span>批量修订：本章之后还有 {revisionQueue.length} 章待修</span>
+                <button
+                  className="underline underline-offset-2 hover:text-foreground"
+                  onClick={() => {
+                    useRevisionStore.getState().clearQueue()
+                    toast.info('已取消剩余章节的批量修订')
+                  }}
+                >
+                  取消剩余
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        {/* 批量修订队列滞留条：用户关闭确认卡片 / 放弃本章后，剩余章节仍可手动继续 */}
+        {!reviseCard && revisionQueue.length > 0 && (
+          <div className="flex items-center justify-between rounded-lg border border-amber-300/60 bg-amber-50 px-3 py-2 text-[12px] dark:border-amber-700/50 dark:bg-amber-950/30">
+            <span className="text-amber-900 dark:text-amber-200">
+              批量修订队列中还有 {revisionQueue.length} 章待修
+            </span>
+            <span className="flex items-center gap-2">
+              <Button variant="outline" size="sm" className="h-6 gap-1 px-2 text-[11px]" onClick={proceedQueue}>
+                继续下一章
+              </Button>
+              <button
+                className="text-[11px] text-muted-foreground underline underline-offset-2 hover:text-foreground"
+                onClick={() => {
+                  useRevisionStore.getState().clearQueue()
+                  toast.info('已取消剩余章节的批量修订')
+                }}
+              >
+                取消
+              </button>
+            </span>
           </div>
         )}
         {phase === 'generating' || phase === 'revising' || phase === 'done' ? (

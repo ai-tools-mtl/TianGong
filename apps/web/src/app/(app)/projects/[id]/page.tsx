@@ -110,6 +110,26 @@ export default function ProjectDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sections?.length])
 
+  // 批量修订队列推进（一键修订）：编辑器已挂载时 AIChatPanel.proceedQueue 的
+  // router.push 不会触发上面的深链 effect（依赖 sections.length，不变不重跑），
+  // 用事件即时切章。URL 上的 ?section= 同时清掉（与深链 effect 同款清理）。
+  useEffect(() => {
+    const onGoto = (e: Event) => {
+      const key = (e as CustomEvent<string>).detail
+      if (!key || !sections?.length) return
+      const target = sections.find((s) => s.key === key)
+      if (target) {
+        pendingScrollRef.current = true
+        setCurrentId(target.id)
+        // URL 的 ?section= 不在此清（dispatch 先于 router.push，清了也会被写回），
+        // 刷新时由上面的深链 effect 读取定位并清参，行为一致。
+      }
+    }
+    window.addEventListener('tiangong:goto-section', onGoto)
+    return () => window.removeEventListener('tiangong:goto-section', onGoto)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sections])
+
   // 激活章变化后的滚动定位（spec §3.6）：点击章头/大纲、?section= 深链、revision 前往
   // 统一走 pendingScrollRef 标记，在目标章挂载后的本 effect 中滚动（首帧未挂载时
   // scrollIntoView 无效）。滚动跟随触发的激活不置标记、不滚动。
