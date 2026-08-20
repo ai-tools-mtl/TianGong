@@ -189,6 +189,20 @@ export default function ReviewPage() {
               {exporting ? '导出中...' : '导出报告'}
             </Button>
           )}
+          {/* 一键修订提级到顶栏（原入口埋在「按章节」tab 内，默认「按维度」视图看不到）：
+              有定位到章节的问题即可用，替代按钮隐藏在 tab 深处 */}
+          {latest && latest.section_issues.length > 0 && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              onClick={handleReviseAll}
+              disabled={inProgress}
+            >
+              <Wand2 className="size-3.5" />
+              一键修订（{latest.section_issues.length} 章）
+            </Button>
+          )}
           <Button onClick={() => runReview.mutate()} disabled={inProgress} className="gap-1.5">
             <Play className="size-3.5" />
             {inProgress ? '审查中...' : '执行审查'}
@@ -443,17 +457,8 @@ export default function ReviewPage() {
                   {latest.section_issues.length > 0 && (
                     <div className="mb-4 flex items-center justify-between">
                       <p className="text-[12px] text-muted-foreground">
-                        共 {latest.section_issues.length} 章有待改进问题
+                        共 {latest.section_issues.length} 章有待改进问题（可用顶栏「一键修订」批量处理）
                       </p>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="h-7 gap-1 px-2 text-xs"
-                        onClick={handleReviseAll}
-                      >
-                        <Wand2 className="size-3" />
-                        一键修订（{latest.section_issues.length} 章）
-                      </Button>
                     </div>
                   )}
                   {latest.section_issues.length > 0 ? (
