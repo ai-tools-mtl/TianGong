@@ -13,12 +13,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.logging import get_logger
 from app.core.exceptions import AppError
 from app.core.rate_limit import AI_LIMIT, _user_or_ip_key, limiter
 from app.deps import get_current_user
 from app.models import Conversation, KIND_INIT, Message, User
 from app.services import conversation_service
 
+logger = get_logger(__name__)
 router = APIRouter(prefix="/assistant", tags=["assistant"])
 
 
@@ -223,6 +225,7 @@ def _log_llm_call(db: Session, *, user_id, action: str, model: str, provider: st
         db.add(log)
         db.commit()
     except Exception:
+        logger.warning("LLM 调用日志落库失败（不影响主流程）")
         db.rollback()
 
 
@@ -367,6 +370,7 @@ async def chat(
             from app.ai.llm_errors import friendly_llm_error
             err = str(e)
             status = "failed"
+            logger.exception("assistant SSE 流式端点异常（已友好化转发前端）")
             # 异常兜底：保留已生成的部分内容（标 incomplete），不丢弃用户已看到的回复。
             # rollback 先撤销中毒事务，再新建 Message 落库；落库失败不阻塞错误上报。
             if full_response:
@@ -454,10 +458,14 @@ async def generate(
         except AppError as e:
             # P0-1：ConflictError（双击重复落地）/ 其它业务异常走专用 code，不被 llm_error 吞掉
             db.rollback()
+            logger.warning(
+                "assistant generate SSE 业务异常 {code} | {msg}", code=e.code, msg=e.message,
+            )
             yield _sse_event("error", {"code": e.code, "message": e.message})
         except Exception as e:
             from app.ai.llm_errors import friendly_llm_error
             db.rollback()
+            logger.exception("assistant generate SSE 流式端点异常（已友好化转发前端）")
             yield _sse_event("error", {"code": "llm_error", "message": friendly_llm_error(e)})
 
     return StreamingResponse(generate_stream(), media_type="text/event-stream")

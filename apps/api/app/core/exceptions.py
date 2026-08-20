@@ -61,10 +61,30 @@ def register_exception_handlers(app) -> None:
       生产响应体不泄露堆栈（服务端日志有完整记录）。
     """
     from fastapi import Request
+    from fastapi.encoders import jsonable_encoder
+    from fastapi.exceptions import RequestValidationError
     from fastapi.responses import JSONResponse
 
     from app.core.logging import get_request_id, get_logger
     logger = get_logger(__name__)
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(request: Request, exc: RequestValidationError):
+        # 422 之前走 FastAPI 默认处理器，后台只有一行 access log，
+        # 不知道哪个字段/为什么校验失败——排障时最常见的日志盲区。
+        # 响应体保持默认 {detail: errors} 格式不变（前端可能依赖该结构）。
+        logger.warning(
+            "参数校验失败 {method} {path} | {errors}",
+            method=request.method, path=request.url.path,
+            errors=exc.errors(),
+        )
+        return JSONResponse(
+            status_code=422,
+            # errors() 的 ctx 可能含 ValueError 等异常对象，须 jsonable_encoder
+            # 规范化（FastAPI 默认处理器同款），否则响应序列化 TypeError。
+            content={"detail": jsonable_encoder(exc.errors())},
+            headers={"X-Request-ID": get_request_id()},
+        )
 
     @app.exception_handler(AppError)
     async def app_error_handler(request: Request, exc: AppError):

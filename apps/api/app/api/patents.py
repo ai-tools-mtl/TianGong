@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.logging import get_logger
 from app.core.rate_limit import AI_LIMIT, _user_or_ip_key, limiter
 from app.deps import get_current_user
 from app.models import User
@@ -23,6 +24,7 @@ from app.services.novelty_service import (
     persist_assessment,
 )
 
+logger = get_logger(__name__)
 router = APIRouter(tags=["patents"])
 
 
@@ -118,6 +120,7 @@ async def assess_novelty(
         except Exception as e:
             from app.ai.llm_errors import friendly_llm_error
 
+            logger.exception("新颖性评估 SSE 流式端点异常（已友好化转发前端）")
             yield _sse("error", {"code": "llm_error", "message": friendly_llm_error(e)})
         finally:
             from app.api.ai import _log_llm_call

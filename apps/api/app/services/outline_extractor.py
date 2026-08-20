@@ -21,12 +21,15 @@ import re
 from sqlalchemy.orm import Session
 
 from app.ai.llm_client import get_llm
+from app.core.logging import get_logger
 from app.core.text_utils import sanitize_text_for_pg
 from app.models import Message
 from app.services.seed_service import DEFAULT_STRUCTURE
 
 # 8 章 key → title 的映射（与 seed_service.DEFAULT_STRUCTURE 一致，单一数据源）
 _OUTLINE_KEYS = [(s["key"], s["title"]) for s in DEFAULT_STRUCTURE]
+
+logger = get_logger(__name__)
 
 
 def _build_dialog_text(messages: list[Message]) -> str:
@@ -133,6 +136,7 @@ def extract_outline(db: Session, messages: list[Message], user_id) -> dict:
 
         llm_config = resolve_lite_config(db, user_id=user_id)
     except Exception:
+        logger.warning("大纲提取：lite 配置解析失败，本轮跳过（预览不更新）")
         return {}
     if llm_config is None:
         return {}
@@ -145,4 +149,5 @@ def extract_outline(db: Session, messages: list[Message], user_id) -> dict:
         resp = llm.invoke([HumanMessage(content=_build_prompt(dialog_text))])
         return _parse_outline_json(resp.content if hasattr(resp, "content") else str(resp))
     except Exception:
+        logger.warning("大纲提取失败，本轮跳过（预览不更新，不影响对话）")
         return {}

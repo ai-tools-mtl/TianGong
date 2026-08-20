@@ -182,6 +182,7 @@ def _log_llm_call(
         db.commit()
     except Exception:
         # 日志失败不阻断主流程（已 yield 给用户的内容不丢）
+        logger.warning("LLM 调用日志落库失败（不影响主流程）")
         db.rollback()
 
 

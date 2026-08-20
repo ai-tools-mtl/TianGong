@@ -3,7 +3,10 @@
 from sqlalchemy.orm import Session
 
 from app.ai.llm_client import get_llm
+from app.core.logging import get_logger
 from app.models import Conversation
+
+logger = get_logger(__name__)
 
 
 def summarize_conversation_title(
@@ -29,6 +32,7 @@ def summarize_conversation_title(
 
         llm_config = resolve_lite_config(db, user_id=user_id)
     except Exception:
+        logger.warning("标题生成：lite 配置解析失败，降级默认标题")
         return fallback
     if llm_config is None:
         return fallback
@@ -48,4 +52,5 @@ def summarize_conversation_title(
         title = resp.content.strip().strip('“”"\'').strip("。.").strip()[:50]
         return title or fallback
     except Exception:
+        logger.warning("标题生成失败，降级默认标题（不影响对话主流程）")
         return fallback

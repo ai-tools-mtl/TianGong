@@ -7,6 +7,9 @@
 from sqlalchemy.orm import Session
 
 from app.models import Section
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 
 def generate_summary(db: Session, section: Section) -> str:
@@ -48,6 +51,7 @@ def generate_summary(db: Session, section: Section) -> str:
         db.commit()
         return summary
     except Exception:
+        logger.warning("章节摘要生成失败，降级截断原文（跨章节上下文质量会受影响）")
         fallback = text[:200]
         section.summary = fallback
         db.commit()

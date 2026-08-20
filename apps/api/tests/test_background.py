@@ -45,3 +45,54 @@ def test_spawn_does_not_block_caller():
     elapsed = time.monotonic() - start
 
     assert elapsed < 0.5  # 立即返回
+
+
+def test_spawn_task_exception_is_logged(monkeypatch):
+    """任务抛异常：done callback 落 error 日志（异常不再静默吞掉）。"""
+    captured = {}
+
+    class _FakeLogger:
+        def debug(self, msg, *a, **kw):
+            pass
+
+        def exception(self, msg, *a, **kw):
+            captured["exception"] = msg
+
+    import app.core.background as bg
+    monkeypatch.setattr(bg, "logger", _FakeLogger())
+
+    def boom():
+        raise RuntimeError("worker exploded")
+
+    fut = spawn_background_task(boom)
+    # result 会重抛异常；等待任务执行完即可
+    try:
+        fut.result(timeout=2)
+    except RuntimeError:
+        pass
+
+    import time as _t
+    _t.sleep(0.05)  # done callback 异步于 result() 执行
+    assert "后台任务异常" in captured.get("exception", "")
+
+
+def test_spawn_task_success_no_error_log(monkeypatch):
+    """任务成功：不打异常日志。"""
+    captured = {}
+
+    class _FakeLogger:
+        def debug(self, msg, *a, **kw):
+            pass
+
+        def exception(self, msg, *a, **kw):
+            captured["exception"] = msg
+
+    import app.core.background as bg
+    monkeypatch.setattr(bg, "logger", _FakeLogger())
+
+    fut = spawn_background_task(lambda: 42)
+    assert fut.result(timeout=2) == 42
+
+    import time as _t
+    _t.sleep(0.05)
+    assert "exception" not in captured
