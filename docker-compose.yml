@@ -20,7 +20,11 @@ services:
     container_name: tiangong-postgres
     environment:
       POSTGRES_USER: tiangong
-      POSTGRES_PASSWORD: tiangong
+      # 与 api 容器的 DATABASE_URL/TEST_DATABASE_URL 共用同一变量，改一次两侧同步
+      # （api 侧引用 ${POSTGRES_PASSWORD:-tiangong}）。注意 postgres 镜像只在
+      # pgdata 卷**首次初始化**时应用此密码；已有卷上改它只会造成 api/库密码不一致，
+      # 存量库改密须进库 ALTER USER 后再同步此变量。
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tiangong}
       POSTGRES_DB: tiangong
     # 端口暴露到宿主机：本地开发时 api 在宿主机跑（uv run uvicorn），需直连 postgres。
     # 全栈部署（--profile full）时 api 在容器内走服务名 postgres:5432，此映射无害（仅多开一个监听）。
@@ -45,8 +49,13 @@ services:
     image: quay.io/minio/minio:latest
     container_name: tiangong-minio
     environment:
-      MINIO_ROOT_USER: tiangong
-      MINIO_ROOT_PASSWORD: tiangong12345
+      # 与 api 容器共用同一组变量（api 侧叫 MINIO_ACCESS_KEY/MINIO_SECRET_KEY），
+      # 保证 .env.production 改一次密码两侧同步生效。此前此处硬编码 tiangong12345，
+      # 导致按部署文档改 MINIO_SECRET_KEY 后 api↔minio 鉴权失败且双方 healthcheck
+      # 均显示 healthy（探活不校验密码），故障只出现在运行时文件操作，极难排查。
+      # MinIO root 凭据每次启动都取自 env，已有 miniodata 卷改密码重启即生效。
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-tiangong}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-tiangong12345}
     # 9000 = S3 API（api 连接用）；9001 = MinIO Console（Web UI，浏览器调试 bucket/文件用）。
     # 本地开发两者都需要：api 连 9000 传文件，人用 9001 查 bucket 内容/上传下载。
     ports:
@@ -354,7 +363,8 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS}
       MINIO_ENDPOINT: minio:9000
       MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-tiangong}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
+      # 默认值与 minio 容器的 MINIO_ROOT_PASSWORD 保持一致（两容器共用此变量）
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-tiangong12345}
       MINIO_BUCKET_PERSONAL: ${MINIO_BUCKET_PERSONAL:-tiangong-personal}
       MINIO_BUCKET_GLOBAL: ${MINIO_BUCKET_GLOBAL:-tiangong-global}
       MINIO_SECURE: ${MINIO_SECURE:-false}
