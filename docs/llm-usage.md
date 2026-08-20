@@ -52,7 +52,7 @@
 
 | 功能 | 文件:行 | 特点 | 替换价值 | 备注 |
 |------|---------|------|----------|------|
-| **审查引擎评分**（B3） | `review_service.py:108` `_score_dimension` | 每维度跑 `CONSISTENCY_RUNS=2` 次自一致性 + `with_structured_output` | ⭐⭐⭐ 最高 | token 消耗最大的点；但涉及结构化输出质量，替换前需评估 |
+| **审查引擎评分**（B3） | `review_service.py:195` `_score_dimension` | 每维度跑 `CONSISTENCY_RUNS=2` 次自一致性 + `with_structured_output` | ⭐⭐⭐ 最高 | token 消耗最大的点；但涉及结构化输出质量，替换前需评估 |
 | **LLM-as-judge**（B4） | `eval/judge.py:64` | 离线 CLI（`python -m app.eval.runner`），线上无端点 | ⭐ 低 | 仅影响离线评测 |
 
 ## 五、核心撰写功能（A 类，**不应**换轻量模型）

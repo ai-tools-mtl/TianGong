@@ -20,7 +20,7 @@
 | 数据库 | PostgreSQL 16 + pgvector |
 | AI 编排 | LangChain（编排 + 流式 SSE，详见设计文档 5 章）|
 | RAG 检索 | LangChain Embedding + pgvector |
-| LLM | GLM-5.2（OpenAI 兼容，可切换）|
+| LLM | GLM-4.7（OpenAI 兼容，可切换，默认值见 `.env.example` / `docker-compose.yml`）|
 
 > 注：原设计曾规划 LangGraph + LlamaIndex，实际落地为纯 LangChain（原因见 GOTCHAS E3：LlamaIndex 不支持国产 embedding 模型名）。
 
@@ -31,15 +31,17 @@ TianGong/
 ├── apps/
 │   ├── api/                    # FastAPI 后端
 │   │   ├── app/
-│   │   │   ├── api/            # 路由（auth/projects/health）
+│   │   │   ├── api/            # 路由（auth/projects/health 等 20+ 模块）
 │   │   │   ├── core/           # 配置/安全/数据库/异常
-│   │   │   ├── models/         # ORM 模型（User/Project/SystemSetting）
+│   │   │   ├── models/         # ORM 模型（User/Project/SystemSetting 等 30+）
 │   │   │   ├── schemas/        # Pydantic 模型
 │   │   │   ├── services/       # 业务逻辑
 │   │   │   └── main.py         # 应用入口
 │   │   ├── alembic/            # 数据库迁移
 │   │   ├── scripts/            # 命令行工具（create_admin 等）
 │   │   └── tests/              # pytest 测试
+│   ├── nli/                    # NLI 记忆矛盾判断微服务（端口 7999，软依赖）
+│   ├── drawio-render/          # 附图 drawio 渲染微服务（端口 8001，软依赖）
 │   └── web/                    # Next.js 前端
 │       └── src/
 │           ├── app/            # App Router 页面
@@ -52,7 +54,7 @@ TianGong/
 │   │   ├── specs/              # 设计文档
 │   │   └── plans/archive/      # 已归档的实施计划（TDD 记录）
 │   └── GOTCHAS.md              # 踩坑记录 ⚠️
-├── docker-compose.yml          # 数据层(PG+MinIO)+ 全栈部署(profile=full)
+├── docker-compose.yml          # 数据层+本地 AI 微服务 + 全栈部署(profile=full)
 ├── .env.production.example     # 内网部署配置模板
 ├── AGENTS.md                   # 项目指引（新会话必读）
 └── README.md                   # 本文件
@@ -76,14 +78,15 @@ docker compose up -d postgres minio
 
 > 注:docker-compose 用 `quay.io/minio/minio` 镜像(国内可达性优于 docker.io)。如 quay.io 不可达,可改回 `minio/minio`。
 
-### 预下载 RAG 模型（embedding + rerank）
+### 预下载本地模型（embedding + rerank + NLI）
 
-RAG 检索依赖两个本地推理微服务（Infinity），需提前下载模型权重到 `models/` 目录（已 gitignore，不入库）：
+RAG 检索依赖两个本地推理微服务（Infinity），记忆矛盾判断依赖自建 NLI 微服务，需提前下载模型权重到 `models/` 目录（已 gitignore，不入库）：
 
 | 模型 | 用途 | 体积 | 目标目录 |
 |---|---|---|---|
 | `BAAI/bge-m3` | 文本向量化（embedding，检索强制依赖） | ~2.3 GB | `models/bge-m3` |
 | `BAAI/bge-reranker-v2-m3` | 检索结果精排（rerank，可选增强） | ~2.2 GB | `models/bge-reranker-v2-m3` |
+| `cross-encoder/nli-deberta-v3-base` | 记忆矛盾判断（NLI，软依赖：缺失/故障时降级合并不删） | ~0.7 GB | `models/nli-deberta-v3-base` |
 
 **方式一：ModelScope（国内推荐，速度快）**
 
@@ -103,9 +106,10 @@ export HF_ENDPOINT=https://hf-mirror.com
 
 huggingface-cli download BAAI/bge-m3 --local-dir models/bge-m3
 huggingface-cli download BAAI/bge-reranker-v2-m3 --local-dir models/bge-reranker-v2-m3
+huggingface-cli download cross-encoder/nli-deberta-v3-base --local-dir models/nli-deberta-v3-base
 ```
 
-> 下载完成后，`models/` 下应有两个子目录，各含 `config.json` 与权重文件（`pytorch_model.bin` 或 `model.safetensors`）。`bge-m3` 由 `docker-compose.yml` 的 embedding 服务挂载使用；`bge-reranker-v2-m3` 供 rerank 微服务加载。
+> 下载完成后，`models/` 下应有三个子目录，各含 `config.json` 与权重文件（`pytorch_model.bin` 或 `model.safetensors`）。`bge-m3` 由 `docker-compose.yml` 的 embedding 服务挂载使用；`bge-reranker-v2-m3` 供 rerank 微服务加载；`nli-deberta-v3-base` 供 nli 微服务（`apps/nli/`）加载（经 HuggingFace 下载，见方式二）。
 
 ### 2. 启动后端
 
@@ -186,7 +190,7 @@ docker compose --env-file .env.production --profile full up -d --build
 | `INTRANET_URL` / `COOKIE_DOMAIN` / `CORS_ORIGINS` | 团队访问地址(三者主机部分一致,否则登录态丢失)|
 | `JWT_SECRET` / `ENCRYPTION_KEY` | 安全密钥,按步骤 2 生成 |
 | `MINIO_SECRET_KEY` | 改掉默认密码 |
-| `GLM_API_KEY` | 智谱 API Key(用户也可在设置页配自己的 BYOK) |
+| `GLM_API_KEY` | 智谱 API Key(用户也可在设置页配自己的自定义配置) |
 | `INIT_ADMIN_USERNAME` / `INIT_ADMIN_PASSWORD` / `INIT_ADMIN_EMAIL` | 首个管理员(容器启动自动创建,已存在则跳过) |
 
 > **网络受限**:若构建拉 npm 包超时,在 `.env.production` 加 `NPM_REGISTRY=https://registry.npmmirror.com`。

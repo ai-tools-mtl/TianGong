@@ -360,4 +360,33 @@ provider 不支持时有**两种失败形态**：
 调用点的 `except Exception` 兜底必须打日志，且「全部调用失败」绝不能伪装成
 成功出报告——宁可报错，不出废数据。
 
+**续坑（同日）**：文本 fallback 路径没有 Pydantic 校验，LLM 漏输出字段时
+dict 直接落库——实测 DeepSeek 只给 `location_section_keys` 不给
+`location_sections`，前端 `issue.location_sections.length` 当场 TypeError
+崩页。修法：`_postprocess` 单点规范化按 schema 补齐五字段缺省（D14 精神，
+前端不做二次防御）；前端 `?? []` 兜存量脏数据。教训：**结构化输出 schema
+同时是数据契约——fallback 路径产出必须过同一套字段规范化**。
+
+
+### E13: Windows 裸机 weasyprint 缺 GTK runtime，PDF 导出 500 ⚠️（已修为友好 503）
+
+**坑**（2026-08-19 dogfood，审查报告导出）：weasyprint 经 cffi 动态加载
+GTK/Pango 系统库（libgobject-2.0-0 等），Windows 裸机没装 → `OSError:
+cannot load library 'libgobject-2.0-0': error 0x7e` → 导出端点裸 500。
+**生产 Docker 不受影响**（Dockerfile 已装 libpango + Noto CJK 中文字体），
+此错只在无 GTK 的裸机/开发机出现；pdf_service（交底书导出）同一依赖，
+同环境同样不可用。winget 无现成 GTK runtime 包。
+
+**修复**：`review_export_service` 捕获 weasyprint 的 OSError →
+`ServiceUnavailableError`（503 + 中文指引，drawio 同款 fail-closed）+
+logger.error；前端导出从 `<a>` 直开改 fetch+blob，503 时 toast 友好文案
+（`<a>` 直开 503 只能看见一页 JSON）。
+
+**规矩**：可选系统依赖的报错要「可诊断、可行动」——明确告诉用户缺什么、
+哪类环境会缺、怎么补，而不是让 traceback 直接怼脸。
+
+**本地开发补依赖**（需要真正导 PDF 时）：装 GTK runtime
+（如 <https://github.com/tschoonj/GTK-for-Windows-Runtime-Environment-Installer>）
+后重启后端；或只在 Docker 环境验证 PDF 功能。
+
 

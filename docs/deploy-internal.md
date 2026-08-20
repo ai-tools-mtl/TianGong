@@ -12,6 +12,8 @@
 
 无需在服务器上装 Python / Node / pnpm —— 全部跑在容器里。
 
+另需按 README「预下载本地模型」把模型下载到仓库 `models/` 目录:embedding 的 `bge-m3` 与 rerank 的 `bge-reranker-v2-m3` 是硬依赖(api 容器 depends_on 两者的 healthcheck,模型缺失时它们无法变 healthy,api 不会启动);`nli-deberta-v3-base` 可选,缺失只影响记忆矛盾覆盖。
+
 ## 部署步骤
 
 ### 1. 拉取代码到服务器
@@ -48,14 +50,17 @@ cp .env.production.example .env.production
 | `JWT_SECRET` | 第 2 步生成的 hex 串 |
 | `ENCRYPTION_KEY` | 第 2 步生成的 base64 串 |
 | `MINIO_SECRET_KEY` | 改掉默认的 `tiangong12345` |
-| `GLM_API_KEY` | 你的智谱 API Key(全局默认 Key,用户也可在设置页配自己的 BYOK 覆盖) |
+| `GLM_API_KEY` | 你的智谱 API Key(全局默认 Key,用户也可在设置页配自己的自定义配置覆盖) |
 | `NEXT_PUBLIC_API_URL` | 浏览器能访问到的 API 地址,如 `http://192.168.1.100:8000` |
 
 ### 4. 启动全部服务
 
 ```bash
-docker compose --env-file .env.production up -d --build
+docker compose --env-file .env.production --profile full up -d --build
 ```
+
+> api / web 挂在 compose 的 `full` profile 下,必须带 `--profile full` 才会启动(不带则只起数据层与本地微服务)。
+
 
 > **网络受限环境**:若构建时拉 npm 包超时(报 `Request took ...ms` / `aborted due to timeout`),
 > 在 `.env.production` 加一行指定镜像源,Web 构建会走它:
@@ -70,7 +75,7 @@ docker compose --env-file .env.production up -d --build
 docker compose ps
 ```
 
-四个服务 `postgres` / `minio` / `api` / `web` 都应为 `Up` 且 healthcheck 通过。
+`postgres` / `minio` / `embedding` / `rerank` / `api` / `web` 都应为 `Up` 且 healthcheck 通过(另有 `nli` / `drawio` / `firecrawl` 栈等软依赖服务一并启动)。
 
 ### 5. 数据库自动初始化(无需手动)
 
@@ -124,7 +129,7 @@ docker compose logs -f web
 docker compose restart api
 
 # 更新代码后重新部署
-git pull && docker compose --env-file .env.production up -d --build
+git pull && docker compose --env-file .env.production --profile full up -d --build
 
 # 停止全部
 docker compose down
@@ -135,7 +140,7 @@ docker compose down -v
 
 ## 备份
 
-数据分布在两个卷:`pgdata`(数据库 + pgvector)和 `miniodata`(上传文件)。
+天工业务数据分布在两个卷:`pgdata`(数据库 + pgvector)和 `miniodata`(上传文件)。其余卷(`embdata` / `rerankdata` 为模型运行缓存,`firecrawlpgdata` 为 firecrawl 内部任务队列)不含业务数据,可不备份。
 
 ```bash
 # 备份数据库

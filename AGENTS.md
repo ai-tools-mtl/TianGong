@@ -5,7 +5,7 @@
 ## 项目简介
 
 天工是 AI 驱动的专利交底书撰写智能体——从灵感到授权全生命周期的 Agent 系统。
-- **当前阶段**：MVP 全部 P0 已完成（计划 1–7b：后端地基→前端地基→模板编辑器→AI 撰写→版本导出→知识库 RAG→审查引擎→管理后台自定义配置）
+- **当前阶段**：MVP 全部 P0 已完成（计划 1–7b：后端地基→前端地基→模板编辑器→AI 撰写→版本导出→知识库 RAG→审查引擎→管理后台自定义配置）；MVP 后迭代批次（P1 增强、LangGraph 三件套、§8.3 经授权临时查看、AI 新颖性评估、修订管线 T2、连续文档视图等）均已落地，进度总表见 README「开发进度」
 - **技术栈**：FastAPI(Python) 后端 + Next.js 前端 + PostgreSQL(pgvector) + LangChain（编排 + Embedding）。注：原设计曾规划 LangGraph + LlamaIndex，落地中调整为纯 LangChain（见 GOTCHAS E3）
 
 ## 必读文档（按顺序）
@@ -21,9 +21,11 @@
 ```
 apps/
 ├── api/    # FastAPI 后端（Python + uv）
-│   ├── app/{api,core,models,schemas,services}/
-│   ├── tests/    # pytest（36 个测试）
+│   ├── app/{ai,api,core,eval,models,parsing,rag,sandbox,schemas,services,skills}/
+│   ├── tests/    # pytest（1315 个测试）
 │   └── scripts/  # create_admin 等命令行工具
+├── nli/    # NLI 记忆矛盾判断微服务（端口 7999，软依赖 fail-open）
+├── drawio-render/  # drawio 附图渲染微服务（端口 8001，软依赖 fail-closed）
 └── web/    # Next.js 前端（pnpm + shadcn/ui 3.x）
     └── src/{app,components,lib,stores,types}/
 ```
