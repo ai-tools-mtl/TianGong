@@ -300,3 +300,145 @@ def test_run_review_partial_failure_still_records(db_session, monkeypatch):
         select(ReviewRecord).where(ReviewRecord.project_id == project.id)
     ) is not None
     assert calls["n"] >= 1
+
+
+def test_cross_section_issues_normalized_on_text_fallback(monkeypatch):
+    """[dogfood 2026-08-19 回归] 文本 fallback 产出缺字段 → 规范化补齐契约字段。
+
+    实测 DeepSeek 文本路径 LLM 只给 location_section_keys 不给
+    location_sections，落库后前端 issue.location_sections.length 直接崩溃。
+    后端 _postprocess 单点规范化（D14），保证五字段恒齐。
+    """
+    import httpx
+    from openai import BadRequestError
+
+    from app.services import review_service
+    from app.services.llm_config_service import ResolvedChatConfig
+
+    class _TextFallbackLLM:
+        """结构化 400 → 文本路径返回缺字段的 JSON。"""
+
+        def with_structured_output(self, schema):
+            return self
+
+        def invoke(self, messages):
+            self.calls = getattr(self, "calls", 0) + 1
+            if self.calls == 1:
+                resp = httpx.Response(
+                    400, request=httpx.Request("POST", "https://api.deepseek.com/chat/completions")
+                )
+                raise BadRequestError("400 response_format unavailable", response=resp, body=None)
+            return type("_Resp", (), {
+                "content": (
+                    '{"issues": [{"type": "terminology", "description": "术语不一致", '
+                    '"suggestion": "统一术语", "location_section_keys": ["problem"]}]}'
+                )
+            })()
+
+    monkeypatch.setattr(review_service, "get_llm", lambda cfg, **kw: _TextFallbackLLM())
+    cfg = ResolvedChatConfig(base_url="http://x", api_key="k", model="deepseek-v4-pro", source="global")
+
+    issues = review_service._check_cross_section_consistency(
+        {"技术领域": "内容", "发明目的与技术问题": "内容"}, cfg,
+        title_key_map={"发明目的与技术问题": "problem"},
+    )
+
+    assert len(issues) == 1
+    issue = issues[0]
+    # 契约五字段恒齐（缺的补空，不缺的保留）
+    assert issue["location_sections"] == []
+    assert issue["location_section_keys"] == ["problem"]  # 有效 key 保留，不清空
+    assert issue["type"] == "terminology"
+    assert issue["description"] == "术语不一致"
+    assert issue["suggestion"] == "统一术语"
+
+
+# ── 审查进行中互斥（dogfood 2026-08-19：离开页面重进看不到后台任务、可重复触发）──
+
+
+def test_run_review_conflict_when_already_running(db_session):
+    """同项目审查进行中 → 再次触发 409；status 端点语义（is_review_running）正确。"""
+    import pytest
+
+    from app.core.exceptions import ConflictError
+    from app.services import review_service as rs
+
+    u, project = _make_review_project(db_session)
+
+    assert rs._try_acquire_review_lock(project.id) is None  # 占坑成功
+    try:
+        with pytest.raises(ConflictError, match="正在进行中"):
+            rs.run_review(db_session, user_id=u.id, project_id=str(project.id))
+        assert rs.is_review_running(project.id) is not None  # 仍报进行中
+    finally:
+        rs._release_review_lock(project.id)
+    assert rs.is_review_running(project.id) is None
+
+
+def test_running_stale_marker_expires(db_session):
+    """残留标记（超过 _RUNNING_STALE_SECONDS）自动视为失效，可重新占坑。"""
+    import time as _time
+    import uuid as _uuid
+
+    from app.services import review_service as rs
+
+    pid = _uuid.uuid4()
+    rs._running_reviews[pid] = _time.time() - rs._RUNNING_STALE_SECONDS - 1
+    assert rs.is_review_running(pid) is None
+    assert rs._try_acquire_review_lock(pid) is None
+    rs._release_review_lock(pid)
+
+
+def test_run_review_lock_released_on_llm_failure(db_session, monkeypatch):
+    """LLM 全挂抛 ValidationError 后锁必须释放（finally），不能卡死后续重试。"""
+    import uuid as _uuid
+
+    import pytest
+
+    from app.core.exceptions import ValidationError
+    from app.services import review_service as rs
+
+    u, project = _make_review_project(db_session)
+    _patch_llm_all_fail(monkeypatch)
+
+    with pytest.raises(ValidationError):
+        rs.run_review(db_session, user_id=u.id, project_id=str(project.id))
+
+    assert rs.is_review_running(project.id) is None
+
+
+def test_review_status_and_conflict_api(client, db_session):
+    """API 层：status 端点反映进行中；进行中 POST review → 409（不碰 LLM）。"""
+    from app.core.security import hash_password
+    from app.models import User
+    from app.services import project_service as ps
+    from app.services import review_service as rs
+    from app.services.seed_service import ensure_default_template
+
+    ensure_default_template(db_session)
+    a = User(
+        username="mutex_user", email="mutex_user@tiangong.dev",
+        password_hash=hash_password("Pass1234!"), name="互斥测试",
+    )
+    db_session.add(a)
+    db_session.commit()
+    project = ps.create_project(db_session, user=a, title="互斥测试项目")
+
+    res = client.post("/api/v1/auth/login", json={"username": "mutex_user", "password": "Pass1234!"})
+    assert res.status_code == 200, res.text
+
+    rs._try_acquire_review_lock(project.id)
+    try:
+        resp = client.get(f"/api/v1/projects/{project.id}/review/status")
+        assert resp.status_code == 200
+        assert resp.json()["running"] is True
+        assert resp.json()["started_at"] is not None
+
+        resp = client.post(f"/api/v1/projects/{project.id}/review")
+        assert resp.status_code == 409, (resp.status_code, resp.text)
+        assert "正在进行中" in resp.json()["message"]
+    finally:
+        rs._release_review_lock(project.id)
+
+    resp = client.get(f"/api/v1/projects/{project.id}/review/status")
+    assert resp.json()["running"] is False

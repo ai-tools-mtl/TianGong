@@ -3,7 +3,7 @@
 import { ArrowLeft, CheckCircle2, Download, FileText, Layers, Play, TrendingDown, TrendingUp, TriangleAlert, Wand2 } from 'lucide-react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
@@ -11,10 +11,10 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { api } from '@/lib/api'
+import { api, authFetch } from '@/lib/api'
 import { useSections } from '@/lib/queries'
 import { cn } from '@/lib/utils'
-import { launchRevision } from '@/stores/revision-store'
+import { launchRevision, launchRevisionQueue } from '@/stores/revision-store'
 import type { CrossSectionIssue, DimensionScore, ReviewRecord, ReviewTrendPoint, Section } from '@/types/api'
 
 const ISSUE_TYPE_LABELS: Record<string, string> = {
@@ -29,6 +29,7 @@ export default function ReviewPage() {
   const router = useRouter()
   const qc = useQueryClient()
   const [reviewing, setReviewing] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [issueView, setIssueView] = useState<'dimension' | 'section'>('dimension')
   // T2「按维度」修订入口的各维度目标章节（key），默认第一个未确认章节（D12）
   const [dimTargets, setDimTargets] = useState<Record<string, string>>({})
@@ -37,6 +38,24 @@ export default function ReviewPage() {
     queryKey: ['reviews', params.id],
     queryFn: () => api.listReviews(params.id),
   })
+
+  // 后台审查状态：进行中每 3s 轮询（重进页面也能恢复「审查中」展示，防重复触发）
+  const { data: reviewStatus } = useQuery({
+    queryKey: ['review-status', params.id],
+    queryFn: () => api.getReviewStatus(params.id),
+    refetchInterval: (query) => (query.state.data?.running ? 3000 : false),
+  })
+
+  // 他处（本页发起后离开再回来 / 后台线程）完成的审查 → 刷新报告列表
+  const wasRunningRef = useRef(false)
+  useEffect(() => {
+    const running = reviewStatus?.running ?? false
+    if (wasRunningRef.current && !running) {
+      qc.invalidateQueries({ queryKey: ['reviews', params.id] })
+      qc.invalidateQueries({ queryKey: ['review-trend', params.id] })
+    }
+    wasRunningRef.current = running
+  }, [reviewStatus?.running, qc, params.id])
 
   const { data: trend } = useQuery({
     queryKey: ['review-trend', params.id],
@@ -62,11 +81,26 @@ export default function ReviewPage() {
     if (!ok) toast.error('目标章节不存在（可能已被调整），请手动前往该章节修订')
   }
 
+  // 一键修订（顺序队列）：按章节问题清单逐章「确认卡片→diff 人工审核→应用→自动下一章」。
+  // 跨章节一致性问题不进队列（跨章协调拆开各改各的会引入新不一致，单独规划）。
+  function handleReviseAll() {
+    if (!latest) return
+    const items = latest.section_issues
+      .filter((sec) => keyTitleMap.has(sec.section_key))
+      .map((sec) => ({ sectionKey: sec.section_key, directives: sec.issues, origin: 'review' as const }))
+    const n = launchRevisionQueue(sections, items, router, params.id)
+    if (n === 0) toast.error('没有可修订的章节（章节可能已被调整）')
+    else toast.success(`已发起批量修订：共 ${n} 章，逐章审核应用`)
+  }
+
   // key→章节标题映射（chip 渲染用；不在 sections 中的 key 跳过）
   const keyTitleMap = new Map(sections.map((s) => [s.key, s.title]))
   // 「按维度」入口的默认落点章节：第一个未确认章节，否则第一个章节（D12）
   const defaultDimTarget =
     sections.find((s) => s.status !== 'confirmed')?.key ?? sections[0]?.key ?? ''
+
+  // inProgress 兼两种来源：本页点击（optimistic）与他处/后台进行中（status 轮询）
+  const inProgress = reviewing || (reviewStatus?.running ?? false)
 
   const runReview = useMutation({
     mutationFn: () => api.runReview(params.id),
@@ -75,11 +109,41 @@ export default function ReviewPage() {
       toast.success('审查完成')
       qc.invalidateQueries({ queryKey: ['reviews', params.id] })
       qc.invalidateQueries({ queryKey: ['review-trend', params.id] })
+      qc.invalidateQueries({ queryKey: ['review-status', params.id] })
     },
-    // 后端 message 已是友好文案（如「LLM 账户余额不足…」），别用写死文案把它吞了
+    // 后端 message 已是友好文案（如「LLM 账户余额不足…」「审查正在进行中…」），别用写死文案把它吞了
     onError: (e) => toast.error((e as { message?: string })?.message || '审查失败'),
     onSettled: () => setReviewing(false),
   })
+
+  // 导出走 fetch+blob 而非 <a> 直开：渲染依赖缺失（503）时 <a> 只能展示一页 JSON，
+  // 这里能 toast 出后端友好文案（同「执行审查」错误透出策略）
+  async function handleExport() {
+    if (!latest) return
+    setExporting(true)
+    try {
+      const res = await authFetch(`/projects/${params.id}/reviews/${latest.id}/export-pdf`)
+      if (!res.ok) {
+        let msg = `导出失败（HTTP ${res.status}）`
+        try {
+          msg = ((await res.json()) as { message?: string }).message || msg
+        } catch {
+          // 非 JSON 响应体，保留默认 msg
+        }
+        toast.error(msg)
+        return
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `审查报告-第${latest.round}轮.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } finally {
+      setExporting(false)
+    }
+  }
 
   const improved =
     latest?.previous_score !== null &&
@@ -110,19 +174,31 @@ export default function ReviewPage() {
         <h1 className="text-xl font-bold tracking-tight">交底书审查</h1>
         <div className="flex items-center gap-2">
           {latest && (
-            <Button variant="ghost" size="sm" className="gap-1.5" asChild>
-              <a href={api.exportReviewReportUrl(params.id, latest.id)} target="_blank" rel="noopener noreferrer">
-                <Download className="size-3.5" />
-                导出报告
-              </a>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="gap-1.5"
+              onClick={handleExport}
+              disabled={exporting}
+            >
+              <Download className="size-3.5" />
+              {exporting ? '导出中...' : '导出报告'}
             </Button>
           )}
-          <Button onClick={() => runReview.mutate()} disabled={reviewing} className="gap-1.5">
+          <Button onClick={() => runReview.mutate()} disabled={inProgress} className="gap-1.5">
             <Play className="size-3.5" />
-            {reviewing ? '审查中...' : '执行审查'}
+            {inProgress ? '审查中...' : '执行审查'}
           </Button>
         </div>
       </div>
+
+      {/* 后台审查进行中提示（含离开页面再回来的场景） */}
+      {inProgress && !reviewing && (
+        <div className="mt-4 flex items-center gap-2 rounded-lg border border-blue-300/60 bg-blue-50 px-4 py-2.5 text-[13px] text-blue-900 dark:border-blue-700/50 dark:bg-blue-950/30 dark:text-blue-200">
+          <Play className="size-4 shrink-0 animate-pulse" />
+          审查正在后台进行中，完成后此处将展示最新报告
+        </div>
+      )}
 
       {latest ? (
         <div className="space-y-4 py-6">
@@ -260,9 +336,11 @@ export default function ReviewPage() {
                         <Badge variant="outline" className="text-[11px]">
                           {ISSUE_TYPE_LABELS[issue.type] ?? issue.type}
                         </Badge>
-                        {issue.location_sections.length > 0 && (
+                        {/* location_sections ?? []：存量 round=3 记录走文本 fallback 缺过此字段
+                            （后端已单点规范化根治，这里兜存量数据防崩，同 268 行 keys 防御） */}
+                        {(issue.location_sections ?? []).length > 0 && (
                           <span className="text-[12px] text-muted-foreground">
-                            涉及：{issue.location_sections.join('、')}
+                            涉及：{(issue.location_sections ?? []).join('、')}
                           </span>
                         )}
                         {/* T2 chip 入口（spec §3.2.3-2）：点任一涉及章节 → 单章节修订。
@@ -358,6 +436,22 @@ export default function ReviewPage() {
               {/* 按章节视图 */}
               {issueView === 'section' && (
                 <div className="px-5 py-4">
+                  {latest.section_issues.length > 0 && (
+                    <div className="mb-4 flex items-center justify-between">
+                      <p className="text-[12px] text-muted-foreground">
+                        共 {latest.section_issues.length} 章有待改进问题
+                      </p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 gap-1 px-2 text-xs"
+                        onClick={handleReviseAll}
+                      >
+                        <Wand2 className="size-3" />
+                        一键修订（{latest.section_issues.length} 章）
+                      </Button>
+                    </div>
+                  )}
                   {latest.section_issues.length > 0 ? (
                     <div className="space-y-4">
                       {latest.section_issues.map((sec, i) => (

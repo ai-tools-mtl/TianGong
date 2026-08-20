@@ -4,6 +4,8 @@ load → score（Rubric 驱动 + 自一致性）→ aggregate → persist
 """
 
 import json
+import threading
+import time
 import uuid as uuid_mod
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -15,12 +17,46 @@ from sqlalchemy.orm import Session
 from app.ai.llm_client import get_llm
 from app.ai.llm_errors import friendly_llm_error
 from app.ai.rubric_prompts import SCORE_SYSTEM_PROMPT, build_score_prompt
-from app.core.exceptions import NotFoundError, ValidationError
+from app.core.exceptions import ConflictError, NotFoundError, ValidationError
 from app.models import Project, ReviewRecord, Section
 from app.services.llm_config_service import ResolvedChatConfig, resolve_chat_config
 from app.services.rubric_service import get_effective_rubric
 
 CONSISTENCY_RUNS = 2  # 自一致性：每维度评分次数（旧 consistency_check skill 已删除，默认开启）
+
+# ── 审查进行中互斥（dogfood 2026-08-19：审查是分钟级同步长任务，离开页面
+# 重进既看不到进行中状态、又能再点一次 → 并发两轮浪费 LLM 调用 + 同轮次重复落库）。
+# 进程内标记：生产为单容器 uvicorn（无多 worker），dev 为 --reload 单进程，均可靠；
+# 若未来上多 worker 需换成 DB 行标记或 PG advisory lock。
+_running_lock = threading.Lock()
+_running_reviews: dict = {}  # project_id(UUID) → started_at(epoch)
+_RUNNING_STALE_SECONDS = 900  # 8+1 次 LLM 调用的宽松上限；超过视为残留标记自动失效
+
+
+def _try_acquire_review_lock(project_id) -> float | None:
+    """占坑。该 project 已有审查在跑则返回其 started_at（冲突），否则占坑返回 None。"""
+    now = time.time()
+    with _running_lock:
+        started = _running_reviews.get(project_id)
+        if started is not None and now - started < _RUNNING_STALE_SECONDS:
+            return started
+        _running_reviews[project_id] = now
+        return None
+
+
+def _release_review_lock(project_id) -> None:
+    with _running_lock:
+        _running_reviews.pop(project_id, None)
+
+
+def is_review_running(project_id) -> float | None:
+    """查询进行中状态：在跑返回 started_at(epoch)，否则 None。"""
+    now = time.time()
+    with _running_lock:
+        started = _running_reviews.get(project_id)
+        if started is not None and now - started < _RUNNING_STALE_SECONDS:
+            return started
+        return None
 
 
 def run_review(db: Session, *, user_id, project_id: str) -> ReviewRecord:
@@ -33,6 +69,20 @@ def run_review(db: Session, *, user_id, project_id: str) -> ReviewRecord:
     project = db.get(Project, pid)
     if project is None or project.user_id != user_id:
         raise NotFoundError("项目不存在")
+
+    # 同项目审查互斥：进行中再次触发 → 409（防并发双跑浪费 LLM 调用 + 同轮次重复落库）
+    conflict_started = _try_acquire_review_lock(pid)
+    if conflict_started is not None:
+        waited = int(time.time() - conflict_started)
+        raise ConflictError(f"审查正在进行中（已进行约 {waited // 60} 分钟），请等待完成后再试")
+    try:
+        return _run_review_locked(db, user_id=user_id, project=project, pid=pid)
+    finally:
+        _release_review_lock(pid)
+
+
+def _run_review_locked(db: Session, *, user_id, project: Project, pid) -> ReviewRecord:
+    """run_review 的实际执行体（调用前须已持有项目审查锁）。"""
 
     # 旧 project-scoped skill 开关已删除（spec Q5 解耦）。
     # rubric_review / consistency_check 默认全开；后续按 spec 用全局/用户级 Skill 重建（Task 6+）。
@@ -271,7 +321,23 @@ def _check_cross_section_consistency(
         HumanMessage(content=prompt),
     ]
 
+    def _normalize(issue: dict) -> dict:
+        """按 CrossSectionIssue 契约补齐缺省字段。
+
+        文本 fallback / dict 兜底路径没有 Pydantic 校验，LLM 漏字段时
+        issue 缺 key（实测 location_sections 缺失 → 前端 .length 崩溃，
+        2026-08-19 dogfood）。单点规范化，前端不做二次防御（D14）。
+        """
+        return {
+            "type": issue.get("type") or "other",
+            "description": issue.get("description") or "",
+            "location_sections": issue.get("location_sections") or [],
+            "suggestion": issue.get("suggestion") or "",
+            "location_section_keys": issue.get("location_section_keys") or [],
+        }
+
     def _postprocess(issues: list[dict]) -> list[dict]:
+        issues = [_normalize(i) for i in issues]
         if not title_key_map:
             return issues
         valid_keys = set(title_key_map.values())

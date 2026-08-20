@@ -698,6 +698,8 @@ export const api = {
   // ── 审查 ──
   runReview: (projectId: string) =>
     request<import('@/types/api').ReviewRecord>(`/projects/${projectId}/review`, { method: 'POST' }),
+  getReviewStatus: (projectId: string) =>
+    request<{ running: boolean; started_at: number | null }>(`/projects/${projectId}/review/status`),
   listReviews: (projectId: string) =>
     request<import('@/types/api').ReviewRecord[]>(`/projects/${projectId}/reviews`),
   getReviewTrend: (projectId: string) =>

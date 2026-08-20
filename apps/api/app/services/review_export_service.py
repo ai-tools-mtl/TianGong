@@ -5,9 +5,11 @@
 """
 import urllib.parse
 
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.exceptions import ServiceUnavailableError
 from app.models import Project, ReviewRecord
 
 
@@ -24,8 +26,19 @@ def export_review_report(
 
     html = _build_report_html(project, review, all_reviews)
 
-    from weasyprint import HTML
-    return HTML(string=html).write_pdf()
+    try:
+        from weasyprint import HTML
+        return HTML(string=html).write_pdf()
+    except OSError as e:
+        # weasyprint 经 cffi 动态加载 GTK/Pango 系统库，缺失时抛 OSError
+        # （Windows 开发机实测：cannot load library 'libgobject-2.0-0'）。
+        # fail-closed 明确报错而非裸 500（drawio 同模式）；生产 Docker 已装
+        # libpango + 中文字体，此错只在无 GTK 的裸机环境出现。
+        logger.error("审查报告 PDF 渲染依赖缺失（weasyprint/GTK）: {}", e)
+        raise ServiceUnavailableError(
+            "PDF 渲染依赖（GTK/Pango）未安装，无法导出 PDF。"
+            "生产环境已内置该依赖；本地开发请安装 GTK runtime 后重启后端"
+        ) from e
 
 
 def _build_report_html(

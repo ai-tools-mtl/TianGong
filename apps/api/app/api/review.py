@@ -40,6 +40,19 @@ def run_review(
     return _record_to_dict(record)
 
 
+@router.get("/projects/{project_id}/review/status")
+def get_review_status(
+    project_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """审查进行中状态（dogfood 2026-08-19）：审查是分钟级同步长任务，
+    前端离开页面重进后凭此恢复「进行中」展示并禁用重复触发。"""
+    project = project_service.get_project(db, user=current_user, project_id=project_id)
+    started_at = review_service.is_review_running(project.id)
+    return {"running": started_at is not None, "started_at": started_at}
+
+
 @router.get("/projects/{project_id}/reviews")
 def list_reviews(
     project_id: str,
