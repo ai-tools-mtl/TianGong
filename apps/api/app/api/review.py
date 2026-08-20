@@ -1,3 +1,5 @@
+import urllib.parse
+
 from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 from sqlalchemy import select
@@ -107,7 +109,7 @@ def export_review_report(
 ):
     """导出审查报告为 PDF（复用 pdf_service 基建）。
 
-    需 weasyprint 系统库，缺失时 500。
+    需 weasyprint 系统库（GTK/Pango），缺失时 503（ServiceUnavailableError）。
     """
     import uuid as uuid_mod
     project = project_service.get_project(db, user=current_user, project_id=project_id)
@@ -123,10 +125,17 @@ def export_review_report(
 
     from app.services.review_export_service import export_review_report as _export
     pdf_bytes = _export(db, project=project, review=review)
+    # 响应头只允许 latin-1（Starlette 对 header 值 encode("latin-1")），中文
+    # 文件名必须 percent-encode（RFC 5987 filename*），另给 ASCII 回退名。
+    filename = f"审查报告-第{review.round}轮.pdf"
+    disposition = (
+        f"attachment; filename=\"review-round-{review.round}.pdf\"; "
+        f"filename*=UTF-8''{urllib.parse.quote(filename)}"
+    )
     return Response(
         pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''审查报告-第{review.round}轮.pdf"},
+        headers={"Content-Disposition": disposition},
     )
 
 

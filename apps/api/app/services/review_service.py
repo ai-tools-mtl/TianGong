@@ -29,12 +29,15 @@ CONSISTENCY_RUNS = 2  # 自一致性：每维度评分次数（旧 consistency_c
 # 进程内标记：生产为单容器 uvicorn（无多 worker），dev 为 --reload 单进程，均可靠；
 # 若未来上多 worker 需换成 DB 行标记或 PG advisory lock。
 _running_lock = threading.Lock()
-_running_reviews: dict = {}  # project_id(UUID) → started_at(epoch)
-_RUNNING_STALE_SECONDS = 900  # 8+1 次 LLM 调用的宽松上限；超过视为残留标记自动失效
+_running_reviews: dict = {}  # project_id(UUID) → 最后进度时间戳(epoch)
+# stale 阈值按「距上次进度」计（评分循环每次 LLM 调用完成都续期）：长但仍在
+# 推进的审查（如 LLM 慢、文档长）不会误判失效导致并发双跑；超阈值无进展
+# 视为挂死线程的残留标记，自动失效放行重试。
+_RUNNING_STALE_SECONDS = 900
 
 
 def _try_acquire_review_lock(project_id) -> float | None:
-    """占坑。该 project 已有审查在跑则返回其 started_at（冲突），否则占坑返回 None。"""
+    """占坑。该 project 已有审查在跑则返回其最后进度时间戳（冲突），否则占坑返回 None。"""
     now = time.time()
     with _running_lock:
         started = _running_reviews.get(project_id)
@@ -44,13 +47,20 @@ def _try_acquire_review_lock(project_id) -> float | None:
         return None
 
 
+def _touch_review_lock(project_id) -> None:
+    """心跳续期：评分循环每完成一次 LLM 调用刷新时间戳，stale 窗口从最后进度起算。"""
+    with _running_lock:
+        if project_id in _running_reviews:
+            _running_reviews[project_id] = time.time()
+
+
 def _release_review_lock(project_id) -> None:
     with _running_lock:
         _running_reviews.pop(project_id, None)
 
 
 def is_review_running(project_id) -> float | None:
-    """查询进行中状态：在跑返回 started_at(epoch)，否则 None。"""
+    """查询进行中状态：在跑返回最后进度时间戳(epoch)，否则 None。"""
     now = time.time()
     with _running_lock:
         started = _running_reviews.get(project_id)
@@ -124,6 +134,7 @@ def _run_review_locked(db: Session, *, user_id, project: Project, pid) -> Review
             scores.append(score)
             last_evidence = evidence
             last_suggestion = suggestion
+            _touch_review_lock(pid)  # 每次评分调用完成即进度，续期 stale 窗口
         avg_score = sum(scores) / len(scores)
         dimension_scores.append({
             "key": criterion["key"],
@@ -152,6 +163,7 @@ def _run_review_locked(db: Session, *, user_id, project: Project, pid) -> Review
         )
     }
     cross_issues = _check_cross_section_consistency(sections, llm_config, title_key_map=title_key_map)
+    _touch_review_lock(pid)
 
     # ③c 问题按章节定位聚合（把 dimension 的 evidence/suggestion 归到对应章节）
     section_issues = _aggregate_section_issues(db, pid, dimension_scores)
@@ -203,12 +215,6 @@ def _score_dimension(
     失败时抛出原始异常——降级策略由调用方（run_review）统一决定：
     部分 run 失败兜底 50 分，全部失败拒绝落库并报友好错误。
     """
-    llm = get_llm(llm_config)
-    prompt = build_score_prompt(criterion, sections)
-    messages = [
-        SystemMessage(content=SCORE_SYSTEM_PROMPT),
-        HumanMessage(content=prompt),
-    ]
     llm = get_llm(llm_config)
     prompt = build_score_prompt(criterion, sections)
     messages = [

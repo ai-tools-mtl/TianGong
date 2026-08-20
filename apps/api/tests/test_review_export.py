@@ -83,3 +83,39 @@ def test_export_renders_pdf_and_content(db_session, project_with_review, monkeyp
     assert "导出测试项目" in html
     assert "总分 75" in html
     assert "新颖性" in html
+
+
+def test_export_pdf_header_ascii_safe(client, db_session, project_with_review, monkeypatch):
+    """Content-Disposition 必须 latin-1 安全（回归：中文文件名裸放响应头）。
+
+    Starlette 对 header 值 encode("latin-1")，中文 → UnicodeEncodeError → 500，
+    即 weasyprint 正常的生产环境导出必坏。修法：filename* 按 RFC 5987
+    percent-encode，另给 ASCII 回退 filename。
+    """
+    import urllib.parse as _up
+
+    p, rec = project_with_review
+
+    class _FakeHTML:
+        def __init__(self, *, string):
+            pass
+
+        def write_pdf(self):
+            return b"%PDF-1.4 fake-bytes"
+
+    mod = types.ModuleType("weasyprint")
+    mod.HTML = _FakeHTML
+    monkeypatch.setitem(sys.modules, "weasyprint", mod)
+
+    res = client.post(
+        "/api/v1/auth/login", json={"username": "export_test", "password": "Pass1234!"}
+    )
+    assert res.status_code == 200, res.text
+
+    resp = client.get(f"/api/v1/projects/{p.id}/reviews/{rec.id}/export-pdf")
+    assert resp.status_code == 200, resp.text
+    cd = resp.headers["content-disposition"]
+    # 原文必须 percent-encode（raw header 不含中文），ASCII 回退名存在
+    assert "审查报告" not in cd
+    assert 'filename="review-round-1.pdf"' in cd
+    assert "审查报告-第1轮.pdf" in _up.unquote(cd)

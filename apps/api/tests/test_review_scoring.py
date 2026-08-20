@@ -442,3 +442,26 @@ def test_review_status_and_conflict_api(client, db_session):
 
     resp = client.get(f"/api/v1/projects/{project.id}/review/status")
     assert resp.json()["running"] is False
+
+
+def test_touch_review_lock_refreshes_stale_window():
+    """心跳续期：stale 窗口从「上次进度」起算而非「占坑」起算。
+
+    推进中的审查（单次超 _RUNNING_STALE_SECONDS 的慢 LLM 链）不因总时长
+    超阈值被误判失效——否则第二个触发可并发进入，重复落库（锁要防的场景）。
+    """
+    import time as _time
+    import uuid as _uuid
+
+    from app.services import review_service as rs
+
+    pid = _uuid.uuid4()
+    rs._running_reviews[pid] = _time.time() - rs._RUNNING_STALE_SECONDS - 10  # 原占坑早已超阈值
+    assert rs.is_review_running(pid) is None  # 未续期 → 已 stale
+
+    rs._touch_review_lock(pid)  # 评分循环完成一次调用，续期
+    assert rs.is_review_running(pid) is not None  # 从最后进度起算，仍在窗口内
+    assert rs._try_acquire_review_lock(pid) is not None  # 不能被重新占坑
+
+    rs._release_review_lock(pid)
+    assert rs.is_review_running(pid) is None
