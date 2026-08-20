@@ -384,6 +384,20 @@
   font-weight: 600;
 }
 
+/*
+ * 编辑器内图片缩略展示：正文里的附图统一压到 ≤300px 宽，多图堆叠不把
+ * 章节撑得老长；放大走 ImageLightbox（只读单击 / 编辑双击）。
+ * 作用域类 .tiptap-img-scope 由 TiptapEditor 外层提供，只影响工作区
+ * 编辑器（单章 + 连续模式），不碰预览页/分享页（那边保持大图阅读）。
+ */
+.tiptap-img-scope :where(img) {
+  max-width: min(300px, 100%);
+  height: auto;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  cursor: zoom-in;
+}
+
 /* AI 生成光晕（用于 AI 正在工作时的发光态）*/
 @keyframes ai-glow {
   0%,

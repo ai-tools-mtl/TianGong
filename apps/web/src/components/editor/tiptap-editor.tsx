@@ -5,8 +5,9 @@ import StarterKit from '@tiptap/starter-kit'
 import Placeholder from '@tiptap/extension-placeholder'
 import Image from '@tiptap/extension-image'
 import { TableKit } from '@tiptap/extension-table'
-import { forwardRef, useImperativeHandle } from 'react'
+import { forwardRef, useImperativeHandle, useState, type MouseEvent } from 'react'
 
+import { ImageLightbox } from './image-lightbox'
 import { SelectionBubbleMenu } from './selection-bubble-menu'
 import { Toolbar } from './toolbar'
 
@@ -32,6 +33,7 @@ interface TiptapEditorProps {
 
 export const TiptapEditor = forwardRef<TiptapEditorRef, TiptapEditorProps>(
   function TiptapEditor({ content, onChange, editable = true, sectionId = '', onRewriteComplete }, ref) {
+    const [lightbox, setLightbox] = useState<{ src: string; alt: string } | null>(null)
     const editor = useEditor({
       extensions: [
         StarterKit,
@@ -81,10 +83,26 @@ export const TiptapEditor = forwardRef<TiptapEditorRef, TiptapEditorProps>(
       },
     }))
 
+    // 图片点击放大（事件委托到容器，不给 Image 节点写自定义 NodeView 保持轻量）。
+    // 只读态（连续模式非激活章/预览）单击直接放大；编辑态单击保留「选中节点」
+    // 语义（拖拽/删除节点），双击才放大。图片由 globals.css 的
+    // .tiptap-img-scope 规则统一缩略展示。
+    function openImageLightbox(e: MouseEvent) {
+      const el = e.target as HTMLElement
+      if (el.tagName !== 'IMG') return
+      e.preventDefault()
+      e.stopPropagation()
+      setLightbox({ src: (el as HTMLImageElement).src, alt: (el as HTMLImageElement).alt })
+    }
+
     if (!editor) return null
 
     return (
-      <div className="overflow-hidden rounded-xl border bg-card">
+      <div
+        className="tiptap-img-scope overflow-hidden rounded-xl border bg-card"
+        onClick={editable ? undefined : openImageLightbox}
+        onDoubleClick={editable ? openImageLightbox : undefined}
+      >
         {editable && <Toolbar editor={editor} sectionId={sectionId} />}
         <EditorContent
           editor={editor}
@@ -112,6 +130,13 @@ export const TiptapEditor = forwardRef<TiptapEditorRef, TiptapEditorProps>(
               }
             }}
             onRewriteComplete={onRewriteComplete}
+          />
+        )}
+        {lightbox && (
+          <ImageLightbox
+            src={lightbox.src}
+            alt={lightbox.alt}
+            onClose={() => setLightbox(null)}
           />
         )}
       </div>
