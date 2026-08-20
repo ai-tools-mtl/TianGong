@@ -68,11 +68,8 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
   }
 
   async function handleGenerate() {
+    // source 为 null 走后端 fallback 链，不前端硬拦（同 ai-chat-panel）
     const source = getChatDefaultSource()
-    if (!source) {
-      toast.error('请先在设置中选择 LLM 源')
-      return
-    }
     setPhase('generating')
     try {
       const fig = await api.generateFigure(sectionId, {
@@ -93,11 +90,8 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
 
   async function handleRegenerate() {
     if (!figure) return
+    // source 为 null 走后端 fallback 链，不前端硬拦（同 ai-chat-panel）
     const source = getChatDefaultSource()
-    if (!source) {
-      toast.error('请先在设置中选择 LLM 源')
-      return
-    }
     setPhase('generating')
     try {
       const fig = await api.regenerateFigure(figure.id, {
@@ -136,11 +130,8 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
 
   async function handleCaption() {
     if (!figure?.attachment_id) return
+    // source 为 null 走后端 fallback 链，不前端硬拦（同 ai-chat-panel）
     const source = getChatDefaultSource()
-    if (!source) {
-      toast.error('请先在设置中选择 LLM 源')
-      return
-    }
     setCaptioning(true)
     setCaptionText('')
     try {

@@ -67,11 +67,8 @@ export default function PatentsPage() {
   const contentSections = sections.filter((s) => s.content)
 
   async function onAssess() {
+    // source 为 null 走后端 fallback 链（同工作区 chat/generate/revise）
     const source = getChatDefaultSource()
-    if (!source) {
-      toast.error('请先在设置中选择 LLM 源')
-      return
-    }
     setAssessing(true)
     setAssessment('')
     assessAbort.current = new AbortController()

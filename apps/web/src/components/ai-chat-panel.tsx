@@ -283,11 +283,9 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
 
   async function handleSend() {
     if (!input.trim() || phase === 'chatting' || phase === 'generating') return
+    // source 为 null 时不拦截：后端 chat_source=None 走 fallback 链
+    // （admin→global；普通用户→grant→global→最早自配→env），真正无配置由 SSE error 提示。
     const source = getChatDefaultSource()
-    if (!source) {
-      toast.error('请先在设置中选择 LLM 源')
-      return
-    }
     // currentConvId 为空也放行：后端 streamChat 会兜底建会话，
     // 并在 done 事件回传真实 conversation_id（见下方 onDone 回填）。
     // 全新 section 列表为 []、自动选中 effect 不触发时，靠这条路首条对话即可建会话。
@@ -422,11 +420,8 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
       toast.error('缺少续跑锚点，请刷新页面后重试')
       return
     }
+    // 同 handleSend：source 为 null 走后端 fallback，不前端硬拦
     const source = getChatDefaultSource()
-    if (!source) {
-      toast.error('请先在设置中选择 LLM 源')
-      return
-    }
     const targetId = target.id
     setPhase('chatting')
     abortRef.current = new AbortController()
@@ -504,11 +499,8 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
   }
 
   async function handleGenerate() {
+    // 同 handleSend：source 为 null 走后端 fallback，不前端硬拦
     const source = getChatDefaultSource()
-    if (!source) {
-      toast.error('请先在设置中选择 LLM 源')
-      return
-    }
     setPhase('generating')
     setAiDraft('')
     abortRef.current = new AbortController()
@@ -553,11 +545,8 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
   // （复用 generating 的预览样式与 AgentSteps）→ done 的权威全文替换本地拼接
   // → 自动进 diff 审核（diffOrigin='full'，复用 generate 的「审查差异」链路）。
   async function handleStartRevise(card: PendingRevision & { checked: boolean[] }) {
+    // 同 handleSend：source 为 null 走后端 fallback，不前端硬拦
     const source = getChatDefaultSource()
-    if (!source) {
-      toast.error('请先在设置中选择 LLM 源')
-      return
-    }
     // 超 500 字的 directive 截断（后端 422，前端先截+提示，spec 边界 #2）
     const directives = card.directives
       .filter((_, i) => card.checked[i])

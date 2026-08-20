@@ -69,11 +69,8 @@ export function SelectionBubbleMenu({
   }, [getSelectionCoords, state])
 
   async function handleRewrite() {
+    // source 为 null 走后端 fallback 链，不前端硬拦（同 ai-chat-panel）
     const source = getChatDefaultSource()
-    if (!source) {
-      toast.error('请先在设置中选择 LLM 源')
-      return
-    }
     const selectedText = selectedTextRef.current
     if (!selectedText) {
       toast.error('未选中文字')

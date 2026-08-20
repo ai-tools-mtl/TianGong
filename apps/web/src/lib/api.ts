@@ -278,7 +278,7 @@ export const api = {
     message: string,
     onToken: (t: string) => void,
     signal?: AbortSignal,
-    source?: string,
+    source?: string | null,
     conversationId?: string,
     onDone?: (data: { message_id: string; conversation_id?: string; title?: string | null }) => void,
     agentHandlers?: AgentStreamHandlers,
@@ -303,7 +303,7 @@ export const api = {
     sectionId: string,
     onToken: (t: string) => void,
     signal?: AbortSignal,
-    source?: string,
+    source?: string | null,
     agentHandlers?: AgentStreamHandlers,
   ) => {
     const res = await authFetch(`/sections/${sectionId}/generate`, {

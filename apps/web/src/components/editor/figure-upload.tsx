@@ -60,11 +60,8 @@ export function FigureUpload({ sectionId, projectId, onInsertImage }: FigureUplo
 
   async function handleCaption() {
     if (!uploaded) return
+    // source 为 null 走后端 fallback 链，不前端硬拦（同 ai-chat-panel）
     const source = getChatDefaultSource()
-    if (!source) {
-      toast.error('请先在设置中选择 LLM 源')
-      return
-    }
     setCaptioning(true)
     setCaptionText('')
     try {
