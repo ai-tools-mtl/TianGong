@@ -390,3 +390,21 @@ logger.error；前端导出从 `<a>` 直开改 fetch+blob，503 时 toast 友好
 后重启后端；或只在 Docker 环境验证 PDF 功能。
 
 
+
+### E14: 自定义 422 处理器直接返回 exc.errors() 会序列化 TypeError ⚠️（已修）
+
+**坑**：接管 `RequestValidationError` 后把 `exc.errors()` 直接塞进
+`JSONResponse`——当校验错误来自 Pydantic 的 ValueError（如自定义 validator）时，
+`ctx` 字段里带的是**异常对象**，JSON 序列化当场 `TypeError: Object of type
+ValueError is not JSON serializable`，422 变 500。单测里用 `min_length` 这类
+内置校验（ctx 无异常对象）测不出来。
+
+**修复**：`content={"detail": jsonable_encoder(exc.errors())}`——与 FastAPI
+默认处理器同款规范化。
+
+**规矩**：接管 FastAPI 任何默认异常处理器时，先看默认实现怎么序列化响应体，
+照抄序列化路径；测试 422 处理器要覆盖「自定义 validator 触发」的用例。
+
+（同批日志完善：422 细节落日志、后台线程池任务异常 done-callback 兜底记日志、
+assistant/patents SSE 错误路径补服务端 logger.exception、llm_log_helper 等
+静默 `except: pass` 补 warning——延续 E12「吞异常必打日志」的规矩。）
