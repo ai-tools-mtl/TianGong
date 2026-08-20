@@ -95,3 +95,24 @@ def test_rewrite_diff_endpoint_unauthorized_returns_404(app_obj, registered_user
             json={"selected_text": "涉及", "ai_text": "归属于"},
         )
     assert res.status_code == 401
+
+
+def test_compute_diff_endpoint_with_content(client, registered_user, db_session):
+    """POST /sections/{id}/diff（章节有内容）→ 200 且返回 hunks。
+
+    回归锚点：490bc0a 给 _tiptap_to_markdown 加 db 参数时本端点被漏改，
+    但空内容使 `if section.content` 短路、漏改调用不执行，测试一直绿。
+    本测试强制内容非空，钉死「整章 diff 端点带真实内容可用」。
+    """
+    section = _make_logged_in_section(client, registered_user, db_session)
+    from app.ai.markdown_to_tiptap import markdown_to_tiptap
+    section.content = markdown_to_tiptap("本发明涉及一种机械装置，包括底座与支架。")
+    db_session.commit()
+
+    res = client.post(
+        f"/api/v1/sections/{section.id}/diff",
+        json={"ai_text": "本发明涉及一种机械装置，包括底座、支架与紧固件。"},
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert len(data["hunks"]) >= 1

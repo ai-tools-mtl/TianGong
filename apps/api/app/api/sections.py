@@ -66,7 +66,7 @@ def compute_diff(
     """计算 AI 草稿与当前章节内容的 diff。"""
     from app.services.export_service import _tiptap_to_markdown
     section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
-    original_text = _tiptap_to_markdown(section.content) if section.content else ""
+    original_text = _tiptap_to_markdown(db, section.content) if section.content else ""
     hunks = diff_service.compute_section_diff(original_text, payload.ai_text)
     return DiffResponse(hunks=hunks)
 
