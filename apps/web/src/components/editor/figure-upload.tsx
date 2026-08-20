@@ -33,6 +33,7 @@ export function FigureUpload({ sectionId, projectId, onInsertImage }: FigureUplo
   const [uploaded, setUploaded] = useState<Uploaded | null>(null)
   const [captionText, setCaptionText] = useState('')
   const [captioning, setCaptioning] = useState(false)
+  const [imgDesc, setImgDesc] = useState('')
 
   // 鉴权图片加载：fetch + credentials 转 blob URL，绕过 <img> 跨端口 cookie 限制
   const authedImgUrl = useAuthImage(uploaded?.src ?? null)
@@ -62,12 +63,18 @@ export function FigureUpload({ sectionId, projectId, onInsertImage }: FigureUplo
     if (!uploaded) return
     // source 为 null 走后端 fallback 链，不前端硬拦（同 ai-chat-panel）
     const source = getChatDefaultSource()
+    // 非 vision 模型必须靠文字描述：后端会拦截空描述并给出指引
+    const desc = imgDesc.trim()
     setCaptioning(true)
     setCaptionText('')
     try {
       await api.captionFigures(
         sectionId,
-        { attachment_ids: [uploaded.attachmentId], chat_source: source },
+        {
+          attachment_ids: [uploaded.attachmentId],
+          ...(desc ? { descriptions: [desc] } : {}),
+          chat_source: source,
+        },
         (t) => setCaptionText((prev) => prev + t),
       )
     } catch (err: unknown) {
@@ -82,6 +89,7 @@ export function FigureUpload({ sectionId, projectId, onInsertImage }: FigureUplo
     onInsertImage(uploaded.src, captionText.trim() || uploaded.filename)
     setUploaded(null)
     setCaptionText('')
+    setImgDesc('')
     toast.success('已插入文档')
   }
 
@@ -115,6 +123,12 @@ export function FigureUpload({ sectionId, projectId, onInsertImage }: FigureUplo
               <div className="truncate text-[11px] text-muted-foreground" title={uploaded.filename}>
                 {uploaded.filename}
               </div>
+              <input
+                value={imgDesc}
+                onChange={(e) => setImgDesc(e.target.value)}
+                placeholder="图片描述（部件/连接关系；当前模型不支持看图时必填）"
+                className="w-full rounded border bg-background px-2 py-1 text-xs"
+              />
               <div className="flex flex-wrap gap-1.5">
                 <Button
                   variant="outline"
@@ -138,6 +152,7 @@ export function FigureUpload({ sectionId, projectId, onInsertImage }: FigureUplo
                   onClick={() => {
                     setUploaded(null)
                     setCaptionText('')
+                    setImgDesc('')
                   }}
                 >
                   <X className="size-3.5" />

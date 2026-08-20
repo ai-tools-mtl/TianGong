@@ -1074,7 +1074,21 @@ async def caption_figures(
         _resolve_model(llm_config) if llm_config else None,
         markers=resolve_vision_markers(db),
     )
-    messages = build_caption_messages(payload.descriptions, images, use_vision=use_vision)
+
+    # 非 vision 模型 + 无有效文字描述：直接报可行动错误，不调 LLM。
+    # 否则会拿「（无文字描述）」喂给模型，模型只能回复「请提供描述」——
+    # 这段话被当成图注展示/插入文档（dogfood 实际踩到）。
+    _descs = [d.strip() for d in payload.descriptions if d and d.strip()]
+    if not use_vision and not _descs:
+        model_name = _resolve_model(llm_config) if llm_config else None
+        logger.warning(f"图注润色降级拦截：模型 {model_name} 非 vision 且无文字描述")
+        raise ValidationError(
+            "当前 chat 模型不支持看图（vision），且未提供文字描述，无法生成图注。"
+            "请填写各图的文字描述（部件/连接关系等），或在设置中切换支持 vision 的模型"
+            "（如 glm-4v 系列）。"
+        )
+
+    messages = build_caption_messages(_descs, images, use_vision=use_vision)
 
     async def generate():
         db.rollback()

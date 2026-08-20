@@ -151,3 +151,30 @@ def test_caption_figures_requires_input(client, registered_user, db_session):
     drawings = next(s for s in sections if s.key == "drawings")
     res = client.post(f"/api/v1/sections/{drawings.id}/caption-figures", json={})
     assert res.status_code == 422
+
+
+def test_caption_figures_rejects_non_vision_without_descriptions(client, registered_user, db_session, monkeypatch):
+    """非 vision 模型 + 无文字描述：422 可行动错误，不调 LLM 出「请提供描述」废图注。"""
+    sections = _setup_and_login(client, registered_user, db_session)
+    drawings = next(s for s in sections if s.key == "drawings")
+
+    called = []
+
+    async def fake_astream(messages, **kwargs):
+        called.append(True)
+        yield "不应被调用"
+
+    monkeypatch.setattr("app.api.ai.astream_llm", fake_astream)
+    # test-model 非 vision 名单，attachment_ids 非空（通过前置校验）但无 descriptions → 应 422
+    res = client.post(f"/api/v1/sections/{drawings.id}/caption-figures", json={"attachment_ids": ["not-a-uuid"]})
+    assert res.status_code == 422
+    assert "vision" in res.json()["message"]
+    assert not called
+
+    # 提供描述后同模型正常走纯文字润色
+    res2 = client.post(
+        f"/api/v1/sections/{drawings.id}/caption-figures",
+        json={"descriptions": ["图1是装置结构图"]},
+    )
+    assert res2.status_code == 200
+    assert called

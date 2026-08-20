@@ -48,6 +48,7 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
   const [style, setStyle] = useState<string>(readStoredStyle)
   const [figure, setFigure] = useState<Figure | null>(null)
   const [captionText, setCaptionText] = useState('')
+  const [capDesc, setCapDesc] = useState('')
   const [captioning, setCaptioning] = useState(false)
 
   // 鉴权图片加载：fetch + credentials 转 blob URL，绕过 <img> 跨端口 cookie 限制
@@ -132,12 +133,18 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
     if (!figure?.attachment_id) return
     // source 为 null 走后端 fallback 链，不前端硬拦（同 ai-chat-panel）
     const source = getChatDefaultSource()
+    // 非 vision 模型必须靠文字描述：用户手填优先，否则用生成图时的 prompt 兜底
+    const desc = capDesc.trim() || figure.prompt || ''
     setCaptioning(true)
     setCaptionText('')
     try {
       await api.captionFigures(
         sectionId,
-        { attachment_ids: [figure.attachment_id], chat_source: source },
+        {
+          attachment_ids: [figure.attachment_id],
+          ...(desc ? { descriptions: [desc] } : {}),
+          chat_source: source,
+        },
         (t) => setCaptionText((prev) => prev + t),
       )
     } catch (err: unknown) {
@@ -255,6 +262,12 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
           收起
         </Button>
       </div>
+      <input
+        value={capDesc}
+        onChange={(e) => setCapDesc(e.target.value)}
+        placeholder="图注辅助描述（可选；当前模型不支持看图时与生成 prompt 一同作为依据）"
+        className="w-full rounded border bg-background px-2 py-1 text-xs"
+      />
       {captionText && (
         <div className="space-y-1">
           <p className="text-xs text-muted-foreground">AI 生成的图注（可复制到正文）：</p>
