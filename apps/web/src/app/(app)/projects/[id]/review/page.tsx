@@ -39,11 +39,12 @@ export default function ReviewPage() {
     queryFn: () => api.listReviews(params.id),
   })
 
-  // 后台审查状态：进行中每 3s 轮询（重进页面也能恢复「审查中」展示，防重复触发）
+  // 后台审查状态：进行中每 3s 轮询（重进页面也能恢复「审查中」展示，防重复触发）；
+  // 空闲态保留 15s 慢轮询——他处（另开标签页/后台线程）发起的审查本页也能发现
   const { data: reviewStatus } = useQuery({
     queryKey: ['review-status', params.id],
     queryFn: () => api.getReviewStatus(params.id),
-    refetchInterval: (query) => (query.state.data?.running ? 3000 : false),
+    refetchInterval: (query) => (query.state.data?.running ? 3000 : 15000),
   })
 
   // 他处（本页发起后离开再回来 / 后台线程）完成的审查 → 刷新报告列表
@@ -139,7 +140,8 @@ export default function ReviewPage() {
       a.href = url
       a.download = `审查报告-第${latest.round}轮.pdf`
       a.click()
-      URL.revokeObjectURL(url)
+      // Safari 等浏览器异步取 blob：立即 revoke 可能截断下载成 0 字节，延迟释放
+      setTimeout(() => URL.revokeObjectURL(url), 10_000)
     } catch {
       // 网络层异常（断网/服务不可达）时 authFetch reject 冒泡，不 catch 会成
       // unhandled rejection——exporting 复位了但用户没有任何反馈
