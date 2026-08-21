@@ -93,8 +93,17 @@ export function DiffReviewPanel({
   // 决策表：未出现的 key 视为未决定（默认拒绝）
   const [decisions, setDecisions] = useState<Record<string, Decision>>({})
 
+  // 相同 id（内容哈希）的 hunk 共享 accept/reject 决策（apply 按集合语义同命）。
+  // 预统计各 id 出现次数：重复的 hunk 明示「相同变更 ×N」，避免误以为只改一处。
+  const idCounts = useMemo(() => {
+    const counts = new Map<string, number>()
+    for (const h of hunks) counts.set(h.id, (counts.get(h.id) ?? 0) + 1)
+    return counts
+  }, [hunks])
+
   const acceptedIds = useMemo(
-    () => hunks.filter((h) => decisions[h.id] === 'accept').map((h) => h.id),
+    // 去重：重复 id 的 hunk 决策共享，去重后「将应用 N 项」才与实际生效一致
+    () => [...new Set(hunks.filter((h) => decisions[h.id] === 'accept').map((h) => h.id))],
     [hunks, decisions],
   )
 
@@ -144,7 +153,9 @@ export function DiffReviewPanel({
             const decided = decision !== undefined
             return (
               <div
-                key={hunk.id}
+                // id 为内容哈希，两处完全相同的变更会同 id（apply 按集合语义同命），
+                // React key 须唯一故复合索引；decisions 仍按 id 共享判定
+                key={`${hunk.id}-${idx}`}
                 className={cn(
                   'rounded-xl border bg-card transition-colors',
                   decision === 'accept' && 'border-success/50 ring-1 ring-success/20',
@@ -158,6 +169,14 @@ export function DiffReviewPanel({
                     <span className="rounded bg-muted px-1.5 py-0.5 font-medium">
                       {HUNK_TYPE_LABEL[hunk.type]}
                     </span>
+                    {(idCounts.get(hunk.id) ?? 0) > 1 && (
+                      <span
+                        className="rounded bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-900 dark:bg-amber-950/40 dark:text-amber-200"
+                        title="内容完全相同的变更共享同一判定：此处接受/拒绝，其余相同处同步生效"
+                      >
+                        相同变更 ×{idCounts.get(hunk.id)}
+                      </span>
+                    )}
                   </div>
                   <div className="flex items-center gap-1">
                     <Button
