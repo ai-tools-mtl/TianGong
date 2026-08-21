@@ -22,7 +22,9 @@ interface RevisionState {
    * （advanceQueue 取队首成为 pending 并跳转），不并发——T2「候选稿必经人工 diff」
    * 的节奏保留，只是省去回报告页找下一章的点击。 */
   queue: PendingRevision[]
-  /** 从报告页/新颖性页/术语面板发起修订：写入 pending 并跳转编辑器目标章节 */
+  /** 从报告页/新颖性页/术语面板发起修订：写入 pending 并跳转编辑器目标章节
+   * （单章 launch 视为开启新任务：连带清掉遗留批量队列，否则应用完本次修订后
+   * handleApplyDiff 的 proceedQueue 会把旧队列「复活」莫名跳章） */
   launch: (p: PendingRevision) => void
   /** 一键修订：首项进 pending（跳转由 launchRevisionQueue 处理），其余排队 */
   launchQueue: (items: PendingRevision[]) => void
@@ -47,7 +49,7 @@ interface RevisionState {
 export const useRevisionStore = create<RevisionState>((set, get) => ({
   pending: null,
   queue: [],
-  launch: (p) => set({ pending: p }),
+  launch: (p) => set({ pending: p, queue: [] }),
   launchQueue: (items) => {
     if (items.length === 0) return
     const [first, ...rest] = items
