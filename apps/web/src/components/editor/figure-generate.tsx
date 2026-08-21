@@ -1,14 +1,16 @@
 'use client'
 
 import { Loader2, Sparkles, RefreshCw, Trash2, Check, Plus, X } from 'lucide-react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { api } from '@/lib/api'
 import { getChatDefaultSource } from '@/lib/llm-source'
+import { queryKeys } from '@/lib/queries'
 import { useAuthImage } from '@/lib/use-auth-image'
-import type { Figure } from '@/types/api'
+import type { Figure, Section } from '@/types/api'
 
 import { ImageLightbox } from './image-lightbox'
 
@@ -82,6 +84,7 @@ function FigureThumb({
  * 本面板维护该章节的全部附图：横向缩略图条切换选中图，逐张插入/重生成/删除。
  */
 export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGenerateProps) {
+  const qc = useQueryClient()
   const [figures, setFigures] = useState<Figure[]>([]) // 创建时间倒序（同后端 list）
   const [selectedId, setSelectedId] = useState<string | null>(null)
   // 首次拉取完成前不渲染，避免「先闪空表单、再变缩略图条」
@@ -152,11 +155,24 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
     }
   }
 
+  // 正文引用探测（best-effort）：正文图 <img src> 含 attachment id（attachmentUrl
+  // 拼进 src），在 sections 缓存的 Tiptap JSON 里搜该 id 即知是否已插入正文。
+  // 缓存未含最新未保存内容时探测不到——确认框兜底常显，探测命中只是文案升级。
+  function referencedInBody(attachmentId: string | null | undefined): boolean {
+    if (!attachmentId) return false
+    const secs = qc.getQueryData<Section[]>(queryKeys.sections(projectId)) ?? []
+    return secs.some((s) => !!s.content && JSON.stringify(s.content).includes(attachmentId))
+  }
+
   async function handleRegenerate() {
     if (!selected) return
     // 后端 regenerate 会替换 Attachment 文件（旧的删除）——若旧图已插入
-    // 正文，正文里的图片会失效，需用户知情
-    if (!window.confirm('重新生成将替换这张图的文件。若旧图已插入正文，正文中的图片会失效，确定继续？')) {
+    // 正文，正文里的图片会失效，需用户知情（探测到引用时明确告知命中）
+    const inBody = referencedInBody(selected.attachment_id)
+    const msg = inBody
+      ? '检测到该图已插入正文，重新生成会替换图片文件，正文中的这张图将失效。确定继续？'
+      : '重新生成将替换这张图的文件。若旧图已插入正文，正文中的图片会失效，确定继续？'
+    if (!window.confirm(msg)) {
       return
     }
     // source 为 null 走后端 fallback 链，不前端硬拦（同 ai-chat-panel）
@@ -178,7 +194,11 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
   async function handleDelete() {
     if (!selected) return
     // 后端删除会连 Attachment + MinIO 文件一起删——若已插入正文，图片失效
-    if (!window.confirm('删除后不可恢复。若这张图已插入正文，正文中的图片会失效，确定删除？')) {
+    const inBody = referencedInBody(selected.attachment_id)
+    const msg = inBody
+      ? '检测到该图已插入正文，删除后不可恢复，正文中的这张图将失效。确定删除？'
+      : '删除后不可恢复。若这张图已插入正文，正文中的图片会失效，确定删除？'
+    if (!window.confirm(msg)) {
       return
     }
     try {
