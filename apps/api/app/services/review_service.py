@@ -29,29 +29,31 @@ CONSISTENCY_RUNS = 2  # 自一致性：每维度评分次数（旧 consistency_c
 # 进程内标记：生产为单容器 uvicorn（无多 worker），dev 为 --reload 单进程，均可靠；
 # 若未来上多 worker 需换成 DB 行标记或 PG advisory lock。
 _running_lock = threading.Lock()
-_running_reviews: dict = {}  # project_id(UUID) → 最后进度时间戳(epoch)
-# stale 阈值按「距上次进度」计（评分循环每次 LLM 调用完成都续期）：长但仍在
-# 推进的审查（如 LLM 慢、文档长）不会误判失效导致并发双跑；超阈值无进展
-# 视为挂死线程的残留标记，自动失效放行重试。
+_running_reviews: dict = {}  # project_id(UUID) → {started_at, last_touch}（epoch）
+# stale 阈值按「距上次进度」计（评分循环每次 LLM 调用完成都续期 last_touch）：
+# 长但仍在推进的审查（如 LLM 慢、文档长）不会误判失效导致并发双跑；超阈值
+# 无进展视为挂死线程的残留标记，自动失效放行重试。started_at 只在占坑时写入、
+# 心跳不动它——/review/status 的 started_at 与 409 的「已进行 X 分钟」须是真实起点。
 _RUNNING_STALE_SECONDS = 900
 
 
 def _try_acquire_review_lock(project_id) -> float | None:
-    """占坑。该 project 已有审查在跑则返回其最后进度时间戳（冲突），否则占坑返回 None。"""
+    """占坑。该 project 已有审查在跑则返回其真实 started_at（冲突），否则占坑返回 None。"""
     now = time.time()
     with _running_lock:
-        started = _running_reviews.get(project_id)
-        if started is not None and now - started < _RUNNING_STALE_SECONDS:
-            return started
-        _running_reviews[project_id] = now
+        entry = _running_reviews.get(project_id)
+        if entry is not None and now - entry["last_touch"] < _RUNNING_STALE_SECONDS:
+            return entry["started_at"]
+        _running_reviews[project_id] = {"started_at": now, "last_touch": now}
         return None
 
 
 def _touch_review_lock(project_id) -> None:
-    """心跳续期：评分循环每完成一次 LLM 调用刷新时间戳，stale 窗口从最后进度起算。"""
+    """心跳续期：刷新 last_touch（stale 窗口从最后进度起算），不改 started_at。"""
     with _running_lock:
-        if project_id in _running_reviews:
-            _running_reviews[project_id] = time.time()
+        entry = _running_reviews.get(project_id)
+        if entry is not None:
+            entry["last_touch"] = time.time()
 
 
 def _release_review_lock(project_id) -> None:
@@ -60,12 +62,12 @@ def _release_review_lock(project_id) -> None:
 
 
 def is_review_running(project_id) -> float | None:
-    """查询进行中状态：在跑返回最后进度时间戳(epoch)，否则 None。"""
+    """查询进行中状态：在跑返回真实 started_at(epoch)（stale 按 last_touch 判定），否则 None。"""
     now = time.time()
     with _running_lock:
-        started = _running_reviews.get(project_id)
-        if started is not None and now - started < _RUNNING_STALE_SECONDS:
-            return started
+        entry = _running_reviews.get(project_id)
+        if entry is not None and now - entry["last_touch"] < _RUNNING_STALE_SECONDS:
+            return entry["started_at"]
         return None
 
 
