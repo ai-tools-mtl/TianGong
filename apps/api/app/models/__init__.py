@@ -16,6 +16,7 @@ from app.models.project import Project
 from app.models.project_member import ProjectMember
 from app.models.project_tag import ProjectTag
 from app.models.review_record import ReviewRecord
+from app.models.review_lock import ReviewLock
 from app.models.review_rubric import ReviewRubric
 from app.models.section import Section
 from app.models.section_version import SectionVersion
@@ -39,7 +40,7 @@ __all__ = [
     "ShareLink", "Message", "Conversation", "ConversationStatus",
     "KIND_INIT", "KIND_PROJECT",
     "KnowledgeChunk", "KnowledgeFile", "KnowledgeReview",
-    "ReviewRubric", "ReviewRecord", "UserLLMConfig",
+    "ReviewRubric", "ReviewRecord", "ReviewLock", "UserLLMConfig",
     "UserGlobalLLMGrant",
     "Skill",
     "LLMCallLog",
