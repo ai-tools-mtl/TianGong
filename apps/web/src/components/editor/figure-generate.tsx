@@ -166,13 +166,9 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
 
   async function handleRegenerate() {
     if (!selected) return
-    // 后端 regenerate 会替换 Attachment 文件（旧的删除）——若旧图已插入
-    // 正文，正文里的图片会失效，需用户知情（探测到引用时明确告知命中）
-    const inBody = referencedInBody(selected.attachment_id)
-    const msg = inBody
-      ? '检测到该图已插入正文，重新生成会替换图片文件，正文中的这张图将失效。确定继续？'
-      : '重新生成将替换这张图的文件。若旧图已插入正文，正文中的图片会失效，确定继续？'
-    if (!window.confirm(msg)) {
+    // 后端 regenerate 原地覆写同一 attachment（attachment_id 不变）——已插入
+    // 正文的图会自动同步为新图，不存在失效风险，确认即可
+    if (!window.confirm('重新生成将替换这张图的内容；若已插入正文，正文中的图会同步更新为新图。确定继续？')) {
       return
     }
     // source 为 null 走后端 fallback 链，不前端硬拦（同 ai-chat-panel）
@@ -191,9 +187,18 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
     }
   }
 
+  function applyDeleted(id: string) {
+    const rest = figures.filter((f) => f.id !== id)
+    setFigures(rest)
+    selectFigure(rest[0]?.id ?? null)
+    if (rest.length === 0) setFormOpen(true)
+    toast.success('已删除')
+  }
+
   async function handleDelete() {
     if (!selected) return
-    // 后端删除会连 Attachment + MinIO 文件一起删——若已插入正文，图片失效
+    // 两级确认：① 前端缓存快速预检（best-effort，可能滞后）；② 服务端权威探测
+    // （409 带引用章节清单——缓存没看到的引用在此拦下）→ 再确认后带 force 强删
     const inBody = referencedInBody(selected.attachment_id)
     const msg = inBody
       ? '检测到该图已插入正文，删除后不可恢复，正文中的这张图将失效。确定删除？'
@@ -203,13 +208,25 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
     }
     try {
       await api.deleteFigure(selected.id)
-      const rest = figures.filter((f) => f.id !== selected.id)
-      setFigures(rest)
-      selectFigure(rest[0]?.id ?? null)
-      if (rest.length === 0) setFormOpen(true)
-      toast.success('已删除')
-    } catch {
-      toast.error('删除失败')
+      applyDeleted(selected.id)
+    } catch (err: unknown) {
+      const e = err as { code?: string; message?: string }
+      if (e?.code !== 'conflict') {
+        toast.error('删除失败')
+        return
+      }
+      // 服务端探测到正文引用：拿权威清单再确认，确认后强制删除
+      const confirmMsg =
+        e.message ?? '该图已插入正文，删除后正文中的这张图将失效。'
+      if (!window.confirm(`${confirmMsg}\n（此操作不可恢复）`)) {
+        return
+      }
+      try {
+        await api.deleteFigure(selected.id, true)
+        applyDeleted(selected.id)
+      } catch {
+        toast.error('删除失败')
+      }
     }
   }
 

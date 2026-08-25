@@ -3,8 +3,8 @@
 mock LLM（get_llm）+ mock 渲染（drawio_client.render），验证：
 - generate_figure 正常落库（Figure + Attachment）
 - 渲染失败不落库（原子性）
-- regenerate 替换 PNG + 删旧
-- delete 清理 Figure + Attachment + storage
+- regenerate 原地覆写同一 Attachment（正文引用不失效）
+- delete 清理 Figure + Attachment + storage；正文引用防护（409 + force）
 - 非 drawings 章节拒绝
 """
 from unittest.mock import MagicMock, patch
@@ -172,8 +172,12 @@ def test_generate_figure_invalid_xml_rejected(db_session, registered_user):
             )
 
 
-def test_regenerate_replaces_attachment(db_session, registered_user):
-    """regenerate 替换 PNG：旧 Attachment 删除，新 Attachment 建立并关联。"""
+def test_regenerate_overwrites_same_attachment(db_session, registered_user):
+    """regenerate 原地覆写：attachment_id 不变，storage 同一对象写入新 PNG。
+
+    正文图 src 含 attachment id——id 不变则已插入正文的图自动同步为新图，
+    不再出现「重生成后正文图片失效」（2026-08-25 引用完整性）。
+    """
     from app.services import figure_service
 
     user, drawings = _setup_user_and_project(db_session, registered_user)
@@ -186,18 +190,54 @@ def test_regenerate_replaces_attachment(db_session, registered_user):
             section_id=str(drawings.id), prompt="原图", diagram_type=None, chat_source=None,
         )
     old_att_id = fig.attachment_id
+    old_key = db_session.get(Attachment, old_att_id).storage_path
+    fake_storage.reset_mock()
+    new_png = b"\x89PNG\r\n\x1a\n" + b"\x01" * 300  # 与原 PNG 不同的字节
 
     # regenerate 用新 prompt
     with patch("app.ai.llm_client.get_llm", return_value=_mock_llm_invoke()), \
-         patch("app.services.figure_service.drawio_client.render", return_value=_FAKE_PNG):
+         patch("app.services.figure_service.drawio_client.render", return_value=new_png):
         fig = figure_service.regenerate_figure(
             db_session, storage=fake_storage, user_id=user.id,
             figure_id=str(fig.id), prompt="改后的图", chat_source=None,
         )
 
     assert fig.prompt == "改后的图"
-    assert fig.attachment_id != old_att_id  # 换了新 Attachment
-    assert db_session.get(Attachment, old_att_id) is None  # 旧 Attachment 已删
+    assert fig.attachment_id == old_att_id  # 同一 Attachment（正文引用不失效）
+    att = db_session.get(Attachment, old_att_id)
+    assert att is not None
+    assert att.size == len(new_png)  # 元数据随覆写更新
+    # storage：覆写同一对象，不建新对象、不删旧对象
+    fake_storage.put.assert_called_once_with("personal", old_key, new_png, "image/png")
+    fake_storage.delete.assert_not_called()
+
+
+def test_regenerate_creates_attachment_when_missing(db_session, registered_user):
+    """历史遗留（Figure 无 Attachment）时 regenerate 走新建附件。"""
+    from app.services import figure_service
+
+    user, drawings = _setup_user_and_project(db_session, registered_user)
+    fake_storage = MagicMock()
+
+    with patch("app.ai.llm_client.get_llm", return_value=_mock_llm_invoke()), \
+         patch("app.services.figure_service.drawio_client.render", return_value=_FAKE_PNG):
+        fig = figure_service.generate_figure(
+            db_session, storage=fake_storage, user_id=user.id,
+            section_id=str(drawings.id), prompt="原图", diagram_type=None, chat_source=None,
+        )
+    # 人为清掉 Attachment 关联，模拟历史脏数据
+    fig.attachment_id = None
+    db_session.commit()
+
+    with patch("app.ai.llm_client.get_llm", return_value=_mock_llm_invoke()), \
+         patch("app.services.figure_service.drawio_client.render", return_value=_FAKE_PNG):
+        fig = figure_service.regenerate_figure(
+            db_session, storage=fake_storage, user_id=user.id,
+            figure_id=str(fig.id), prompt=None, chat_source=None,
+        )
+
+    assert fig.attachment_id is not None
+    assert db_session.get(Attachment, fig.attachment_id) is not None
 
 
 def test_delete_figure_removes_attachment_and_storage(db_session, registered_user):
@@ -221,3 +261,77 @@ def test_delete_figure_removes_attachment_and_storage(db_session, registered_use
     assert db_session.get(Figure, fig_id) is None
     assert db_session.get(Attachment, att_id) is None
     fake_storage.delete.assert_called()  # 删了 storage 对象
+
+
+def _insert_body_reference(db_session, section, attachment_id) -> None:
+    """把含 attachment id 的图片节点写进章节正文（模拟「插入文档」后的落库状态）。"""
+    src = f"/api/v1/projects/{section.project_id}/attachments/{attachment_id}/file"
+    section.content = {
+        "type": "doc",
+        "content": [{"type": "image", "attrs": {"src": src, "alt": "附图"}}],
+    }
+    db_session.commit()
+
+
+def test_find_body_references_scans_sections(db_session, registered_user):
+    """服务端引用探测：content 序列化后含 attachment id 的章节被命中。"""
+    from app.services import figure_service
+
+    user, drawings = _setup_user_and_project(db_session, registered_user)
+    fake_storage = MagicMock()
+
+    with patch("app.ai.llm_client.get_llm", return_value=_mock_llm_invoke()), \
+         patch("app.services.figure_service.drawio_client.render", return_value=_FAKE_PNG):
+        fig = figure_service.generate_figure(
+            db_session, storage=fake_storage, user_id=user.id,
+            section_id=str(drawings.id), prompt="引用探测", diagram_type=None, chat_source=None,
+        )
+
+    # 无引用
+    assert figure_service.find_body_references(
+        db_session, project_id=drawings.project_id, attachment_id=fig.attachment_id
+    ) == []
+    # attachment_id 为 None（Figure 无附件）直接空
+    assert figure_service.find_body_references(
+        db_session, project_id=drawings.project_id, attachment_id=None
+    ) == []
+
+    _insert_body_reference(db_session, drawings, fig.attachment_id)
+    refs = figure_service.find_body_references(
+        db_session, project_id=drawings.project_id, attachment_id=fig.attachment_id
+    )
+    assert len(refs) == 1
+    assert refs[0]["section_id"] == str(drawings.id)
+    assert refs[0]["section_title"] == drawings.title
+
+
+def test_delete_figure_referenced_conflicts_then_force(db_session, registered_user):
+    """正文引用防护：有引用默认 409（消息含章节名），force=True 才真正删除。"""
+    import pytest
+
+    from app.core.exceptions import ConflictError
+    from app.services import figure_service
+
+    user, drawings = _setup_user_and_project(db_session, registered_user)
+    fake_storage = MagicMock()
+
+    with patch("app.ai.llm_client.get_llm", return_value=_mock_llm_invoke()), \
+         patch("app.services.figure_service.drawio_client.render", return_value=_FAKE_PNG):
+        fig = figure_service.generate_figure(
+            db_session, storage=fake_storage, user_id=user.id,
+            section_id=str(drawings.id), prompt="防删测试", diagram_type=None, chat_source=None,
+        )
+    _insert_body_reference(db_session, drawings, fig.attachment_id)
+
+    # 默认：409 + 消息含引用章节标题
+    with pytest.raises(ConflictError, match=drawings.title):
+        figure_service.delete_figure(
+            db_session, storage=fake_storage, user_id=user.id, figure_id=str(fig.id),
+        )
+    assert db_session.get(Figure, fig.id) is not None  # 未删
+
+    # force：放行删除
+    figure_service.delete_figure(
+        db_session, storage=fake_storage, user_id=user.id, figure_id=str(fig.id), force=True,
+    )
+    assert db_session.get(Figure, fig.id) is None

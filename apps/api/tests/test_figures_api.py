@@ -138,6 +138,54 @@ def test_delete_figure_endpoint(client, registered_user, db_session):
     assert res2.json() == []
 
 
+def test_delete_referenced_figure_409_then_force(client, registered_user, db_session):
+    """正文引用防护（API 契约）：有引用默认 409 且 code=conflict（前端据此弹二次确认）、
+    消息含引用章节名；?force=true 才删成。"""
+    user, project, drawings = _setup_and_login(client, registered_user, db_session)
+
+    with patch("app.ai.llm_client.get_llm", return_value=_mock_llm()), \
+         patch("app.services.figure_service.drawio_client.render", return_value=_FAKE_PNG):
+        r = client.post(f"/api/v1/sections/{drawings.id}/figures/generate", json={"prompt": "引用"})
+    fig = r.json()
+
+    # 模拟「插入文档」后的落库状态：正文含该图 src（内含 attachment id）
+    drawings.content = {
+        "type": "doc",
+        "content": [{"type": "image",
+                     "attrs": {"src": f"/api/v1/projects/{project.id}/attachments/{fig['attachment_id']}/file"}}],
+    }
+    db_session.commit()
+
+    res = client.delete(f"/api/v1/figures/{fig['id']}")
+    assert res.status_code == 409, (res.status_code, res.text)
+    body = res.json()
+    assert body["code"] == "conflict"
+    assert drawings.title in body["message"]
+    # 未被删除
+    assert len(client.get(f"/api/v1/projects/{project.id}/figures").json()) == 1
+
+    res2 = client.delete(f"/api/v1/figures/{fig['id']}?force=true")
+    assert res2.status_code == 204
+    assert client.get(f"/api/v1/projects/{project.id}/figures").json() == []
+
+
+def test_regenerate_keeps_attachment_id(client, registered_user, db_session):
+    """regenerate 原地覆写（API）：attachment_id 不变 → 正文引用自动同步为新图。"""
+    user, project, drawings = _setup_and_login(client, registered_user, db_session)
+
+    with patch("app.ai.llm_client.get_llm", return_value=_mock_llm()), \
+         patch("app.services.figure_service.drawio_client.render", return_value=_FAKE_PNG):
+        r = client.post(f"/api/v1/sections/{drawings.id}/figures/generate", json={"prompt": "原图"})
+    old_att = r.json()["attachment_id"]
+
+    with patch("app.ai.llm_client.get_llm", return_value=_mock_llm()), \
+         patch("app.services.figure_service.drawio_client.render", return_value=_FAKE_PNG):
+        res = client.post(f"/api/v1/figures/{r.json()['id']}/regenerate", json={"prompt": "改后"})
+
+    assert res.status_code == 200
+    assert res.json()["attachment_id"] == old_att
+
+
 def test_generate_requires_auth(client, db_session):
     """未登录生成附图：401。"""
     res = client.post("/api/v1/sections/00000000-0000-0000-0000-000000000000/figures/generate",

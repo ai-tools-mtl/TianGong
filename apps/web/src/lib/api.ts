@@ -657,8 +657,8 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
-  deleteFigure: (figureId: string) =>
-    request<void>(`/figures/${figureId}`, { method: 'DELETE' }),
+  deleteFigure: (figureId: string, force?: boolean) =>
+    request<void>(`/figures/${figureId}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
 
   // ── 附图风格预设（admin console）──
   getFigurePresets: () =>

@@ -9,13 +9,14 @@
 关键约束：渲染失败（ServiceUnavailableError）时**不落库**——figure 生成是原子操作，
 渲染失败就没有可交付的图，让用户重试，不留半成品 Figure 记录。
 """
+import json
 import time
 import uuid
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.exceptions import NotFoundError, ServiceUnavailableError, ValidationError
+from app.core.exceptions import ConflictError, NotFoundError, ServiceUnavailableError, ValidationError
 from app.core.storage import Storage
 from app.models import Attachment, Figure, Section
 from app.services import drawio_client, llm_config_service, section_service
@@ -151,11 +152,29 @@ def generate_figure(
     return fig
 
 
+def find_body_references(db: Session, *, project_id, attachment_id) -> list[dict]:
+    """扫描项目全部章节正文，找出引用了该附件的章节（服务端权威探测）。
+
+    正文图 <img src> 是 attachmentUrl(project_id, attachment_id)——URL 内含
+    attachment id，故把章节 content（Tiptap JSON）序列化后做子串匹配即可。
+    前端的同类探测读的是 react-query 缓存（可能滞后），这里以落库内容为准。
+    返回 [{section_id, section_title}]；无引用返回 []。
+    """
+    if attachment_id is None:
+        return []
+    needle = str(attachment_id)
+    hits = []
+    for s in db.scalars(select(Section).where(Section.project_id == project_id)):
+        if s.content and needle in json.dumps(s.content, ensure_ascii=False):
+            hits.append({"section_id": str(s.id), "section_title": s.title})
+    return hits
+
+
 def regenerate_figure(
     db: Session, *, storage: Storage, user_id, figure_id: str,
     prompt: str | None, chat_source: str | None, style: str | None = None,
 ) -> Figure:
-    """用新/旧 prompt 重新生成某张附图，替换其 PNG（保留 XML 源更新）。"""
+    """用新/旧 prompt 重新生成某张附图，原地覆写其 PNG（attachment_id 不变）。"""
     fig = get_figure(db, user_id=user_id, figure_id=figure_id)
     new_prompt = prompt or fig.prompt
     # style 复用：未传则沿用原 figure 的 style（对齐 prompt 的复用模式）
@@ -195,28 +214,30 @@ def regenerate_figure(
     r = preset["render"]
     png = drawio_client.render(drawio_xml, fmt="png", scale=r["scale"], embed=True, border=r["border"])
 
-    # 替换 Attachment：删旧 PNG 对象，存新 PNG。旧 Attachment 记录由 SET NULL 不级联。
-    old_attachment_id = fig.attachment_id
+    # 原地覆写（2026-08-25 引用完整性）：渲染产物写回旧 Attachment 的同一存储对象，
+    # attachment_id 不变——正文里已插入的图（src 含该 id）自动同步为新图，不再出现
+    # 「重生成后正文图片失效」。一个 Figure 恒对应一个 Attachment，覆写无孤儿产生。
     name = f"{(new_prompt[:20] or '附图')}.drawio.png"
-    att = _store_png(
-        db, storage=storage, user_id=user_id,
-        project_id=str(fig.project_id), section_id=str(fig.section_id) if fig.section_id else None,
-        png=png, name=name,
-    )
-    fig.attachment_id = att.id
+    att = db.get(Attachment, fig.attachment_id) if fig.attachment_id else None
+    if att is None:
+        # 历史遗留（Figure 无 Attachment）→ 走新建
+        att = _store_png(
+            db, storage=storage, user_id=user_id,
+            project_id=str(fig.project_id),
+            section_id=str(fig.section_id) if fig.section_id else None,
+            png=png, name=name,
+        )
+        fig.attachment_id = att.id
+    else:
+        if len(png) > _MAX_PNG_BYTES:
+            raise ValidationError("生成的附图过大，请简化图结构后重试")
+        storage.put("personal", att.storage_path, png, "image/png")
+        att.filename = name
+        att.size = len(png)
+
     fig.prompt = new_prompt
     fig.drawio_xml = drawio_xml
     fig.style = preset["id"]
-
-    # 删旧 Attachment（若有）
-    if old_attachment_id:
-        old_att = db.get(Attachment, old_attachment_id)
-        if old_att:
-            try:
-                storage.delete("personal", old_att.storage_path)  # 幂等
-            except Exception:
-                pass  # 删存储失败不阻断主流程，对象可能已不存在
-            db.delete(old_att)
 
     db.commit()
     db.refresh(fig)
@@ -253,9 +274,24 @@ def get_figure(db: Session, *, user_id, figure_id: str) -> Figure:
     return fig
 
 
-def delete_figure(db: Session, *, storage: Storage, user_id, figure_id: str) -> None:
-    """删除附图（Figure + 关联 Attachment + MinIO 对象，幂等）。"""
+def delete_figure(db: Session, *, storage: Storage, user_id, figure_id: str,
+                  force: bool = False) -> None:
+    """删除附图（Figure + 关联 Attachment + MinIO 对象，幂等）。
+
+    正文引用防护（2026-08-25）：图已插入正文（章节 content 含其 attachment id）
+    时默认 409 拒删并列出引用章节，确认后带 force 重试才真正删除——探测以服务端
+    落库内容为准；前端缓存探测只作快速预检（编辑器未保存内容双方都探测不到）。
+    """
     fig = get_figure(db, user_id=user_id, figure_id=figure_id)
+    if not force:
+        refs = find_body_references(db, project_id=fig.project_id,
+                                    attachment_id=fig.attachment_id)
+        if refs:
+            titles = "、".join(f"「{r['section_title']}」" for r in refs)
+            raise ConflictError(
+                f"检测到该图已插入正文章节{titles}，删除后正文中的这张图将失效。"
+                "确定要强制删除吗？"
+            )
     if fig.attachment_id:
         att = db.get(Attachment, fig.attachment_id)
         if att:

@@ -98,11 +98,16 @@ def regenerate(
 @router.delete("/figures/{figure_id}", status_code=204)
 def delete_figure(
     figure_id: str,
+    force: bool = False,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    """删除附图（Figure + 关联 Attachment + MinIO 对象）。"""
+    """删除附图（Figure + 关联 Attachment + MinIO 对象）。
+
+    图已插入正文时默认 409（带引用章节清单），force=true 才真正删除。
+    """
     figure_service.delete_figure(
         db, storage=get_storage(), user_id=current_user.id, figure_id=figure_id,
+        force=force,
     )
     return None
