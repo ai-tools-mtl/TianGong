@@ -4,21 +4,21 @@ load → score（Rubric 驱动 + 自一致性）→ aggregate → persist
 """
 
 import json
-import threading
 import time
 import uuid as uuid_mod
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 from openai import BadRequestError
-from sqlalchemy import select
+from sqlalchemy import delete as sa_delete, select, update as sa_update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.ai.llm_client import get_llm
 from app.ai.llm_errors import friendly_llm_error
 from app.ai.rubric_prompts import SCORE_SYSTEM_PROMPT, build_score_prompt
 from app.core.exceptions import ConflictError, NotFoundError, ValidationError
-from app.models import Project, ReviewRecord, Section
+from app.models import Project, ReviewLock, ReviewRecord, Section
 from app.services.llm_config_service import ResolvedChatConfig, resolve_chat_config
 from app.services.rubric_service import get_effective_rubric
 
@@ -26,49 +26,83 @@ CONSISTENCY_RUNS = 2  # 自一致性：每维度评分次数（旧 consistency_c
 
 # ── 审查进行中互斥（dogfood 2026-08-19：审查是分钟级同步长任务，离开页面
 # 重进既看不到进行中状态、又能再点一次 → 并发两轮浪费 LLM 调用 + 同轮次重复落库）。
-# 进程内标记：生产为单容器 uvicorn（无多 worker），dev 为 --reload 单进程，均可靠；
-# 若未来上多 worker 需换成 DB 行标记或 PG advisory lock。
-_running_lock = threading.Lock()
-_running_reviews: dict = {}  # project_id(UUID) → {started_at, last_touch}（epoch）
+# DB 行标记（review_locks 表，2026-08-25 升级）：原进程内 dict 在多 worker 部署下
+# 各进程各一份互不可见 → 并发双跑；现改为 INSERT 占坑 + 条件 UPDATE 抢占 stale 锁，
+# 原子性由数据库保证（PG 行锁 / SQLite 写串行），跨进程可靠。
 # stale 阈值按「距上次进度」计（评分循环每次 LLM 调用完成都续期 last_touch）：
 # 长但仍在推进的审查（如 LLM 慢、文档长）不会误判失效导致并发双跑；超阈值
-# 无进展视为挂死线程的残留标记，自动失效放行重试。started_at 只在占坑时写入、
+# 无进展视为挂死进程的残留锁，自动失效放行重试。started_at 只在占坑时写入、
 # 心跳不动它——/review/status 的 started_at 与 409 的「已进行 X 分钟」须是真实起点。
+# 注意：锁的写操作（占坑/心跳/释放）直接 commit 调用方 session——审查评分循环
+# 期间 session 无未落库写入，commit 只是结束当前读事务，无副作用。
 _RUNNING_STALE_SECONDS = 900
 
 
-def _try_acquire_review_lock(project_id) -> float | None:
-    """占坑。该 project 已有审查在跑则返回其真实 started_at（冲突），否则占坑返回 None。"""
+def _try_acquire_review_lock(db: Session, project_id) -> tuple[float | None, str | None]:
+    """占坑。成功返回 (None, owner_token)；冲突返回 (对方 started_at, None)。
+
+    三段式：① INSERT 空坑（无锁时最快路径）；② 撞主键 → 条件 UPDATE 抢占
+    stale 锁（WHERE last_touch < 阈值，rowcount==1 才算抢到——并发抢占由数据库
+    串行化，只有一方成功）；③ 抢不到 → 读当前持有者 started_at 返回（409 文案用）。
+    极小窗口：②的 UPDATE 执行前 holder 恰好释放（行没了）→ 回到 ① 重试。
+    """
+    token = str(uuid_mod.uuid4())
     now = time.time()
-    with _running_lock:
-        entry = _running_reviews.get(project_id)
-        if entry is not None and now - entry["last_touch"] < _RUNNING_STALE_SECONDS:
-            return entry["started_at"]
-        _running_reviews[project_id] = {"started_at": now, "last_touch": now}
-        return None
+    while True:
+        db.add(ReviewLock(project_id=project_id, owner_token=token,
+                          started_at=now, last_touch=now))
+        try:
+            db.commit()
+            return None, token
+        except IntegrityError:
+            db.rollback()
+        res = db.execute(
+            sa_update(ReviewLock)
+            .where(
+                ReviewLock.project_id == project_id,
+                ReviewLock.last_touch < now - _RUNNING_STALE_SECONDS,
+            )
+            .values(owner_token=token, started_at=now, last_touch=now)
+        )
+        db.commit()
+        if res.rowcount == 1:
+            return None, token
+        row = db.get(ReviewLock, project_id)
+        if row is not None:
+            return row.started_at, None
 
 
-def _touch_review_lock(project_id) -> None:
-    """心跳续期：刷新 last_touch（stale 窗口从最后进度起算），不改 started_at。"""
-    with _running_lock:
-        entry = _running_reviews.get(project_id)
-        if entry is not None:
-            entry["last_touch"] = time.time()
+def _touch_review_lock(db: Session, project_id, owner_token: str) -> None:
+    """心跳续期：刷新 last_touch（stale 窗口从最后进度起算），不改 started_at。
+
+    只作用于自己占的坑（owner_token 匹配）：锁被抢占后，原僵死进程的迟到
+    心跳不能把新持有者的锁续活。
+    """
+    db.execute(
+        sa_update(ReviewLock)
+        .where(ReviewLock.project_id == project_id,
+               ReviewLock.owner_token == owner_token)
+        .values(last_touch=time.time())
+    )
+    db.commit()
 
 
-def _release_review_lock(project_id) -> None:
-    with _running_lock:
-        _running_reviews.pop(project_id, None)
+def _release_review_lock(db: Session, project_id, owner_token: str) -> None:
+    """释放锁（owner_token 匹配才删——僵死进程恢复后不能误删新持有者的锁）。"""
+    db.execute(
+        sa_delete(ReviewLock)
+        .where(ReviewLock.project_id == project_id,
+               ReviewLock.owner_token == owner_token)
+    )
+    db.commit()
 
 
-def is_review_running(project_id) -> float | None:
+def is_review_running(db: Session, project_id) -> float | None:
     """查询进行中状态：在跑返回真实 started_at(epoch)（stale 按 last_touch 判定），否则 None。"""
-    now = time.time()
-    with _running_lock:
-        entry = _running_reviews.get(project_id)
-        if entry is not None and now - entry["last_touch"] < _RUNNING_STALE_SECONDS:
-            return entry["started_at"]
-        return None
+    row = db.get(ReviewLock, project_id)
+    if row is not None and time.time() - row.last_touch < _RUNNING_STALE_SECONDS:
+        return row.started_at
+    return None
 
 
 def run_review(db: Session, *, user_id, project_id: str) -> ReviewRecord:
@@ -83,18 +117,25 @@ def run_review(db: Session, *, user_id, project_id: str) -> ReviewRecord:
         raise NotFoundError("项目不存在")
 
     # 同项目审查互斥：进行中再次触发 → 409（防并发双跑浪费 LLM 调用 + 同轮次重复落库）
-    conflict_started = _try_acquire_review_lock(pid)
+    conflict_started, token = _try_acquire_review_lock(db, pid)
     if conflict_started is not None:
         waited = int(time.time() - conflict_started)
         raise ConflictError(f"审查正在进行中（已进行约 {waited // 60} 分钟），请等待完成后再试")
     try:
-        return _run_review_locked(db, user_id=user_id, project=project, pid=pid)
+        return _run_review_locked(
+            db, user_id=user_id, project=project, pid=pid, lock_token=token
+        )
     finally:
-        _release_review_lock(pid)
+        # rollback 丢弃执行途中的残留状态（如 persist 失败留下的半截记录/失败事务），
+        # 保证紧随其后的锁释放 commit 不连带写入这些数据
+        db.rollback()
+        _release_review_lock(db, pid, token)
 
 
-def _run_review_locked(db: Session, *, user_id, project: Project, pid) -> ReviewRecord:
-    """run_review 的实际执行体（调用前须已持有项目审查锁）。"""
+def _run_review_locked(
+    db: Session, *, user_id, project: Project, pid, lock_token: str
+) -> ReviewRecord:
+    """run_review 的实际执行体（调用前须已持有项目审查锁，lock_token 用于心跳续期）。"""
 
     # 旧 project-scoped skill 开关已删除（spec Q5 解耦）。
     # rubric_review / consistency_check 默认全开；后续按 spec 用全局/用户级 Skill 重建（Task 6+）。
@@ -136,7 +177,7 @@ def _run_review_locked(db: Session, *, user_id, project: Project, pid) -> Review
             scores.append(score)
             last_evidence = evidence
             last_suggestion = suggestion
-            _touch_review_lock(pid)  # 每次评分调用完成即进度，续期 stale 窗口
+            _touch_review_lock(db, pid, lock_token)  # 每次评分调用完成即进度，续期 stale 窗口
         avg_score = sum(scores) / len(scores)
         dimension_scores.append({
             "key": criterion["key"],
@@ -165,7 +206,7 @@ def _run_review_locked(db: Session, *, user_id, project: Project, pid) -> Review
         )
     }
     cross_issues = _check_cross_section_consistency(sections, llm_config, title_key_map=title_key_map)
-    _touch_review_lock(pid)
+    _touch_review_lock(db, pid, lock_token)
 
     # ③c 问题按章节定位聚合（把 dimension 的 evidence/suggestion 归到对应章节）
     section_issues = _aggregate_section_issues(db, pid, dimension_scores)

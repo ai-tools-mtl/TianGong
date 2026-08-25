@@ -51,7 +51,7 @@ def get_review_status(
     """审查进行中状态（dogfood 2026-08-19）：审查是分钟级同步长任务，
     前端离开页面重进后凭此恢复「进行中」展示并禁用重复触发。"""
     project = project_service.get_project(db, user=current_user, project_id=project_id)
-    started_at = review_service.is_review_running(project.id)
+    started_at = review_service.is_review_running(db, project.id)
     return {"running": started_at is not None, "started_at": started_at}
 
 

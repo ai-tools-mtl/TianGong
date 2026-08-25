@@ -365,35 +365,70 @@ def test_run_review_conflict_when_already_running(db_session):
 
     u, project = _make_review_project(db_session)
 
-    assert rs._try_acquire_review_lock(project.id) is None  # 占坑成功
+    conflict, token = rs._try_acquire_review_lock(db_session, project.id)
+    assert conflict is None and token is not None  # 占坑成功
     try:
         with pytest.raises(ConflictError, match="正在进行中"):
             rs.run_review(db_session, user_id=u.id, project_id=str(project.id))
-        assert rs.is_review_running(project.id) is not None  # 仍报进行中
+        assert rs.is_review_running(db_session, project.id) is not None  # 仍报进行中
     finally:
-        rs._release_review_lock(project.id)
-    assert rs.is_review_running(project.id) is None
+        rs._release_review_lock(db_session, project.id, token)
+    assert rs.is_review_running(db_session, project.id) is None
 
 
 def test_running_stale_marker_expires(db_session):
-    """残留标记（超过 _RUNNING_STALE_SECONDS）自动视为失效，可重新占坑。"""
+    """残留锁行（超过 _RUNNING_STALE_SECONDS 无心跳）自动视为失效，可抢占重新占坑。"""
     import time as _time
-    import uuid as _uuid
 
+    from app.models import ReviewLock
     from app.services import review_service as rs
 
-    pid = _uuid.uuid4()
+    u, project = _make_review_project(db_session)
     stale = _time.time() - rs._RUNNING_STALE_SECONDS - 1
-    rs._running_reviews[pid] = {"started_at": stale, "last_touch": stale}
-    assert rs.is_review_running(pid) is None
-    assert rs._try_acquire_review_lock(pid) is None
-    rs._release_review_lock(pid)
+    db_session.add(ReviewLock(project_id=project.id, owner_token="zombie",
+                              started_at=stale, last_touch=stale))
+    db_session.commit()
+
+    assert rs.is_review_running(db_session, project.id) is None  # stale → 不算进行中
+    conflict, token = rs._try_acquire_review_lock(db_session, project.id)
+    assert conflict is None and token is not None  # 条件 UPDATE 抢占成功
+    rs._release_review_lock(db_session, project.id, token)
+
+
+def test_review_lock_token_guards_touch_and_release(db_session):
+    """owner_token 守卫：错 token 的心跳不续期、错 token 的释放不删锁。
+
+    stale 抢占后，原僵死进程恢复的迟到心跳/释放不能影响新持有者。
+    """
+    import time as _time
+
+    from app.models import ReviewLock
+    from app.services import review_service as rs
+
+    u, project = _make_review_project(db_session)
+    stale = _time.time() - rs._RUNNING_STALE_SECONDS - 10
+    db_session.add(ReviewLock(project_id=project.id, owner_token="zombie",
+                              started_at=stale, last_touch=stale))
+    db_session.commit()
+
+    # 新持有者抢占
+    conflict, token = rs._try_acquire_review_lock(db_session, project.id)
+    assert conflict is None and token is not None
+    try:
+        # 僵死进程的迟到心跳（错 token）：不能改写新持有者的锁
+        rs._touch_review_lock(db_session, project.id, "zombie")
+        assert rs.is_review_running(db_session, project.id) is not None  # 锁仍在
+
+        # 僵死进程的迟到释放（错 token）：不能删新持有者的锁
+        rs._release_review_lock(db_session, project.id, "zombie")
+        assert rs.is_review_running(db_session, project.id) is not None
+    finally:
+        rs._release_review_lock(db_session, project.id, token)
+    assert rs.is_review_running(db_session, project.id) is None
 
 
 def test_run_review_lock_released_on_llm_failure(db_session, monkeypatch):
     """LLM 全挂抛 ValidationError 后锁必须释放（finally），不能卡死后续重试。"""
-    import uuid as _uuid
-
     import pytest
 
     from app.core.exceptions import ValidationError
@@ -405,7 +440,7 @@ def test_run_review_lock_released_on_llm_failure(db_session, monkeypatch):
     with pytest.raises(ValidationError):
         rs.run_review(db_session, user_id=u.id, project_id=str(project.id))
 
-    assert rs.is_review_running(project.id) is None
+    assert rs.is_review_running(db_session, project.id) is None
 
 
 def test_review_status_and_conflict_api(client, db_session):
@@ -428,7 +463,8 @@ def test_review_status_and_conflict_api(client, db_session):
     res = client.post("/api/v1/auth/login", json={"username": "mutex_user", "password": "Pass1234!"})
     assert res.status_code == 200, res.text
 
-    rs._try_acquire_review_lock(project.id)
+    conflict, token = rs._try_acquire_review_lock(db_session, project.id)
+    assert conflict is None
     try:
         resp = client.get(f"/api/v1/projects/{project.id}/review/status")
         assert resp.status_code == 200
@@ -439,13 +475,13 @@ def test_review_status_and_conflict_api(client, db_session):
         assert resp.status_code == 409, (resp.status_code, resp.text)
         assert "正在进行中" in resp.json()["message"]
     finally:
-        rs._release_review_lock(project.id)
+        rs._release_review_lock(db_session, project.id, token)
 
     resp = client.get(f"/api/v1/projects/{project.id}/review/status")
     assert resp.json()["running"] is False
 
 
-def test_touch_review_lock_refreshes_stale_window():
+def test_touch_review_lock_refreshes_stale_window(db_session):
     """心跳续期：stale 窗口从「上次进度」起算而非「占坑」起算，且不动 started_at。
 
     推进中的审查（单次超 _RUNNING_STALE_SECONDS 的慢 LLM 链）不因总时长
@@ -453,19 +489,31 @@ def test_touch_review_lock_refreshes_stale_window():
     started_at 保持真实起点：/review/status 与 409「已进行 X 分钟」据此展示。
     """
     import time as _time
-    import uuid as _uuid
 
+    from sqlalchemy import update as sa_update
+
+    from app.models import ReviewLock
     from app.services import review_service as rs
 
-    pid = _uuid.uuid4()
+    u, project = _make_review_project(db_session)
     stale = _time.time() - rs._RUNNING_STALE_SECONDS - 10  # 原占坑早已超阈值
-    rs._running_reviews[pid] = {"started_at": stale, "last_touch": stale}
-    assert rs.is_review_running(pid) is None  # 未续期 → 已 stale
 
-    rs._touch_review_lock(pid)  # 评分循环完成一次调用，续期
-    assert rs.is_review_running(pid) is not None  # 从最后进度起算，仍在窗口内
-    assert rs._try_acquire_review_lock(pid) is not None  # 不能被重新占坑
-    assert rs.is_review_running(pid) == stale  # 对外仍报真实起点，不被心跳改写
+    conflict, token = rs._try_acquire_review_lock(db_session, project.id)
+    assert conflict is None
+    try:
+        # 直接把两列拉回过去，模拟「占坑后一直无进度」
+        db_session.execute(
+            sa_update(ReviewLock).where(ReviewLock.project_id == project.id)
+            .values(started_at=stale, last_touch=stale)
+        )
+        db_session.commit()
+        assert rs.is_review_running(db_session, project.id) is None  # 未续期 → 已 stale
 
-    rs._release_review_lock(pid)
-    assert rs.is_review_running(pid) is None
+        rs._touch_review_lock(db_session, project.id, token)  # 评分循环完成一次调用，续期
+        assert rs.is_review_running(db_session, project.id) is not None  # 从最后进度起算，仍在窗口内
+        conflict2, _ = rs._try_acquire_review_lock(db_session, project.id)
+        assert conflict2 is not None  # 不能被重新占坑
+        assert rs.is_review_running(db_session, project.id) == stale  # 对外仍报真实起点，不被心跳改写
+    finally:
+        rs._release_review_lock(db_session, project.id, token)
+    assert rs.is_review_running(db_session, project.id) is None
