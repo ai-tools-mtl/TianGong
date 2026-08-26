@@ -52,14 +52,17 @@ function FigureThumb({
   projectId,
   active,
   onClick,
+  version,
 }: {
   figure: Figure
   projectId: string
   active: boolean
   onClick: () => void
+  /** 内容版本（父组件 regenerate 后 bump）：URL 不变也要重新拉取覆写后的新图 */
+  version?: number
 }) {
   const src = figure.attachment_id ? api.attachmentUrl(projectId, figure.attachment_id) : null
-  const authed = useAuthImage(src)
+  const authed = useAuthImage(src, version)
   return (
     <button
       type="button"
@@ -98,12 +101,15 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
   const [capDesc, setCapDesc] = useState('')
   const [captioning, setCaptioning] = useState(false)
   const [zoom, setZoom] = useState(false)
+  // regenerate 原地覆写同一附件（attachment_id/URL 均不变），bump 此版本号
+  // 强制 useAuthImage 重新拉取，否则面板会一直显示覆写前的旧 blob
+  const [imgVersion, setImgVersion] = useState(0)
 
   const selected = figures.find((f) => f.id === selectedId) ?? figures[0] ?? null
 
   // 鉴权图片加载：fetch + credentials 转 blob URL，绕过 <img> 跨端口 cookie 限制
   const imgUrl = selected?.attachment_id ? api.attachmentUrl(projectId, selected.attachment_id) : null
-  const authedImgUrl = useAuthImage(imgUrl)
+  const authedImgUrl = useAuthImage(imgUrl, imgVersion)
 
   // 进入时拉取该章节全部附图（多图管理：不只取最新一张）
   useEffect(() => {
@@ -178,6 +184,8 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
       // 不传 prompt：沿用该图的原描述重新生成；要改描述就生成一张新的
       const fig = await api.regenerateFigure(selected.id, { chat_source: source, style })
       setFigures((prev) => prev.map((f) => (f.id === fig.id ? fig : f)))
+      // 覆写后 URL 不变，bump 版本号让详情图与缩略图重拉新字节
+      setImgVersion((v) => v + 1)
       toast.success('已重新生成')
     } catch (err: unknown) {
       const msg = (err as { message?: string })?.message ?? '重新生成失败'
@@ -348,6 +356,7 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
               projectId={projectId}
               active={f.id === selected?.id}
               onClick={() => selectFigure(f.id)}
+              version={imgVersion}
             />
           ))}
         </div>

@@ -96,6 +96,22 @@ def test_list_attachments(client, registered_user, db_session):
     assert len(res.json()) == 1
 
 
+def test_download_no_store_cache_control(client, registered_user, db_session):
+    """下载响应禁缓存：URL 不含版本参数而 regenerate 会原地覆写同一对象，
+    允许缓存会让浏览器/代理层的旧图在同 URL 下滞留（2026-08-26）。"""
+    project_id, section_id = _setup_project(client, registered_user, db_session)
+    png_bytes = b"\x89PNG\r\n\x1a\n" + b"\x00" * 50
+
+    up = client.post(
+        f"/api/v1/sections/{section_id}/attachments",
+        files={"file": ("a.png", png_bytes, "image/png")},
+    ).json()
+
+    res = client.get(f"/api/v1/projects/{project_id}/attachments/{up['id']}/file")
+    assert res.status_code == 200
+    assert res.headers["cache-control"] == "no-store"
+
+
 def test_delete_attachment(client, registered_user, db_session):
     """删除附件（记录 + 文件）。"""
     project_id, section_id = _setup_project(client, registered_user, db_session)

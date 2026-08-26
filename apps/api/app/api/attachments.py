@@ -82,7 +82,13 @@ def download(
     disposition = f"inline; filename*=UTF-8''{quoted}"
     return Response(
         content=content, media_type=att.mime_type,
-        headers={"Content-Disposition": disposition},
+        headers={
+            "Content-Disposition": disposition,
+            # URL 不含版本参数（正文 img src 按插入时固化），而 regenerate 会原地
+            # 覆写同一对象（attachment_id 不变）——若允许缓存，同 URL 的旧图会滞留
+            # 在浏览器/代理层。鉴权字节流禁缓存是安全默认，代价是每次浏览重新拉取。
+            "Cache-Control": "no-store",
+        },
     )
 
 

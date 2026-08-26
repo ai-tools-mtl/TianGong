@@ -13,9 +13,15 @@ import { authFetch } from '@/lib/api'
  *
  * 用法：const src = useAuthImage(rawUrl); return src ? <img src={src}/> : <占位/>
  *
+ * version：内容版本号，变更时强制重新加载。regenerate 原地覆写同一附件
+ * （URL 不变），须由调用方在覆写后 bump version 才会重新拉取。
+ *
  * 返回：blob URL（成功）/ null（加载中或失败）。
  */
-export function useAuthImage(rawSrc: string | null | undefined): string | null {
+export function useAuthImage(
+  rawSrc: string | null | undefined,
+  version?: number,
+): string | null {
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
 
   useEffect(() => {
@@ -45,7 +51,7 @@ export function useAuthImage(rawSrc: string | null | undefined): string | null {
       revoked = true
       if (createdUrl) URL.revokeObjectURL(createdUrl)
     }
-  }, [rawSrc])
+  }, [rawSrc, version])
 
   return blobUrl
 }
