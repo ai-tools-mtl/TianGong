@@ -212,6 +212,40 @@ def test_regenerate_overwrites_same_attachment(db_session, registered_user):
     fake_storage.delete.assert_not_called()
 
 
+def test_regenerate_rejects_non_png_overwrite(db_session, registered_user):
+    """覆写前拦截非 PNG 字节：render 异常返回（HTTP 200 + 空/错误页）不得覆盖正文在用的旧图。
+
+    generate 路径的 _store_png 一直有魔数校验，覆写路径此前只有大小检查——
+    坏字节一旦 put 进旧对象，正文原有图不可恢复（2026-08-26 补齐对称防护）。
+    """
+    from app.services import figure_service
+
+    user, drawings = _setup_user_and_project(db_session, registered_user)
+    fake_storage = MagicMock()
+
+    with patch("app.ai.llm_client.get_llm", return_value=_mock_llm_invoke()), \
+         patch("app.services.figure_service.drawio_client.render", return_value=_FAKE_PNG):
+        fig = figure_service.generate_figure(
+            db_session, storage=fake_storage, user_id=user.id,
+            section_id=str(drawings.id), prompt="原图", diagram_type=None, chat_source=None,
+        )
+    old_size = db_session.get(Attachment, fig.attachment_id).size
+    fake_storage.reset_mock()
+
+    # 模拟渲染链路异常：drawio 服务 200 但返回空字节（非 PNG）
+    with patch("app.ai.llm_client.get_llm", return_value=_mock_llm_invoke()), \
+         patch("app.services.figure_service.drawio_client.render", return_value=b""), \
+         pytest.raises(ValidationError):
+        figure_service.regenerate_figure(
+            db_session, storage=fake_storage, user_id=user.id,
+            figure_id=str(fig.id), prompt=None, chat_source=None,
+        )
+
+    # 旧对象未被覆写，元数据不变
+    fake_storage.put.assert_not_called()
+    assert db_session.get(Attachment, fig.attachment_id).size == old_size
+
+
 def test_regenerate_creates_attachment_when_missing(db_session, registered_user):
     """历史遗留（Figure 无 Attachment）时 regenerate 走新建附件。"""
     from app.services import figure_service

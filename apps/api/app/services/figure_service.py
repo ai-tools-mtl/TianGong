@@ -20,7 +20,7 @@ from app.core.exceptions import ConflictError, NotFoundError, ServiceUnavailable
 from app.core.storage import Storage
 from app.models import Attachment, Figure, Section
 from app.services import drawio_client, llm_config_service, section_service
-from app.services.attachment_service import _detect_mime, _ext_for_mime
+from app.services.attachment_service import _detect_mime
 from app.services.llm_log_helper import log_chat_call
 
 # 一次 figure 生成最多渲染的 PNG 大小（防 LLM 产出异常巨大图撑爆存储）
@@ -49,26 +49,34 @@ def _to_figure_detail(fig: Figure) -> dict:
     return out
 
 
+def _validate_rendered_png(png: bytes) -> None:
+    """校验渲染产物是可入库的 PNG（魔数 + 大小上限）。
+
+    新建与覆写两条落库路径必须同一标准：覆写把字节写进正文正在引用的旧对象，
+    异常内容（如渲染服务 200 返回的空文件/错误页）一旦写入，正文原有图即被
+    破坏且不可恢复——校验必须放在 put 之前，两处调用不许只留一处。
+    """
+    if _detect_mime(png) != "image/png":
+        raise ValidationError("渲染产物不是有效 PNG")
+    if len(png) > _MAX_PNG_BYTES:
+        raise ValidationError("生成的附图过大，请简化图结构后重试")
+
+
 def _store_png(
     db: Session, *, storage: Storage, user_id, project_id: str, section_id: str | None,
     png: bytes, name: str,
 ) -> Attachment:
     """校验 + 存 MinIO + 建 Attachment 记录（复用 attachment_service 的魔数校验逻辑）。"""
-    real_mime = _detect_mime(png)
-    if real_mime != "image/png":
-        raise ValidationError("渲染产物不是有效 PNG")
+    _validate_rendered_png(png)
 
-    if len(png) > _MAX_PNG_BYTES:
-        raise ValidationError("生成的附图过大，请简化图结构后重试")
-
-    object_key = f"attachments/{user_id}/{uuid.uuid4()}{_ext_for_mime(real_mime)}"
-    storage.put("personal", object_key, png, real_mime)
+    object_key = f"attachments/{user_id}/{uuid.uuid4()}.png"
+    storage.put("personal", object_key, png, "image/png")
     att = Attachment(
         project_id=uuid.UUID(project_id),
         section_id=uuid.UUID(section_id) if section_id else None,
         filename=name,
         storage_path=object_key,
-        mime_type=real_mime,
+        mime_type="image/png",
         size=len(png),
     )
     db.add(att)
@@ -229,8 +237,9 @@ def regenerate_figure(
         )
         fig.attachment_id = att.id
     else:
-        if len(png) > _MAX_PNG_BYTES:
-            raise ValidationError("生成的附图过大，请简化图结构后重试")
+        # 与 _store_png 同标准：覆写的是正文正在引用的旧对象，坏字节一旦写入
+        # 不可恢复，校验必须在 put 之前（2026-08-26 补上原缺失的魔数检查）
+        _validate_rendered_png(png)
         storage.put("personal", att.storage_path, png, "image/png")
         att.filename = name
         att.size = len(png)
