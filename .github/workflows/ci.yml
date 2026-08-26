@@ -1,0 +1,101 @@
+# CI：后端全量 pytest + 前端 tsc/build。
+#
+# 后端必须配 postgres service container（pgvector/pgvector 镜像——迁移内
+# CREATE EXTENSION vector，普通 postgres 镜像装不了）：startup 的
+# init_checkpointer 在 postgres 不可达时会挂起而非快速失败，没有这个
+# 容器整个测试 job 会卡死到超时（本地 Windows 已踩过，见
+# docs/superpowers/plans/2026-08-25-optimization-hardening-plan.md 批次 1）。
+# 不需要 minio（conftest 永久注入 fake storage）/nli/drawio/embedding（软依赖，全 mock）。
+#
+# 测试用 SQLite 内存库（conftest engine fixture），PG 只为 startup 阶段的
+# 连通性（恢复扫描/checkpointer setup），表不存在没关系——异常均被 startup 捕获。
+#
+# JWT_SECRET/ENCRYPTION_KEY 用占位值：只影响测试内自签 token/自加密，
+# 与生产密钥无关，不是秘密（若未来 CI 需要真密钥，改用 GitHub Secrets）。
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: 后端测试（pytest）
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: tiangong
+          POSTGRES_PASSWORD: tiangong
+          POSTGRES_DB: tiangong_test
+        ports:
+          - 5432:5432
+        # health check 等待 PG 就绪再起测试，避免首个连接竞争
+        options: >-
+          --health-cmd "pg_isready -U tiangong"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+psycopg://tiangong:tiangong@localhost:5432/tiangong_test
+      JWT_SECRET: ci-placeholder-secret
+      ENCRYPTION_KEY: ci-placeholder-encryption-key
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          working-directory: apps/api
+
+      - name: 安装依赖
+        working-directory: apps/api
+        run: uv sync --extra dev
+
+      - name: 跑测试
+        working-directory: apps/api
+        run: uv run pytest -q
+
+  frontend:
+    name: 前端构建（tsc + build）
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        # version 从 apps/web/package.json 的 packageManager 字段读取
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - name: 安装依赖
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile
+
+      - name: 类型检查
+        working-directory: apps/web
+        run: pnpm exec tsc --noEmit
+
+      - name: 构建
+        working-directory: apps/web
+        # NEXT_PUBLIC_API_URL 是 build 期内联的公开值（非秘密），占位即可
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+        run: pnpm build
