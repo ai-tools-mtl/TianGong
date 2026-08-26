@@ -99,3 +99,48 @@ jobs:
         env:
           NEXT_PUBLIC_API_URL: http://localhost:8000
         run: pnpm build
+
+  e2e:
+    name: E2E 冒烟（Playwright）
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        # version 从 apps/web/package.json 的 packageManager 字段读取
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - name: 安装依赖
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile
+
+      - name: 缓存 Playwright 浏览器
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('apps/web/pnpm-lock.yaml') }}
+
+      - name: 安装浏览器
+        working-directory: apps/web
+        run: pnpm exec playwright install --with-deps chromium
+
+      # webServer 自带 pnpm build + start（见 playwright.config.ts），
+      # API 域名指向假主机 e2e-api.test，全部请求被 page.route 拦截，无需后端
+      - name: 跑 E2E
+        working-directory: apps/web
+        run: pnpm e2e
+
+      - name: 上传失败报告
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report/
+          retention-days: 7

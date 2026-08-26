@@ -58,5 +58,9 @@ apps/api/*.db
 # 备份产物（backup.sh 输出，含业务数据，勿提交）
 backups/
 
+# Playwright 产物（E2E 报告/trace，本地生成）
+test-results/
+playwright-report/
+
 # 面试准备手册（本地私有，勿提交）
 /面试准备-天工项目.md
