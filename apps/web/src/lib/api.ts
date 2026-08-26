@@ -660,6 +660,21 @@ export const api = {
   deleteFigure: (figureId: string, force?: boolean) =>
     request<void>(`/figures/${figureId}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
 
+  // ── LLM 余额探测与低额告警（admin）──
+  getLlmBalance: () =>
+    request<import('@/types/api').LLMBalanceState>('/admin/llm-balance'),
+
+  probeLlmBalance: () =>
+    request<import('@/types/api').LLMBalanceStatus>('/admin/llm-balance/probe', {
+      method: 'POST',
+    }),
+
+  setLlmBalanceThreshold: (threshold: number) =>
+    request<{ threshold: number }>('/admin/llm-balance/threshold', {
+      method: 'PUT',
+      body: JSON.stringify({ threshold }),
+    }),
+
   // ── 附图风格预设（admin console）──
   getFigurePresets: () =>
     request<{ presets: Record<string, import('@/types/api').FigurePreset> }>(

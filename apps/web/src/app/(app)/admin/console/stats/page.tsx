@@ -1,6 +1,16 @@
 'use client'
 
 import { useState } from 'react'
+import {
+  CartesianGrid,
+  Legend,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 
 import { PageHeader, PageShell } from '@/components/page-shell'
 import { Button } from '@/components/ui/button'
@@ -24,11 +34,9 @@ import type { LLMStatsByModel, LLMStatsByUser } from '@/types/api'
  * 把阶段 1 主页砍掉的 Section C 填回。结构：
  *   - 7d/30d 切换按钮
  *   - 6 张汇总卡片：总调用 / 成功 / 失败 / 平均耗时 / 输入 tokens / 输出 tokens
+ *   - 按天趋势折线图（优化计划批次 2a：token 用量走势 + 失败数，缺天由后端补零）
  *   - by_model Table：模型维度明细（模型 / 调用 / 失败 / 耗时 / 输入 / 输出）
- *   - by_user Table：用户维度明细（用户 / 调用 / 失败）
- *
- * 相比原 Section C 把 by_model 从 divide-y 列表升级为 Table（更清晰），
- * 新增 by_user Table（原 Section C 里数据有但只展示在 by_model 里）。
+ *   - by_user Table：用户维度明细（用户 / 调用 / 失败 / 输入 / 输出 token——内测期定位「谁在烧钱」）
  */
 export default function ConsoleStatsPage() {
   const [days, setDays] = useState(7)
@@ -92,6 +100,30 @@ export default function ConsoleStatsPage() {
           </div>
         )}
 
+        {/* 按天趋势（token 用量 + 失败数；缺天后端补零，恒有 days 条） */}
+        <div
+          className="rounded-2xl border border-black/[0.07] bg-card p-4 dark:border-white/10"
+          style={{ boxShadow: 'var(--shadow-card)' }}
+        >
+          <p className="mb-2 text-[13px] font-semibold">每日趋势</p>
+          {isLoading || !stats ? (
+            <Skeleton className="h-[240px]" />
+          ) : (
+            <ResponsiveContainer width="100%" height={240}>
+              <LineChart data={stats.by_day} margin={{ top: 5, right: 10, bottom: 5, left: -10 }}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-black/10 dark:stroke-white/10" />
+                <XAxis dataKey="date" tick={{ fontSize: 11 }} tickFormatter={(d: string) => d.slice(5)} />
+                <YAxis tick={{ fontSize: 11 }} />
+                <Tooltip />
+                <Legend />
+                <Line type="monotone" dataKey="prompt_tokens" name="输入 tokens" stroke="#2563eb" dot={false} strokeWidth={2} />
+                <Line type="monotone" dataKey="completion_tokens" name="输出 tokens" stroke="#16a34a" dot={false} strokeWidth={2} />
+                <Line type="monotone" dataKey="failed" name="失败次数" stroke="#dc2626" dot={false} strokeWidth={2} />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
         {/* 明细：统一面板 + Tabs 切换「按模型 / 按用户」 */}
         <div
           className="overflow-hidden rounded-2xl border border-black/[0.07] bg-card dark:border-white/10"
@@ -152,6 +184,8 @@ export default function ConsoleStatsPage() {
                       <TableHead>用户</TableHead>
                       <TableHead className="text-right">调用</TableHead>
                       <TableHead className="text-right">失败</TableHead>
+                      <TableHead className="text-right">输入 tokens</TableHead>
+                      <TableHead className="text-right">输出 tokens</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -161,6 +195,12 @@ export default function ConsoleStatsPage() {
                         <TableCell className="text-right tabular-nums">{u.calls}</TableCell>
                         <TableCell className="text-right tabular-nums text-destructive">
                           {u.failed}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatTokens(u.prompt_tokens)}
+                        </TableCell>
+                        <TableCell className="text-right tabular-nums">
+                          {formatTokens(u.completion_tokens)}
                         </TableCell>
                       </TableRow>
                     ))}

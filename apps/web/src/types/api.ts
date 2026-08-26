@@ -370,6 +370,16 @@ export interface LLMStatsByUser {
   calls: number
   success: number
   failed: number
+  prompt_tokens: number
+  completion_tokens: number
+}
+
+export interface LLMStatsByDay {
+  date: string // YYYY-MM-DD（UTC 日界）
+  calls: number
+  failed: number
+  prompt_tokens: number
+  completion_tokens: number
 }
 
 export interface LLMStats {
@@ -382,6 +392,26 @@ export interface LLMStats {
   total_completion_tokens: number
   by_model: LLMStatsByModel[]
   by_user: LLMStatsByUser[]
+  by_day: LLMStatsByDay[]
+}
+
+// ── LLM 余额探测与低额告警（优化计划批次 2b）──
+
+export interface LLMBalanceStatus {
+  supported: boolean
+  status: 'ok' | 'low' | 'error' | 'unsupported' | 'unconfigured'
+  provider: string
+  amount: number | null
+  currency: string
+  threshold: number | null
+  is_low: boolean
+  probed_at: string
+  error: string | null
+}
+
+export interface LLMBalanceState {
+  threshold: number
+  last: LLMBalanceStatus | null
 }
 
 // ── 审计日志（plan 13）──

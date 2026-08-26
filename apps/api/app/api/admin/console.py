@@ -101,6 +101,49 @@ def get_user_stats_endpoint(
     return stats_service.get_user_stats(db)
 
 
+# ── LLM 余额探测与低额告警（优化计划批次 2b）──
+
+
+class BalanceThresholdBody(BaseModel):
+    """低额阈值（CNY）。"""
+    threshold: float = Field(..., ge=0)
+
+
+@router.get("/admin/llm-balance")
+def get_llm_balance(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """余额告警状态：当前阈值 + 最近一次探测结果（无则 last=None）。"""
+    from app.services import llm_balance_service
+    return {
+        "threshold": llm_balance_service.get_threshold(db),
+        "last": llm_balance_service.get_last_status(db),
+    }
+
+
+@router.post("/admin/llm-balance/probe")
+def probe_llm_balance(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """立即探测全局 chat 账户余额（仅 DeepSeek 支持；结果落库供横幅轮询）。"""
+    from app.services import llm_balance_service
+    return llm_balance_service.probe_balance(db)
+
+
+@router.put("/admin/llm-balance/threshold")
+def set_llm_balance_threshold(
+    payload: BalanceThresholdBody,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """设置低额告警阈值（CNY）。"""
+    from app.services import llm_balance_service
+    llm_balance_service.set_threshold(db, threshold=payload.threshold)
+    return {"threshold": payload.threshold}
+
+
 # ── 审计日志列表（设计 8.2⑤）──
 
 @router.get("/admin/audit-logs")

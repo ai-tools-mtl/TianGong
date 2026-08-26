@@ -70,6 +70,8 @@ export const queryKeys = {
     mcpServers: ['admin', 'mcp-servers'] as const,
     mcpEnabled: ['admin', 'mcp-enabled'] as const,
     llmStats: (days: number) => ['admin', 'llm-stats', days] as const,
+    // LLM 余额告警（探测结果 + 阈值）
+    llmBalance: ['admin', 'llm-balance'] as const,
     auditLogs: (page: number, size: number) =>
       ['admin', 'audit-logs', page, size] as const,
     // 内置模板管理（refactor/admin-ia-phase3 切片 B）

@@ -26,7 +26,9 @@ def get_llm_stats(db: Session, *, days: int = 7) -> dict:
       "total_completion_tokens": int,   # 断链 C3：token_completion 之和（None 计 0）
       "by_model": [{"model","calls","success","failed","avg_duration_ms",
                     "prompt_tokens","completion_tokens"}],
-      "by_user": [{"user_id","email","calls","success","failed"}],
+      "by_user": [{"user_id","email","calls","success","failed",
+                   "prompt_tokens","completion_tokens"}],
+      "by_day": [{"date","calls","failed","prompt_tokens","completion_tokens"}],  # 升序、缺天补零
     }
     """
     since = datetime.now(timezone.utc) - timedelta(days=days)
@@ -86,6 +88,8 @@ def get_llm_stats(db: Session, *, days: int = 7) -> dict:
             func.count(LLMCallLog.id).label("calls"),
             func.sum(case((LLMCallLog.status == "success", 1), else_=0)).label("success"),
             func.sum(case((LLMCallLog.status != "success", 1), else_=0)).label("failed"),
+            func.sum(func.coalesce(LLMCallLog.token_prompt, 0)).label("prompt_tokens"),
+            func.sum(func.coalesce(LLMCallLog.token_completion, 0)).label("completion_tokens"),
         )
         .select_from(LLMCallLog)
         .outerjoin(User, User.id == LLMCallLog.user_id)
@@ -100,9 +104,40 @@ def get_llm_stats(db: Session, *, days: int = 7) -> dict:
             "calls": int(r.calls or 0),
             "success": int(r.success or 0),
             "failed": int(r.failed or 0),
+            "prompt_tokens": int(r.prompt_tokens or 0),
+            "completion_tokens": int(r.completion_tokens or 0),
         }
         for r in user_rows
     ]
+
+    # 按天聚合（趋势图用）。D1：func.date 双方言通用（SQLite date() / PG date(timestamptz)），
+    # 不用 date_trunc（PG 专有）。日界按 UTC——与 UTC+8 有几小时偏移，趋势用途可接受。
+    day_rows = db.execute(
+        select(
+            func.date(LLMCallLog.created_at).label("day"),
+            func.count(LLMCallLog.id).label("calls"),
+            func.sum(case((LLMCallLog.status != "success", 1), else_=0)).label("failed"),
+            func.sum(func.coalesce(LLMCallLog.token_prompt, 0)).label("prompt_tokens"),
+            func.sum(func.coalesce(LLMCallLog.token_completion, 0)).label("completion_tokens"),
+        )
+        .where(LLMCallLog.created_at >= since)
+        .group_by(func.date(LLMCallLog.created_at))
+        .order_by(func.date(LLMCallLog.created_at))
+    ).all()
+    # 归一化 key：PG 返回 datetime.date，SQLite 返回 "YYYY-MM-DD" 字符串，str() 后一致
+    day_map = {str(r.day): r for r in day_rows}
+    today = datetime.now(timezone.utc).date()
+    by_day = []
+    for offset in range(days - 1, -1, -1):
+        key = (today - timedelta(days=offset)).isoformat()
+        r = day_map.get(key)
+        by_day.append({
+            "date": key,
+            "calls": int(r.calls or 0) if r else 0,
+            "failed": int(r.failed or 0) if r else 0,
+            "prompt_tokens": int(r.prompt_tokens or 0) if r else 0,
+            "completion_tokens": int(r.completion_tokens or 0) if r else 0,
+        })
 
     return {
         "days": days,
@@ -114,6 +149,7 @@ def get_llm_stats(db: Session, *, days: int = 7) -> dict:
         "total_completion_tokens": total_completion_tokens,
         "by_model": by_model,
         "by_user": by_user,
+        "by_day": by_day,
     }
 
 
