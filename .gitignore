@@ -55,5 +55,8 @@ apps/api/*.db
 # 生产配置(含密钥,勿提交)
 .env.production
 
+# 备份产物（backup.sh 输出，含业务数据，勿提交）
+backups/
+
 # 面试准备手册（本地私有，勿提交）
 /面试准备-天工项目.md

@@ -138,18 +138,26 @@ docker compose down
 docker compose down -v
 ```
 
-## 备份
+## 备份与恢复
 
 天工业务数据分布在两个卷:`pgdata`(数据库 + pgvector)和 `miniodata`(上传文件)。其余卷(`embdata` / `rerankdata` 为模型运行缓存,`firecrawlpgdata` 为 firecrawl 内部任务队列)不含业务数据,可不备份。
 
-```bash
-# 备份数据库
-docker compose exec postgres pg_dump -U tiangong tiangong > backup_$(date +%F).sql
+一键脚本(仓库根 `scripts/`,2026-08-26 已在本机完成一轮完整的「备份 → 恢复 → 数据比对」演练):
 
-# 备份 MinIO 卷(停服后拷贝,或用 mc 客户端在线同步)
-docker run --rm -v tiangong_miniodata:/data -v $(pwd):/backup alpine \
-  tar czf /backup/miniodata_$(date +%F).tar.gz -C /data .
+```bash
+# 备份:db.sql.gz + minio-data.tgz → ./backups/<时间戳>/,默认保留最近 7 份
+./scripts/backup.sh
+# 可配:BACKUP_ROOT=/var/backups/tiangong KEEP=14 ./scripts/backup.sh
+
+# 恢复(破坏性:DROP 重建库 + 清空 minio 卷;不带 --yes 只做预检)
+./scripts/restore.sh ./backups/2026-08-26_09-24-36 --yes
 ```
+
+脚本说明:
+- 备份在线执行不停服(pg_dump + 卷 tar);恢复会 `docker compose stop api` 防恢复期间写入。
+- MinIO 卷经 `docker cp` 进出临时容器拷贝——**不要**改成 `-v $(pwd):/backup` bind mount,Git Bash(MSYS) 的路径自动转换会让挂载静默失效(实测踩坑)。
+- 定时化:宿主 cron 每日 03:00 执行,例:`0 3 * * * cd /opt/TianGong && ./scripts/backup.sh >> /var/log/tiangong-backup.log 2>&1`
+- 恢复后验证:登录一次、打开任一项目确认章节与附图完整(演练时比对了 users/attachments 行数与附件对象实体)。
 
 ## 后续:加 HTTPS(可选)
 
