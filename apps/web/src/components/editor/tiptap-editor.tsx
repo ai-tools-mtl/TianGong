@@ -11,8 +11,15 @@ import { ImageLightbox } from './image-lightbox'
 import { SelectionBubbleMenu } from './selection-bubble-menu'
 import { Toolbar } from './toolbar'
 
+/** 附图说明清单块的定位标记（insertDrawingList 生成/替换的块首行）。 */
+const DRAWING_LIST_MARKER = '【附图清单（自动生成）】'
+
 export interface TiptapEditorRef {
   insertImage: (src: string, alt: string) => void
+  /** 插图带图注（图号系统 V1：图片 + 紧随的「图N：…」段落） */
+  insertImageWithCaption: (src: string, alt: string, caption: string) => void
+  /** 插入/替换附图说明清单块（标记段落 + 图N：行；重复点击替换旧块） */
+  insertDrawingList: (lines: string[]) => void
   getJSON: () => object
   // 新增（选区重写气泡菜单用，spec §3.1）
   getSelectionText: () => string
@@ -54,6 +61,53 @@ export const TiptapEditor = forwardRef<TiptapEditorRef, TiptapEditorProps>(
     useImperativeHandle(ref, () => ({
       insertImage: (src: string, alt: string) => {
         editor?.chain().focus().setImage({ src, alt }).run()
+      },
+      insertImageWithCaption: (src: string, alt: string, caption: string) => {
+        editor
+          ?.chain()
+          .focus()
+          .setImage({ src, alt })
+          .insertContent({
+            type: 'paragraph',
+            content: [{ type: 'text', text: caption }],
+          })
+          .run()
+      },
+      insertDrawingList: (lines: string[]) => {
+        if (!editor || lines.length === 0) return
+        // 找既有清单块范围：标记段落 + 其后连续的「图N：」段落（图号系统 V1，
+        // D3 按钮化——用户手改过的其他段落不动，只替换系统生成的块）
+        const paragraphs = [
+          { type: 'paragraph', content: [{ type: 'text', text: DRAWING_LIST_MARKER }] },
+          ...lines.map((l) => ({ type: 'paragraph', content: [{ type: 'text', text: l }] })),
+        ]
+        let inBlock = false
+        let from = 0
+        let to = 0
+        editor.state.doc.forEach((node, offset) => {
+          const text = node.textContent?.trim() ?? ''
+          if (!inBlock && text === DRAWING_LIST_MARKER) {
+            inBlock = true
+            from = offset
+            to = offset + node.nodeSize
+          } else if (inBlock) {
+            if (/^图\d+[:：]/.test(text)) {
+              to = offset + node.nodeSize
+            } else {
+              inBlock = false // 块结束（非清单段落截断）
+            }
+          }
+        })
+        if (to > from) {
+          editor.chain().focus().insertContentAt({ from, to }, paragraphs).run()
+        } else {
+          // 首次生成：追加到文档末尾
+          editor
+            .chain()
+            .focus()
+            .insertContentAt(editor.state.doc.content.size, paragraphs)
+            .run()
+        }
       },
       getJSON: () => editor?.getJSON() ?? {},
       getSelectionText: () => {

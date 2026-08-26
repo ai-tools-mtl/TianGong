@@ -340,7 +340,7 @@ def test_find_body_references_scans_sections(db_session, registered_user):
 
 
 def test_delete_figure_referenced_conflicts_then_force(db_session, registered_user):
-    """正文引用防护：有引用默认 409（消息含章节名），force=True 才真正删除。"""
+    """正文引用防护：有引用默认 409（消息含章节名+图号），force=True 才真正删除。"""
     import pytest
 
     from app.core.exceptions import ConflictError
@@ -357,7 +357,7 @@ def test_delete_figure_referenced_conflicts_then_force(db_session, registered_us
         )
     _insert_body_reference(db_session, drawings, fig.attachment_id)
 
-    # 默认：409 + 消息含引用章节标题
+    # 默认：409 + 消息含引用章节标题与图号（图号系统 V1）
     with pytest.raises(ConflictError, match=drawings.title):
         figure_service.delete_figure(
             db_session, storage=fake_storage, user_id=user.id, figure_id=str(fig.id),
@@ -369,3 +369,83 @@ def test_delete_figure_referenced_conflicts_then_force(db_session, registered_us
         db_session, storage=fake_storage, user_id=user.id, figure_id=str(fig.id), force=True,
     )
     assert db_session.get(Figure, fig.id) is None
+
+
+# ── 图号系统 V1（2026-08-26：项目内连续编号 + 删除重排）──
+
+
+def _gen(db_session, storage, user, drawings, prompt: str) -> Figure:
+    from app.services import figure_service
+    with patch("app.ai.llm_client.get_llm", return_value=_mock_llm_invoke()), \
+         patch("app.services.figure_service.drawio_client.render", return_value=_FAKE_PNG):
+        return figure_service.generate_figure(
+            db_session, storage=storage, user_id=user.id,
+            section_id=str(drawings.id), prompt=prompt, diagram_type=None, chat_source=None,
+        )
+
+
+def test_generate_assigns_sequential_numbers(db_session, registered_user):
+    """图号分配：项目内按生成顺序 1、2、3 连续；API 出参带 number。"""
+    from app.services import figure_service
+
+    user, drawings = _setup_user_and_project(db_session, registered_user)
+    fake_storage = MagicMock()
+
+    f1 = _gen(db_session, fake_storage, user, drawings, "第一张")
+    f2 = _gen(db_session, fake_storage, user, drawings, "第二张")
+    f3 = _gen(db_session, fake_storage, user, drawings, "第三张")
+    assert (f1.number, f2.number, f3.number) == (1, 2, 3)
+    assert figure_service._to_figure_out(f2, project_id=str(f2.project_id))["number"] == 2
+
+
+def test_delete_renumbers_no_gaps(db_session, registered_user):
+    """删除重排：删中间图后后续图号前移，保持 1..n 无空洞；删空后再生成从 1 起。"""
+    from sqlalchemy import select as sa_select
+
+    from app.services import figure_service
+
+    user, drawings = _setup_user_and_project(db_session, registered_user)
+    fake_storage = MagicMock()
+
+    f1 = _gen(db_session, fake_storage, user, drawings, "一")
+    f2 = _gen(db_session, fake_storage, user, drawings, "二")
+    f3 = _gen(db_session, fake_storage, user, drawings, "三")
+
+    # 删除图2（无正文引用，无需 force）
+    figure_service.delete_figure(
+        db_session, storage=fake_storage, user_id=user.id, figure_id=str(f2.id),
+    )
+    nums = list(db_session.scalars(
+        sa_select(Figure.number).where(Figure.project_id == f1.project_id).order_by(Figure.number)
+    ))
+    assert nums == [1, 2]  # 原图1 不动，原图3 前移为 2
+
+    # 删空后再生成：图号从 1 重新开始
+    figure_service.delete_figure(db_session, storage=fake_storage, user_id=user.id, figure_id=str(f1.id))
+    figure_service.delete_figure(db_session, storage=fake_storage, user_id=user.id, figure_id=str(f3.id))
+    f4 = _gen(db_session, fake_storage, user, drawings, "新一轮")
+    assert f4.number == 1
+
+
+def test_delete_renumber_boundary_first_and_last(db_session, registered_user):
+    """连续删除幂等：删首/删尾后编号仍为 1..n（两阶段重排的边界）。"""
+    from sqlalchemy import select as sa_select
+
+    from app.services import figure_service
+
+    user, drawings = _setup_user_and_project(db_session, registered_user)
+    fake_storage = MagicMock()
+    figs = [_gen(db_session, fake_storage, user, drawings, f"图{i}") for i in range(1, 4)]
+
+    def _nums():
+        return list(db_session.scalars(
+            sa_select(Figure.number).where(Figure.project_id == figs[0].project_id)
+            .order_by(Figure.number)
+        ))
+
+    # 删首
+    figure_service.delete_figure(db_session, storage=fake_storage, user_id=user.id, figure_id=str(figs[0].id))
+    assert _nums() == [1, 2]
+    # 删尾
+    figure_service.delete_figure(db_session, storage=fake_storage, user_id=user.id, figure_id=str(figs[2].id))
+    assert _nums() == [1]

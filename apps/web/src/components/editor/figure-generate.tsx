@@ -1,6 +1,6 @@
 'use client'
 
-import { Loader2, Sparkles, RefreshCw, Trash2, Check, Plus, X } from 'lucide-react'
+import { Loader2, Sparkles, RefreshCw, Trash2, Check, Plus, X, ListOrdered } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
@@ -17,8 +17,10 @@ import { ImageLightbox } from './image-lightbox'
 interface FigureGenerateProps {
   sectionId: string
   projectId: string
-  /** 生成确认后把图片插入编辑器 */
-  onInsertImage: (src: string, alt: string) => void
+  /** 生成确认后把图片插入编辑器（图号系统 V1：图片 + 「图N：…」图注段落） */
+  onInsertImageWithCaption: (src: string, alt: string, caption: string) => void
+  /** 生成/替换附图说明清单块（图号系统 V1：重复点击替换旧块） */
+  onInsertDrawingList: (lines: string[]) => void
 }
 
 const DIAGRAM_TYPES = [
@@ -78,6 +80,10 @@ function FigureThumb({
       ) : (
         <Loader2 className="absolute inset-0 m-auto size-4 animate-spin text-muted-foreground" />
       )}
+      {/* 图号徽标（项目内连续编号，删除后服务端重排） */}
+      <span className="absolute left-1 top-1 rounded bg-black/60 px-1 text-[10px] font-medium text-white">
+        图{figure.number}
+      </span>
     </button>
   )
 }
@@ -86,7 +92,7 @@ function FigureThumb({
  * AI 生成附图面板（多图）。后端每次生成都是新插一条 Figure（无数量限制），
  * 本面板维护该章节的全部附图：横向缩略图条切换选中图，逐张插入/重生成/删除。
  */
-export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGenerateProps) {
+export function FigureGenerate({ sectionId, projectId, onInsertImageWithCaption, onInsertDrawingList }: FigureGenerateProps) {
   const qc = useQueryClient()
   const [figures, setFigures] = useState<Figure[]>([]) // 创建时间倒序（同后端 list）
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -172,9 +178,9 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
 
   async function handleRegenerate() {
     if (!selected) return
-    // 后端 regenerate 原地覆写同一 attachment（attachment_id 不变）——已插入
+    // 后端 regenerate 原地覆写同一 attachment（attachment_id/图号均不变）——已插入
     // 正文的图会自动同步为新图，不存在失效风险，确认即可
-    if (!window.confirm('重新生成将替换这张图的内容；若已插入正文，正文中的图会同步更新为新图。确定继续？')) {
+    if (!window.confirm(`重新生成将替换图${selected.number}的内容（编号不变）；若已插入正文，正文中的图会同步更新为新图。确定继续？`)) {
       return
     }
     // source 为 null 走后端 fallback 链，不前端硬拦（同 ai-chat-panel）
@@ -206,11 +212,12 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
   async function handleDelete() {
     if (!selected) return
     // 两级确认：① 前端缓存快速预检（best-effort，可能滞后）；② 服务端权威探测
-    // （409 带引用章节清单——缓存没看到的引用在此拦下）→ 再确认后带 force 强删
+    // （409 带引用章节清单——缓存没看到的引用在此拦下）→ 再确认后带 force 强删。
+    // 删除后服务端重排图号（后续图前移），正文「图K」文字引用需人工核对（V1 原则不自动改写）
     const inBody = referencedInBody(selected.attachment_id)
     const msg = inBody
-      ? '检测到该图已插入正文，删除后不可恢复，正文中的这张图将失效。确定删除？'
-      : '删除后不可恢复。若这张图已插入正文，正文中的图片会失效，确定删除？'
+      ? `检测到图${selected.number}已插入正文，删除后不可恢复，正文中的这张图将失效。确定删除？`
+      : `删除图${selected.number}后不可恢复，后续图号将前移（正文中「图K」文字引用需手动核对）。确定删除？`
     if (!window.confirm(msg)) {
       return
     }
@@ -240,8 +247,20 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
 
   function handleInsert() {
     if (!selected?.attachment_id) return
-    onInsertImage(api.attachmentUrl(projectId, selected.attachment_id), selected.prompt)
-    toast.success('已插入文档')
+    onInsertImageWithCaption(
+      api.attachmentUrl(projectId, selected.attachment_id),
+      selected.prompt,
+      `图${selected.number}：${selected.prompt}`,
+    )
+    toast.success('已插入文档（含图注）')
+  }
+
+  /** 附图说明清单（D3 按钮化）：按当前编号生成「图N：描述」清单块插入编辑器，
+   * 重复点击替换旧块；插入后用户可自由编辑，系统不再自动维护。 */
+  function handleDrawingList() {
+    const sorted = [...figures].sort((a, b) => a.number - b.number)
+    onInsertDrawingList(sorted.map((f) => `图${f.number}：${f.prompt}`))
+    toast.success('已生成附图说明清单（文末，可自由编辑）')
   }
 
   async function handleCaption() {
@@ -380,12 +399,16 @@ export function FigureGenerate({ sectionId, projectId, onInsertImage }: FigureGe
             </div>
           )}
           <p className="line-clamp-2 text-[11px] text-muted-foreground" title={selected.prompt}>
-            描述:{selected.prompt}
+            图{selected.number} · 描述:{selected.prompt}
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" className="h-8 gap-1.5" onClick={handleInsert}>
               <Check className="size-3.5" />
               插入文档
+            </Button>
+            <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={handleDrawingList} title="按当前编号在文末生成「图N：描述」清单（重复点击替换旧块）">
+              <ListOrdered className="size-3.5" />
+              附图清单
             </Button>
             <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={handleCaption} disabled={captioning}>
               {captioning ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}

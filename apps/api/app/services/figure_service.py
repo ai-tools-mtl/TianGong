@@ -13,7 +13,7 @@ import json
 import time
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ConflictError, NotFoundError, ServiceUnavailableError, ValidationError
@@ -37,6 +37,7 @@ def _to_figure_out(fig: Figure, *, project_id: str) -> dict:
         "prompt": fig.prompt,
         "diagram_type": fig.diagram_type,
         "style": fig.style,
+        "number": fig.number,
         "created_at": fig.created_at.isoformat(),
         "updated_at": fig.updated_at.isoformat(),
     }
@@ -153,11 +154,42 @@ def generate_figure(
         drawio_xml=drawio_xml,
         diagram_type=diagram_type,
         style=preset["id"],
+        number=_next_figure_number(db, section.project_id),
     )
     db.add(fig)
     db.commit()
     db.refresh(fig)
     return fig
+
+
+def _next_figure_number(db: Session, project_id) -> int:
+    """分配项目内下一个图号（max+1）。并发撞唯一约束时 IntegrityError 上抛（用户重试即可）。"""
+    current_max = db.scalar(
+        select(func.max(Figure.number)).where(Figure.project_id == project_id)
+    )
+    return (current_max or 0) + 1
+
+
+def _renumber_figures(db: Session, project_id) -> None:
+    """删除图后重排：按现 number 升序压成 1..n（无空洞，《专利审查指南》顺序编号要求）。
+
+    压缩方向保序——只把被删图之后的图号前移，之前的图号不动，正文「图K」引用的
+    变化面最小。两阶段落位（先挪唯一负数槽，再压回 1..n）：uq(project_id, number)
+    下逐行直改会有瞬态撞唯一约束的风险（UPDATE 执行顺序不保证），负数槽与正数
+    目标全程不相交，任何语句顺序都安全。调用方在同一事务内 commit。
+    """
+    figs = list(db.scalars(
+        select(Figure).where(Figure.project_id == project_id).order_by(Figure.number)
+    ))
+    if not figs:
+        return
+    for i, fig in enumerate(figs):
+        if fig.number != i + 1:
+            fig.number = -(i + 1)
+    db.flush()
+    for i, fig in enumerate(figs):
+        if fig.number < 0:
+            fig.number = i + 1
 
 
 def find_body_references(db: Session, *, project_id, attachment_id) -> list[dict]:
@@ -298,7 +330,7 @@ def delete_figure(db: Session, *, storage: Storage, user_id, figure_id: str,
         if refs:
             titles = "、".join(f"「{r['section_title']}」" for r in refs)
             raise ConflictError(
-                f"检测到该图已插入正文章节{titles}，删除后正文中的这张图将失效。"
+                f"检测到图{fig.number}已插入正文章节{titles}，删除后正文中的这张图将失效。"
                 "确定要强制删除吗？"
             )
     if fig.attachment_id:
@@ -310,4 +342,8 @@ def delete_figure(db: Session, *, storage: Storage, user_id, figure_id: str,
                 pass
             db.delete(att)
     db.delete(fig)
+    db.flush()  # DELETE 先落库（autoflush=False 下 SELECT 看不到未 flush 的删除）
+    # 同事务重排：删除后图号前移保持 1..n 连续（与删除原子生效）。
+    # 正文的「图K」文字引用不自动改写（V1 原则：编号自动管、自由文本人工核）。
+    _renumber_figures(db, fig.project_id)
     db.commit()

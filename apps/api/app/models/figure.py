@@ -1,6 +1,6 @@
 import uuid
 
-from sqlalchemy import ForeignKey, String, Text
+from sqlalchemy import ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, IdMixin, TimestampMixin
@@ -14,6 +14,10 @@ class Figure(Base, IdMixin, TimestampMixin):
     支持「重新生成」「导出回 draw.io 编辑」。
     """
     __tablename__ = "figures"
+    __table_args__ = (
+        # 图号连续性由服务端保证（删除后重排无空洞）；唯一约束兜底并发分配
+        UniqueConstraint("project_id", "number", name="uq_figures_project_number"),
+    )
 
     project_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="CASCADE"), index=True
@@ -29,3 +33,6 @@ class Figure(Base, IdMixin, TimestampMixin):
     drawio_xml: Mapped[str] = mapped_column(Text)  # 可编辑源文件
     diagram_type: Mapped[str | None] = mapped_column(String(50), nullable=True)  # flowchart/architecture/...
     style: Mapped[str] = mapped_column(String(30), default="patent-bw")  # patent-bw/clean-color/technical
+    # 项目内连续图号（1 起）。《专利审查指南》要求图按顺序编号——删除图后服务端
+    # 同事务重排保持无空洞；regenerate 原地覆写不动编号（2026-08-26 图号系统 V1）。
+    number: Mapped[int] = mapped_column(Integer, default=1)

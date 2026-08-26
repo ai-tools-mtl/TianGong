@@ -236,6 +236,7 @@ export interface Figure {
   prompt: string
   diagram_type: string | null
   style: string  // patent-bw / clean-color / technical
+  number: number // 项目内连续图号（删除后服务端重排）
   created_at: string
   updated_at: string
 }

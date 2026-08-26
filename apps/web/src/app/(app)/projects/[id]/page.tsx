@@ -597,8 +597,11 @@ export default function ProjectDetailPage() {
                   <FigureGenerate
                     sectionId={current.id}
                     projectId={projectId}
-                    onInsertImage={(src, alt) =>
-                      editorRefs.current[current.id]?.insertImage(src, alt)
+                    onInsertImageWithCaption={(src, alt, caption) =>
+                      editorRefs.current[current.id]?.insertImageWithCaption(src, alt, caption)
+                    }
+                    onInsertDrawingList={(lines) =>
+                      editorRefs.current[current.id]?.insertDrawingList(lines)
                     }
                   />
                 </div>
@@ -645,8 +648,11 @@ export default function ProjectDetailPage() {
                         <FigureGenerate
                           sectionId={s.id}
                           projectId={projectId}
-                          onInsertImage={(src, alt) =>
-                            editorRefs.current[s.id]?.insertImage(src, alt)
+                          onInsertImageWithCaption={(src, alt, caption) =>
+                            editorRefs.current[s.id]?.insertImageWithCaption(src, alt, caption)
+                          }
+                          onInsertDrawingList={(lines) =>
+                            editorRefs.current[s.id]?.insertDrawingList(lines)
                           }
                         />
                       </>
