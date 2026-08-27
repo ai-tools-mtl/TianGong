@@ -75,26 +75,32 @@ export const TiptapEditor = forwardRef<TiptapEditorRef, TiptapEditorProps>(
       },
       insertDrawingList: (lines: string[]) => {
         if (!editor || lines.length === 0) return
-        // 找既有清单块范围：标记段落 + 其后连续的「图N：」段落（图号系统 V1，
-        // D3 按钮化——用户手改过的其他段落不动，只替换系统生成的块）
+        // 找既有清单块范围：标记段落 + 其后**从 图1 起严格连续递增**的「图N：」段落
+        // （图号系统 V1，D3 按钮化——用户手改过的其他段落不动，只替换系统生成的块）。
+        // 系统生成的块恒为 1..n 连续（服务端删除重排保证无空洞），故以连续编号锚定
+        // 块边界；用户手写的零散「图K」段落只要不恰好接续编号就不会被吞进替换范围。
         const paragraphs = [
           { type: 'paragraph', content: [{ type: 'text', text: DRAWING_LIST_MARKER }] },
           ...lines.map((l) => ({ type: 'paragraph', content: [{ type: 'text', text: l }] })),
         ]
         let inBlock = false
+        let expectedNum = 1
         let from = 0
         let to = 0
         editor.state.doc.forEach((node, offset) => {
           const text = node.textContent?.trim() ?? ''
           if (!inBlock && text === DRAWING_LIST_MARKER) {
             inBlock = true
+            expectedNum = 1
             from = offset
             to = offset + node.nodeSize
           } else if (inBlock) {
-            if (/^图\d+[:：]/.test(text)) {
+            const m = /^图(\d+)[:：]/.exec(text)
+            if (m && Number(m[1]) === expectedNum) {
               to = offset + node.nodeSize
+              expectedNum += 1
             } else {
-              inBlock = false // 块结束（非清单段落截断）
+              inBlock = false // 块结束（编号断档或非清单段落截断）
             }
           }
         })
