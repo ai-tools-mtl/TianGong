@@ -74,6 +74,11 @@ jobs:
         working-directory: apps/api
         run: uv run python -m scripts.gen_llm_usage --check
 
+      # 借鉴机制批次 G：Agent Notes 骨架防腐化（极简 lint，引导而非强制）。
+      - name: Agent Notes 骨架校验
+        working-directory: apps/api
+        run: uv run python -m scripts.lint_notes
+
   frontend:
     name: 前端构建（tsc + build）
     runs-on: ubuntu-latest

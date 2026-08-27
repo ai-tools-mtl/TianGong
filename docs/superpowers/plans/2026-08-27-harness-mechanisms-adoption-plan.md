@@ -37,7 +37,7 @@
 | ~~D~~ ✅ | ~~SSE 断线自动接续~~ 已完成（错误三分类+单次自动 resume+二次降级手动；实施偏差两处：① chat 流首新增 start 锚点事件——原计划「后端零协议变更」做不到，正常流断线时前端手里没有任何消息 id，与其跨两个未知 id 做服务端查询猜测锚点，不如加一个旧消费方自动忽略的首事件；② E2E 发现 Playwright route.fulfill **缓冲整个响应体**、error 的流会让整条请求一起失败，改用本地真实 HTTP 源 + `socket.destroy()` 才能逐字节复现网断） | 1 天 | 可靠性 | DeerFlow StreamBridge/join |
 | ~~E~~ ✅ | ~~doctor 环境体检 + 子进程 env 脱敏守卫~~ 已完成（六项检查四级标注；dev 全绿 + NLI 停机演练确认 fail-open 不影响退出码；GOTCHAS E15 预立 sanitize_env 规矩）| 1 天 | 运维 | DeerFlow make doctor / env_policy |
 | ~~F~~ 🟡 | ~~eval 基线真跑首建 + 结构校验加固~~ **代码侧已完成**（_validate_dimension_payload 严格校验替代静默认认分 + 基线 fail-fast + real_llm 标记层默认排除自跳过）；**剩余动作是用户授权项**：`python -m app.eval.review_baseline` 真跑首建（花 token）+ 人工确认分数后提交基线文件 | 0.5 天+人工 | 质量纵深 | dsh 测试政策 |
-| G | Agent Notes 决策记录机制 | 0.5 天 | 流程纪律 | dsh Agent Notes |
+| ~~G~~ ✅ | ~~Agent Notes 决策记录机制~~ 已完成（三态目录+四段骨架 lint 进 CI；首篇示范=D1 取舍；AGENTS.md 补引导与分工约定）| 0.5 天 | 流程纪律 | dsh Agent Notes |
 | H | AI 输出反馈采集（👍/👎+归因标签） | 0.5-1 天 | 产品纵深 | DeerFlow feedback 表 |
 
 ---

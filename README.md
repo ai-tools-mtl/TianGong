@@ -230,6 +230,7 @@ docker compose --env-file .env.production --profile full up -d --build
 | 借鉴机制批次 D：SSE 断线自动接续（2026-08-27） | ✅ 完成 | 错误三分类（主动停/业务错/网络断开 `StreamDisconnectedError`）；chat 流首新增 `start` 锚点事件（三元组 id，加性协议），断线后面板凭锚点**单次自动**走既有 resume 续跑，二次断开降级手动「继续」；`streamAssistantGenerate` 独立解析器收编进 `_consumeSSE`；E2E 用本地真源 + `socket.destroy()` 模拟真断流（Playwright fulfill 会缓冲响应体、无法模拟半途断开）|
 | 借鉴机制批次 E：doctor 环境体检 + env 脱敏守卫（2026-08-27） | ✅ 完成 | `python -m scripts.doctor`：postgres+alembic 一致性/minio 写删探针【硬】、drawio【fail-closed】、NLI【fail-open】、LLM 配置与容量【信息/软】，--json 供部署文档回写，TIANGONG_TESTING 守卫；dev 环境全绿 + NLI 停机负向演练分级语义正确；`sanitize_env()` 密钥保险丝 + GOTCHAS E15 立规矩 |
 | 借鉴机制批次 F：eval 加固 + real_llm 冒烟层（2026-08-27） | 🟡 代码侧完成 | `_validate_dimension_payload` schema 校验：字段缺失/非数值/越界一律抛错计入失败（杜绝旧 `score` 缺省静默 50 分混入基线）；基线流程 fail-fast；`real_llm` pytest 标记层（默认 addopts 排除，`pytest -m real_llm` 显式运行，无全局 LLM 配置自跳过）覆盖流式 usage 结构与评分链路。**待用户授权**：eval 基线真跑首建（消耗 LLM token 并提交基线文件）|
+| 借鉴机制批次 G：Agent Notes 决策记录（2026-08-27） | ✅ 完成 | `docs/notes/{proposed,implemented,rejected}/` 三态目录 + 四段骨架（Alternatives considered 强制非空）+ Status 与目录互验；`scripts/lint_notes.py` 极简防腐 lint 进 CI；首篇示范=prefix cache D1 取舍（含 EV 偏差记录）；AGENTS.md 补引导与 plans/notes 分工约定 |
 
 ## 文档
 
