@@ -18,6 +18,24 @@ _DEFAULT_IMAGE = "python:3.11-slim"
 _MEM_LIMIT = "256m"
 _CPUS = 0.5
 
+# env 脱敏（批次 E）：子进程/docker 执行入口的密钥保险丝。
+# 当前 runner 未向容器传 environment（风险暂不存在），helper 先行落地——
+# 凡未来任何 containers.run(..., environment=...) / subprocess(env=...) 调用点
+# 必须先过本函数（GOTCHAS E15 立规矩）。BYOK 密钥服务端加密托管，这是泄漏面保险丝。
+_SENSITIVE_KEY_MARKERS = ("key", "secret", "token", "password", "passwd")
+
+
+def sanitize_env(env: dict[str, str]) -> dict[str, str]:
+    """剥离键名含敏感词（不区分大小写）的环境变量，返回过滤后的新 dict。"""
+    out: dict[str, str] = {}
+    for k, v in (env or {}).items():
+        lowered = k.lower()
+        if any(m in lowered for m in _SENSITIVE_KEY_MARKERS):
+            logger.warning("sanitize_env: 剥离敏感环境变量 {}（值不记录）", k)
+            continue
+        out[k] = v
+    return out
+
 
 def _get_docker_client():
     """懒加载 docker client。Docker 不可用时抛异常。"""

@@ -408,3 +408,17 @@ ValueError is not JSON serializable`，422 变 500。单测里用 `min_length` �
 （同批日志完善：422 细节落日志、后台线程池任务异常 done-callback 兜底记日志、
 assistant/patents SSE 错误路径补服务端 logger.exception、llm_log_helper 等
 静默 `except: pass` 补 warning——延续 E12「吞异常必打日志」的规矩。）
+
+### E15: 新增子进程/docker 执行入口必须过 env 脱敏（批次 E 预立规矩）
+
+**场景**：天工是 BYOK 架构——用户/全局 LLM 密钥加密托管在服务端，运行时解密
+存在于进程环境或配置对象中。任何 `docker containers.run(..., environment=...)`
+或 `subprocess.run(..., env=...)` 的新调用点，若不过滤直接透传宿主环境/配置字典，
+密钥就会进容器 inspect 元数据与子进程 `/proc/<pid>/environ`（容器内任意代码可读）。
+
+**防线**：`app/sandbox/docker_runner.py::sanitize_env()`——键名含
+key/secret/token/password/passwd（不区分大小写）的一律剥离。当前 runner 未传
+env 参数（风险暂不存在），helper 先行落地作为保险丝。
+
+**规矩**：新增任何子进程/容器执行入口时，environment 参数必须经 sanitize_env；
+评审见到裸 `environment=` / `env=` 即视为 P1 问题。
