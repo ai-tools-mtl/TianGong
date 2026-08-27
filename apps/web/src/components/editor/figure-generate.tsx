@@ -107,6 +107,8 @@ export function FigureGenerate({ sectionId, projectId, onInsertImageWithCaption,
   const [capDesc, setCapDesc] = useState('')
   const [captioning, setCaptioning] = useState(false)
   const [zoom, setZoom] = useState(false)
+  // 附图清单生成中（点击时需拉全项目图列表，防双击重复插入）
+  const [listing, setListing] = useState(false)
   // regenerate 原地覆写同一附件（attachment_id/URL 均不变），bump 此版本号
   // 强制 useAuthImage 重新拉取，否则面板会一直显示覆写前的旧 blob
   const [imgVersion, setImgVersion] = useState(0)
@@ -255,12 +257,26 @@ export function FigureGenerate({ sectionId, projectId, onInsertImageWithCaption,
     toast.success('已插入文档（含图注）')
   }
 
-  /** 附图说明清单（D3 按钮化）：按当前编号生成「图N：描述」清单块插入编辑器，
-   * 重复点击替换旧块；插入后用户可自由编辑，系统不再自动维护。 */
-  function handleDrawingList() {
-    const sorted = [...figures].sort((a, b) => a.number - b.number)
-    onInsertDrawingList(sorted.map((f) => `图${f.number}：${f.prompt}`))
-    toast.success('已生成附图说明清单（文末，可自由编辑）')
+  /** 附图说明清单（D3 按钮化）：点击时实时拉取**全项目**图列表生成「图N：描述」
+   * 清单块插入编辑器，重复点击替换旧块。图号是项目级连续编号，面板展示的是本章节
+   * 过滤集——清单若用本地过滤集，多 drawings 章节模板下会漏其他章节的图且跳号，
+   * 故必须以全项目最新数据为准；插入后用户可自由编辑，系统不再自动维护。 */
+  async function handleDrawingList() {
+    setListing(true)
+    try {
+      const all = await api.listFigures(projectId)
+      const sorted = [...all].sort((a, b) => a.number - b.number)
+      if (sorted.length === 0) {
+        toast.info('项目中还没有附图')
+        return
+      }
+      onInsertDrawingList(sorted.map((f) => `图${f.number}：${f.prompt}`))
+      toast.success(`已生成附图说明清单（共 ${sorted.length} 张图，文末可自由编辑）`)
+    } catch {
+      toast.error('获取附图列表失败')
+    } finally {
+      setListing(false)
+    }
   }
 
   async function handleCaption() {
@@ -406,8 +422,8 @@ export function FigureGenerate({ sectionId, projectId, onInsertImageWithCaption,
               <Check className="size-3.5" />
               插入文档
             </Button>
-            <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={handleDrawingList} title="按当前编号在文末生成「图N：描述」清单（重复点击替换旧块）">
-              <ListOrdered className="size-3.5" />
+            <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={handleDrawingList} disabled={listing} title="按当前编号在文末生成全项目「图N：描述」清单（重复点击替换旧块）">
+              {listing ? <Loader2 className="size-3.5 animate-spin" /> : <ListOrdered className="size-3.5" />}
               附图清单
             </Button>
             <Button size="sm" variant="outline" className="h-8 gap-1.5" onClick={handleCaption} disabled={captioning}>
