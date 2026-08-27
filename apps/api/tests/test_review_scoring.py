@@ -517,3 +517,55 @@ def test_touch_review_lock_refreshes_stale_window(db_session):
     finally:
         rs._release_review_lock(db_session, project.id, token)
     assert rs.is_review_running(db_session, project.id) is None
+
+
+# ── 批次 F：评分载荷 schema 校验（拒绝静默认认分）───────────────────────────
+
+def test_validate_dimension_payload_ok_and_coercion():
+    """全字段合法 → 通过；float 分值可收敛为 int。"""
+    from app.services.review_service import _validate_dimension_payload
+
+    score, ev, sug = _validate_dimension_payload(
+        {"score": 88.0, "evidence": "依据", "suggestion": "建议"})
+    assert (score, ev, sug) == (88, "依据", "建议")
+
+
+def test_validate_dimension_payload_rejects_garbage():
+    """字段缺失/非数值/bool/越界/非 dict 一律 ValueError——不静默兜 50 分。"""
+    import pytest
+
+    from app.services.review_service import _validate_dimension_payload as v
+
+    with pytest.raises(ValueError, match="缺字段"):
+        v({"score": 80, "evidence": "只有分"})            # suggestion 缺失
+    with pytest.raises(ValueError, match="非 dict"):
+        v("score=80")
+    with pytest.raises(ValueError, match="缺字段"):
+        v({"evidence": "x", "suggestion": "y"})            # score 缺失（旧版静默 50）
+    with pytest.raises(ValueError, match="非数值"):
+        v({"score": " eighty ", "evidence": "x", "suggestion": "y"})
+    with pytest.raises(ValueError, match="非数值"):
+        v({"score": True, "evidence": "x", "suggestion": "y"})  # bool 是 int 子类，须挡
+    with pytest.raises(ValueError, match="越界"):
+        v({"score": 137, "evidence": "x", "suggestion": "y"})
+
+
+def test_score_dimension_fallback_rejects_incomplete_payload(db_session, monkeypatch):
+    """fallback 路径喂缺字段的 JSON：不再洗白成 50 分，而是抛错计入失败。"""
+    import pytest
+
+    from app.services import review_service
+    from app.services.llm_config_service import ResolvedChatConfig
+
+    class _FakePlainLLM:
+        def with_structured_output(self, schema):
+            raise NotImplementedError("no structured output")
+
+        def invoke(self, messages):
+            return type("_Resp", (), {"content": '{"score": 88}'})()
+
+    monkeypatch.setattr(review_service, "get_llm", lambda config, **kw: _FakePlainLLM())
+    config = ResolvedChatConfig(base_url="http://x", api_key="k", model="glm-4.7", source="env")
+
+    with pytest.raises(ValueError, match="缺字段"):
+        review_service._score_dimension(_criterion(), {}, config)

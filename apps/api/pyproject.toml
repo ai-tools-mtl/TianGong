@@ -52,3 +52,9 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+markers = [
+  # 真实 LLM 冒烟层（批次 F）：有全局 chat 配置自动启用、无则自跳过。
+  # 默认排除（见 addopts）；显式运行：uv run pytest -m real_llm
+  "real_llm: calls the configured real LLM (skipped when no global chat config)",
+]
+addopts = "-m 'not real_llm'"

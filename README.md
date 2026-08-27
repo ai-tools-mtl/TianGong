@@ -229,6 +229,7 @@ docker compose --env-file .env.production --profile full up -d --build
 | 借鉴机制批次 C：HITL 决策审计持久化（2026-08-27） | ✅ 完成 | `hitl_decisions` 表双事件形态：interrupt 即落 pending（悬挂审批也留痕）、resume 决策翻新 approve/reject+理由+决策人；消息 meta 镜像 `hitl_resolved` 供前端历史徽标（已批准/已拒绝）；审计 log-only 不进模型上下文（测试钉死）；fail-open 写失败不阻断对话 |
 | 借鉴机制批次 D：SSE 断线自动接续（2026-08-27） | ✅ 完成 | 错误三分类（主动停/业务错/网络断开 `StreamDisconnectedError`）；chat 流首新增 `start` 锚点事件（三元组 id，加性协议），断线后面板凭锚点**单次自动**走既有 resume 续跑，二次断开降级手动「继续」；`streamAssistantGenerate` 独立解析器收编进 `_consumeSSE`；E2E 用本地真源 + `socket.destroy()` 模拟真断流（Playwright fulfill 会缓冲响应体、无法模拟半途断开）|
 | 借鉴机制批次 E：doctor 环境体检 + env 脱敏守卫（2026-08-27） | ✅ 完成 | `python -m scripts.doctor`：postgres+alembic 一致性/minio 写删探针【硬】、drawio【fail-closed】、NLI【fail-open】、LLM 配置与容量【信息/软】，--json 供部署文档回写，TIANGONG_TESTING 守卫；dev 环境全绿 + NLI 停机负向演练分级语义正确；`sanitize_env()` 密钥保险丝 + GOTCHAS E15 立规矩 |
+| 借鉴机制批次 F：eval 加固 + real_llm 冒烟层（2026-08-27） | 🟡 代码侧完成 | `_validate_dimension_payload` schema 校验：字段缺失/非数值/越界一律抛错计入失败（杜绝旧 `score` 缺省静默 50 分混入基线）；基线流程 fail-fast；`real_llm` pytest 标记层（默认 addopts 排除，`pytest -m real_llm` 显式运行，无全局 LLM 配置自跳过）覆盖流式 usage 结构与评分链路。**待用户授权**：eval 基线真跑首建（消耗 LLM token 并提交基线文件）|
 
 ## 文档
 

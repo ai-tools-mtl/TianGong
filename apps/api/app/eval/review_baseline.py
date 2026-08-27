@@ -102,16 +102,26 @@ class BaselineReport:
 
 def _score_sample(
     criteria: list[dict], sections: dict[str, str],
-    llm_config: ResolvedChatConfig, runs: int,
+    llm_config: ResolvedChatConfig, runs: int, *, sample_name: str = "",
 ) -> dict[str, int]:
-    """对一篇样本跑全部 rubric 维度（每维度 runs 次取平均，与生产口径一致）。"""
+    """对一篇样本跑全部 rubric 维度（每维度 runs 次取平均，与生产口径一致）。
+
+    批次 F：fail-fast——任何一次评分失败（含 schema 校验失败）立即中止整个
+    基线流程。基线的可信度高于可用性：带伤分数绝不能写进基线文件。
+    """
     from app.services.review_service import _score_dimension
 
     out: dict[str, int] = {}
     for criterion in criteria:
         scores = []
-        for _ in range(runs):
-            score, _evidence, _suggestion = _score_dimension(criterion, sections, llm_config)
+        for run_i in range(runs):
+            try:
+                score, _evidence, _suggestion = _score_dimension(criterion, sections, llm_config)
+            except Exception as e:  # noqa: BLE001 — fail-fast 前包装上下文
+                raise RuntimeError(
+                    f"基线评分失败（sample={sample_name} "
+                    f"dimension={criterion.get('key')} run={run_i + 1}/{runs}）：{e}"
+                ) from e
             scores.append(score)
         out[criterion["key"]] = round(sum(scores) / len(scores))
     return out
@@ -136,7 +146,8 @@ def run_baseline(
     current: dict[str, dict[str, int]] = {}
     for name, sections in BASELINE_SAMPLES.items():
         logger.info("基线评分样本 {}/{}: {}", len(current) + 1, len(BASELINE_SAMPLES), name)
-        current[name] = _score_sample(criteria, sections, llm_config, runs)
+        current[name] = _score_sample(
+            criteria, sections, llm_config, runs, sample_name=name)
         time.sleep(0.5)  # 轻 ratelimit 缓冲
 
     baseline_path.parent.mkdir(parents=True, exist_ok=True)

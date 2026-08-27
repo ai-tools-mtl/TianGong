@@ -283,11 +283,30 @@ def _score_dimension(
         resp = llm.invoke(messages)
         data = _parse_json_response(resp.content)
 
-    return (
-        max(0, min(100, int(data.get("score", 50)))),
-        str(data.get("evidence", "")),
-        str(data.get("suggestion", "")),
-    )
+    # 批次 F schema 校验（「验证世界而非自我汇报」）：字段缺失/类型错/越界一律
+    # 抛错计入该 run 失败——绝不静默取默认分（旧 `data.get("score", 50)` 会把
+    # 解析失败伪装成 50 分混入生产评分与基线）。
+    return _validate_dimension_payload(data)
+
+
+def _validate_dimension_payload(data: object) -> tuple[int, str, str]:
+    """校验单维度评分载荷：score 数值且 0-100、evidence/suggestion 字段存在。
+
+    严格优于宽容：调用方（run_review / review_baseline）已有失败计数与兜底路径，
+    这里放宽只会把垃圾数据洗白成 50 分。
+    """
+    if not isinstance(data, dict):
+        raise ValueError(f"评分载荷非 dict：{type(data).__name__}")
+    missing = [k for k in ("score", "evidence", "suggestion") if k not in data]
+    if missing:
+        raise ValueError(f"评分载荷缺字段：{missing}")
+    raw = data["score"]
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise ValueError(f"score 非数值：{raw!r}")
+    score = int(raw)
+    if not 0 <= score <= 100:
+        raise ValueError(f"score 越界：{score}")
+    return score, str(data["evidence"]), str(data["suggestion"])
 
 
 def _parse_json_response(text: str) -> dict:
