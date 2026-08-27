@@ -14,7 +14,7 @@
 2. **[踩坑记录](docs/GOTCHAS.md)** ⚠️ — 实际开发踩到的坑（环境兼容/类型/校验等），**开工前必读，避免重复踩**
 3. **实施计划（已归档）** — `docs/superpowers/plans/archive/` 下按子系统拆分的 TDD 计划（MVP P0 + P1 扩展均已完成，保留作新功能 TDD 结构参考）
 4. **UI 设计契约** — `docs/superpowers/specs/` 下还有 UI 重构等独立设计契约（如 [2026-07-14-ui-redesign-contract.md](docs/superpowers/specs/2026-07-14-ui-redesign-contract.md)），前端改动前先读对应契约
-5. **[LLM 调用与模型选型清单](docs/llm-usage.md)** — 所有 LLM 调用点（chat 强模型 / 轻量模型）、触发场景、降级策略，**新增/调整 LLM 调用时同步更新**
+5. **[LLM 调用与模型选型清单](docs/llm-usage.md)** — 所有 LLM 调用点（chat 强模型 / 轻量模型）、触发场景、降级策略。调用点**存在性清单**由脚本生成：改完代码后跑 `cd apps/api && uv run python -m scripts.gen_llm_usage`，CI 以 `--check` 校验新鲜度（漏跑直接红灯）；叙述性章节（场景/降级）仍人工维护。配套的 [SystemSetting 键目录](docs/system-settings-catalog.md)同机制生成
 
 ## 代码结构
 
@@ -64,7 +64,7 @@ cd apps/api && uv run python -m scripts.create_admin --username admin --password
 - **shadcn/ui**：锁 3.x，不用 4.x（见 GOTCHAS F1）；CLI 与 MCP SDK 冲突装不了组件，要新组件**手写**（见 GOTCHAS F8）
 - **开发端口**：后端 8000、前端 3000，都用 `localhost`（不用 127.0.0.1，见 GOTCHAS F4）
 - **LLM provider 模板**：新增/调整 LLM 供应商预设（智谱/OpenAI/DeepSeek 等，含 base_url、默认模型、拉模型端点）改 `apps/api/app/services/llm_provider_templates.py` 的 `PROVIDER_TEMPLATES`（静态数据，前端 `/settings` 与 `/admin/console/llm` 共用）。`models_endpoint` 字段是相对路径（OpenAI 兼容 `/models`，Ollama `/api/tags`），由 `llm_config_service.list_provider_models` 拼到 `base_url` 后。
-- **chat 与 embedding 凭据完全独立**：chat 和 embedding 是两套独立的凭据链路（独立表 `user_llm_configs` / `user_embedding_configs`、独立 dataclass `ResolvedChatConfig` / `ResolvedEmbeddingConfig`、独立 resolve 函数 `resolve_chat_config` / `resolve_embedding_config`），支持跨供应商混搭（如智谱 chat + OpenAI embedding）。source 协议拆双值：前端发 `chat_source`（chat 端点）或走 embedding 的内部 fallback；取值空间 `global` / `custom-chat:{id}` / `custom-emb:{id}` / `env`。两条 fallback **不互通**（embedding 没配就报错，不隐式回退 chat 凭据）。admin grant 仍按用户单一授权（一个 grant 同时覆盖全局 chat + 全局 embedding）。全局配置 JSON 拆 `llm_global_chat_config` + `llm_global_embedding_config` 两个 SystemSetting key（共用 `llm_global_enabled` 开关）。
+- **chat 与 embedding 凭据完全独立**：chat 和 embedding 是两套独立的凭据链路（独立表 `user_llm_configs` / `user_embedding_configs`、独立 dataclass `ResolvedChatConfig` / `ResolvedEmbeddingConfig`、独立 resolve 函数 `resolve_chat_config` / `resolve_embedding_config`），支持跨供应商混搭（如智谱 chat + OpenAI embedding）。source 协议拆双值：前端发 `chat_source`（chat 端点）或走 embedding 的内部 fallback；取值空间 `global` / `custom-chat:{id}` / `custom-emb:{id}` / `env`。两条 fallback **不互通**（embedding 没配就报错，不隐式回退 chat 凭据）。admin grant 仍按用户单一授权（一个 grant 同时覆盖全局 chat + 全局 embedding）。全局 chat 配置存 SystemSetting key `llm_global_chat_config`（共用 `llm_global_enabled` 开关）；embedding 已无全局可配（统一固定 bge-m3 微服务、env 提供连接信息，历史上的 `llm_global_embedding_config` 双 key 设计未落地已废弃，键目录见 docs/system-settings-catalog.md）。
 - **「BYOK」术语已更名为「自定义配置」**：本项目原称的 BYOK 实指「用户密钥加密托管」（L1 成本隔离型——每用户用自己的 key 调用，运营方不为用户 token 买单），非严格意义的 BYOK（密钥主权型，服务端零明文）。用户可见文案统一称「自定义配置」。此为有意决策，非缺陷。
 - **记忆热度全自动（v1.1）**：`user_memories` 表的 `hit_count`/`last_hit_at` 由系统自动维护——检索命中自动累加、超 200 条自动淘汰（30 天半衰期热度排序）。无用户反馈机制，不暴露热度/复核端点。
 - **NLI 矛盾覆盖全自动（v1.1，已启用）**：新旧记忆语义相似但内容冲突时，自动用新覆盖旧（用户认知更新纠错）。由自建 NLI 微服务（`apps/nli/`，端口 7999，sentence-transformers CrossEncoder 跑 `cross-encoder/nli-deberta-v3-base`）提供 `/nli` 端点做句子对推理，每次 0 token。NLI 是软依赖——故障时 `judge_relation` 降级 neutral 走合并不删，绝不误删。注：原用 Infinity `/classify`，因不支持句子对已弃用，改自建微服务。

@@ -68,6 +68,12 @@ jobs:
         working-directory: apps/api
         run: uv run pytest -q
 
+      # 借鉴机制批次 B：生成目录新鲜度门禁（llm-usage.md 调用点清单 + SystemSetting 键目录）。
+      # 改了代码没重跑 python -m scripts.gen_llm_usage 就提交 → 在这里红灯。
+      - name: 文档生成目录新鲜度校验
+        working-directory: apps/api
+        run: uv run python -m scripts.gen_llm_usage --check
+
   frontend:
     name: 前端构建（tsc + build）
     runs-on: ubuntu-latest

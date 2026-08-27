@@ -225,6 +225,7 @@ docker compose --env-file .env.production --profile full up -d --build
 | vision 名单配置 + 附图上传图注（2026-08-16） | ✅ 完成 | `vision_model_markers` admin 可配；figure-upload 重构为「预览 → AI 看图写注 → 插入」两步流 |
 | AI 新颖性评估（2026-08-16） | ✅ 完成 | 对比文件（含 legal_status）× 核心章节 → 流式 Markdown 报告，持久化 prior_art_refs.assessment；AI 辅助参考，不构成法律意见 |
 | 借鉴机制批次 A：prefix cache 友好化（2026-08-27） | ✅ 完成 | 静态系统提示词骨架 + 易变上下文（已写章节/术语表/KB 检索/记忆/意图）随当轮消息 `<system-reminder>` 快照注入、落库剥离（决策 D1，DeepSeek 前缀缓存命中价≈1/10）；`llm_call_log` 补 `token_prompt_cached` 列 + admin stats 缓存命中趋势线；单 turn token 预算熔断（`agent_turn_token_budget` 可调，默认宽松开启）；热门记忆同分按 id 定序防快照抖动 |
+| 借鉴机制批次 B：生成目录 + CI 新鲜度门禁（2026-08-27） | ✅ 完成 | `scripts/gen_llm_usage.py` AST 扫描生成「LLM 调用点清单」（llm-usage.md AUTO 区块，27 个调用点）与 [SystemSetting 键目录](docs/system-settings-catalog.md)（14 个键）；CI `--check` 门禁双向验证；顺手修正 AGENTS.md 里未落地的 `llm_global_embedding_config` 双 key 描述（embedding 实走固定 bge-m3 微服务 env 配置）|
 
 ## 文档
 

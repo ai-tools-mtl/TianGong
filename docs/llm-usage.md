@@ -1,7 +1,10 @@
 # LLM 调用与模型选型清单
 
 > 本文件梳理天工后端所有 LLM 调用点、各自用的模型（chat 强模型 / 轻量模型）、
-> 触发场景与降级策略。**新增或调整 LLM 调用时，请同步更新本表**，方便团队梳理成本与选型。
+> 触发场景与降级策略，方便团队梳理成本与选型。
+> **调用点存在性清单由脚本生成**（文末 AUTO 区块）：改完代码后运行
+> `cd apps/api && uv run python -m scripts.gen_llm_usage` 重新生成，CI 校验新鲜度；
+> 各调用的**触发场景与降级策略为人工维护章节**，新增调用时请随手补写对应条目。
 >
 > 配置入口：admin 后台 `/admin/console/llm`。
 > - **Chat 配置**：核心撰写用的强模型（全局 Key，`llm_global_chat_config`）。
@@ -77,3 +80,38 @@
 - **新增 chat 强模型任务**：在第五节加一行；用 `resolve_chat_config` 或 agent loop。
 - **B3/B4 若决定替换为轻量**：从第四节移到第二节，并按 B1/B2 模式接入 `resolve_lite_config`。
 - **行号会随代码漂移**，以函数名/文件名为准；如偏差较大请顺手校正。
+
+<!-- BEGIN AUTO: llm-call-sites（机器生成，勿手改；改完代码后运行 python -m scripts.gen_llm_usage） -->
+共 27 个调用点（chat 15 / lite 6 / embedding 6）。下表由 `python -m scripts.gen_llm_usage` 从源码 AST 生成，只管「存在性」——
+各调用的触发场景与降级策略见上文人工维护章节。
+
+| 调用点 | 所在函数 | 解析器 |
+|---|---|---|
+| `apps/api/app/api/ai.py:263` | `chat` | chat 强模型 (`resolve_chat_config`) |
+| `apps/api/app/api/ai.py:466` | `resume_chat` | chat 强模型 (`resolve_chat_config`) |
+| `apps/api/app/api/ai.py:631` | `generate_draft` | chat 强模型 (`resolve_chat_config`) |
+| `apps/api/app/api/ai.py:730` | `rewrite` | chat 强模型 (`resolve_chat_config`) |
+| `apps/api/app/api/ai.py:806` | `revise_section` | chat 强模型 (`resolve_chat_config`) |
+| `apps/api/app/api/ai.py:1059` | `caption_figures` | chat 强模型 (`resolve_chat_config`) |
+| `apps/api/app/api/assistant.py:282` | `chat` | chat 强模型 (`resolve_chat_config`) |
+| `apps/api/app/api/assistant.py:432` | `generate` | chat 强模型 (`resolve_chat_config`) |
+| `apps/api/app/api/patents.py:88` | `assess_novelty` | chat 强模型 (`resolve_chat_config`) |
+| `apps/api/app/eval/review_baseline.py:223` | `__main__` | chat 强模型 (`resolve_chat_config`) |
+| `apps/api/app/eval/runner.py:102` | `<module>` | chat 强模型 (`resolve_chat_config`) |
+| `apps/api/app/main.py:65` | `on_startup` | embedding (`resolve_embedding_config`) |
+| `apps/api/app/rag/archiver.py:124` | `run_archive_embed_standalone` | embedding (`resolve_embedding_config`) |
+| `apps/api/app/rag/retriever.py:39` | `retrieve` | embedding (`resolve_embedding_config`) |
+| `apps/api/app/services/conversation_service.py:33` | `summarize_conversation_title` | 轻量模型 (`resolve_lite_config`) |
+| `apps/api/app/services/figure_service.py:105` | `generate_figure` | chat 强模型 (`resolve_chat_config`) |
+| `apps/api/app/services/figure_service.py:243` | `regenerate_figure` | chat 强模型 (`resolve_chat_config`) |
+| `apps/api/app/services/knowledge_service.py:361` | `update_chunk` | embedding (`resolve_embedding_config`) |
+| `apps/api/app/services/knowledge_service.py:443` | `embed_chunks_for_file` | embedding (`resolve_embedding_config`) |
+| `apps/api/app/services/llm_config_service.py:524` | `resolve_lite_config` | chat 强模型 (`resolve_chat_config`) |
+| `apps/api/app/services/memory_service.py:80` | `_try_embed` | embedding (`resolve_embedding_config`) |
+| `apps/api/app/services/novelty_service.py:193` | `parse_suggestions` | 轻量模型 (`resolve_lite_config`) |
+| `apps/api/app/services/outline_extractor.py:137` | `extract_outline` | 轻量模型 (`resolve_lite_config`) |
+| `apps/api/app/services/review_service.py:150` | `_run_review_locked` | chat 强模型 (`resolve_chat_config`) |
+| `apps/api/app/services/summary_service.py:38` | `generate_summary` | 轻量模型 (`resolve_lite_config`) |
+| `apps/api/app/services/term_service.py:197` | `extract_candidates` | 轻量模型 (`resolve_lite_config`) |
+| `apps/api/app/services/term_service.py:264` | `check_consistency` | 轻量模型 (`resolve_lite_config`) |
+<!-- END AUTO: llm-call-sites -->
