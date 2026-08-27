@@ -11,7 +11,7 @@ import { Markdown } from '@/components/markdown'
 import { Button } from '@/components/ui/button'
 import { ConversationList } from '@/components/conversation-list'
 import { DiffReviewPanel } from '@/components/diff-review-panel'
-import { api } from '@/lib/api'
+import { api, StreamDisconnectedError } from '@/lib/api'
 import { clearChatDefaultSource, getChatDefaultSource } from '@/lib/llm-source'
 import {
   queryKeys,
@@ -307,6 +307,8 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
     // agent 透明化累积器（流式期间逐事件累加，合并进最后一条 assistant 消息）
     let aiThinking = ''
     const aiToolEvents: ToolEvent[] = []
+    /** 流首锚点（批次 D）：start 事件回传三元组，断线自动接续的唯一依据。 */
+    let startAnchor: { messageId: string; threadId: string } | null = null
     /** 把累积的 thinking/toolEvents 合并进最后一条 assistant 消息。 */
     const mergeAgentState = () => {
       setMessages((m) => {
@@ -322,6 +324,80 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
         return copy
       })
     }
+    /** 批次 D：断线自动接续（单次机会）。
+     * 复用 resume 协议（input=None 崩溃续跑），token 续接在半截消息上；
+     * done 带权威全文整体替换。第二次断开不再自动——降级为手动「继续」。 */
+    async function runAutoResume(anchor: { messageId: string; threadId: string }) {
+      toast.info('连接中断，正在自动恢复…')
+      try {
+        await api.streamResume(
+          sectionId,
+          anchor.messageId,
+          { thread_id: anchor.threadId, chat_source: source },
+          (token) => {
+            aiText += token
+            setMessages((m) => m.map((msg, i) =>
+              i === m.length - 1 ? { ...msg, content: msg.content + token } : msg))
+          },
+          abortRef.current?.signal,
+          (doneData) => {
+            if (typeof doneData.content === 'string') {
+              setMessages((m) => m.map((msg, i) =>
+                i === m.length - 1
+                  ? { ...msg, content: doneData.content!, incomplete: false, interrupted: false, pendingActions: undefined }
+                  : msg))
+            }
+            if (doneData.conversation_id && doneData.conversation_id !== currentConvId) {
+              setCurrentConvId(doneData.conversation_id)
+            }
+            qc.invalidateQueries({ queryKey: ['conversations', sectionId] })
+          },
+          {
+            onThinking: (t) => { aiThinking += t; mergeAgentState() },
+            onToolCall: (e) => { aiToolEvents.push({ kind: 'call', name: e.name, args: e.args }); mergeAgentState() },
+            onToolResult: (e) => { aiToolEvents.push({ kind: 'result', name: e.name, result: e.result }); mergeAgentState() },
+            onInterrupt: (e) => {
+              startAnchor = e.message_id ? { messageId: e.message_id, threadId: e.thread_id } : startAnchor
+              setMessages((m) => {
+                const copy = [...m]
+                const last = copy[copy.length - 1]
+                if (last && last.role === 'assistant') {
+                  copy[copy.length - 1] = {
+                    ...last,
+                    id: e.message_id ?? last.id,
+                    threadId: e.thread_id,
+                    interrupted: true,
+                    pendingActions: e.actions,
+                  }
+                }
+                return copy
+              })
+            },
+          },
+        )
+        toast.success('已恢复')
+      } catch (err: unknown) {
+        if (err instanceof DOMException && err.name === 'AbortError') {
+          // 恢复期间用户主动停止：与 handleStop 同语义，保留内容
+        } else if (err instanceof StreamDisconnectedError) {
+          // 第二次断开：不再自动重试，标记 incomplete 让手动「继续」按钮接管
+          setMessages((m) => {
+            const copy = [...m]
+            const last = copy[copy.length - 1]
+            if (last && last.role === 'assistant') {
+              copy[copy.length - 1] = { ...last, id: anchor.messageId, threadId: anchor.threadId, incomplete: true }
+            }
+            return copy
+          })
+          toast.error('自动恢复失败，请点击「继续」手动重试')
+        } else {
+          const e2 = err as { message?: string }
+          toast.error(e2?.message || '自动恢复失败')
+        }
+        throw err instanceof StreamDisconnectedError ? err : new Error('resume_failed')
+      }
+    }
+
     try {
       await api.streamChat(
         sectionId,
@@ -349,6 +425,13 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
           qc.invalidateQueries({ queryKey: ['conversations', sectionId] })
         },
         {
+          // 批次 D：锚点对齐——占位消息立即挂上真实 id（此后断线/HITL 都有锚）
+          onStart: (e) => {
+            if (!e.message_id) return
+            startAnchor = { messageId: e.message_id, threadId: e.thread_id }
+            setMessages((m) => m.map((x, i) =>
+              i === m.length - 1 ? { ...x, id: e.message_id!, threadId: e.thread_id } : x))
+          },
           onThinking: (t) => { aiThinking += t; mergeAgentState() },
           onToolCall: (e) => { aiToolEvents.push({ kind: 'call', name: e.name, args: e.args }); mergeAgentState() },
           onToolResult: (e) => { aiToolEvents.push({ kind: 'result', name: e.name, result: e.result }); mergeAgentState() },
@@ -378,6 +461,25 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
       } else if (isForbiddenSourceError(err)) {
         // LLM 源失效（全局 Key 授权被撤销 / 自定义配置被删）：清默认源 + 引导重选
         handleStaleSourceError()
+        setMessages((m) => {
+          const last = m[m.length - 1]
+          if (last && last.role === 'assistant' && !last.content) {
+            return m.slice(0, -1)
+          }
+          return m
+        })
+      } else if (err instanceof StreamDisconnectedError && startAnchor) {
+        // 批次 D：网络断开且有锚点——单次自动接续。
+        // runAutoResume 内部已处理二次断开（降级手动「继续」）与业务错提示，
+        // 这里吞掉其重抛的哨兵错误即可，让 finally 正常收尾 idle。
+        try {
+          await runAutoResume(startAnchor)
+        } catch {
+          /* 已降级处理 */
+        }
+      } else if (err instanceof StreamDisconnectedError) {
+        // 断连发生在 start 锚点事件之前：无半截内容可续，按普通错误收场
+        toast.error('连接中断，请重试')
         setMessages((m) => {
           const last = m[m.length - 1]
           if (last && last.role === 'assistant' && !last.content) {

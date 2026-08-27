@@ -50,6 +50,8 @@ const BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
  * 三者皆可选——不传则忽略该类事件。
  */
 export type AgentStreamHandlers = {
+  /** 流首事件（批次 D）：锚点三元组——断线自动接续与 HITL 卡片同源。 */
+  onStart?: (e: { message_id: string | null; thread_id: string; conversation_id: string | null }) => void
   /** 模型思考过程片段（流式分块，逐块回调，调用方自行拼接） */
   onThinking?: (t: string) => void
   /** agent 发起工具调用 */
@@ -62,6 +64,21 @@ export type AgentStreamHandlers = {
     thread_id: string
     actions: { name: string; args: Record<string, unknown>; description?: string }[]
   }) => void
+}
+
+/**
+ * 流式传输中途网络断开（批次 D）。
+ *
+ * 与业务错（SSE error 事件 → ApiError）和用户主动停止（AbortError）正交：
+ * fetch body reader 在流中途抛 TypeError 时转为本类型，调用方可据此自动走
+ * resume 接续——区别于「服务端明确报了错」与「用户不想等了」。
+ */
+export class StreamDisconnectedError extends Error {
+  constructor(cause?: unknown) {
+    super('SSE 连接中断')
+    this.name = 'StreamDisconnectedError'
+    this.cause = cause
+  }
 }
 
 // ── 静默刷新：access token 过期(401)时用 refresh token 续期并重试一次 ──
@@ -527,37 +544,23 @@ export const api = {
       signal,
     })
     if (!res.ok) throw await _sseHttpError(res)
-    if (!res.body) return
-    const reader = res.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
-      const events = buffer.split('\n\n')
-      buffer = events.pop() || ''
-      for (const evt of events) {
-        const lines = evt.split('\n')
-        let eventType = 'message'
-        let dataLine = ''
-        for (const line of lines) {
-          if (line.startsWith('event: ')) eventType = line.slice(7).trim()
-          else if (line.startsWith('data: ')) dataLine = line.slice(6)
+    // 批次 D：reader 循环收编进 _consumeSSE（此前双解析器并存是漂移隐患），
+    // 定制事件（project_created/chapter_*）走 extraHandler 旁路，对外行为不变。
+    return _consumeSSE<{ project_id: string }>(
+      res,
+      (t) => handlers.onToken?.(t),
+      (d) => handlers.onAllDone?.({ project_id: d.project_id }),
+      undefined,
+      (eventType, data) => {
+        if (eventType === 'project_created') {
+          handlers.onProjectCreated?.(data as { project_id: string })
+        } else if (eventType === 'chapter_start') {
+          handlers.onChapterStart?.(data as { index: number; total: number; title: string; key: string })
+        } else if (eventType === 'chapter_done') {
+          handlers.onChapterDone?.(data as { index: number; title: string; key: string; status: string; error: string | null })
         }
-        if (!dataLine) continue
-        let data: Record<string, unknown> = {}
-        try { data = JSON.parse(dataLine) } catch { continue }
-        if (eventType === 'error') {
-          throw { code: (data.code as string) || 'llm_error', message: (data.message as string) || 'AI 服务错误' } as ApiError
-        }
-        if (eventType === 'project_created') handlers.onProjectCreated?.(data as { project_id: string })
-        else if (eventType === 'chapter_start') handlers.onChapterStart?.(data as { index: number; total: number; title: string; key: string })
-        else if (eventType === 'token') { const t = data.text as string | undefined; if (t) handlers.onToken?.(t) }
-        else if (eventType === 'chapter_done') handlers.onChapterDone?.(data as { index: number; title: string; key: string; status: string; error: string | null })
-        else if (eventType === 'done') handlers.onAllDone?.(data as { project_id: string })
-      }
-    }
+      },
+    )
   },
 
   listMessages: (sectionId: string, conversationId?: string) =>
@@ -1255,13 +1258,21 @@ async function _consumeSSE<TDone = { message_id: string; conversation_id?: strin
   onToken: (t: string) => void,
   onDone?: (data: TDone) => void,
   agentHandlers?: AgentStreamHandlers,
+  extraHandler?: (eventType: string, data: Record<string, unknown>) => void,
 ): Promise<void> {
   if (!res.body) return
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
   while (true) {
-    const { done, value } = await reader.read()
+    let readResult: ReadableStreamReadResult<Uint8Array>
+    try {
+      readResult = await reader.read()
+    } catch (e) {
+      // 批次 D：流中途网络断开（非业务错、非主动 abort）→ 可被调用方自动接续
+      throw new StreamDisconnectedError(e)
+    }
+    const { done, value } = readResult
     if (done) break
     buffer += decoder.decode(value, { stream: true })
     // SSE 事件以空行分隔
@@ -1282,6 +1293,16 @@ async function _consumeSSE<TDone = { message_id: string; conversation_id?: strin
       } catch {
         continue
       }
+      if (eventType === 'start') {
+        // 流首锚点事件（批次 D）：message_id=user 消息（thread 约定锚）等三元组
+        agentHandlers?.onStart?.({
+          message_id: (data.message_id as string | null) ?? null,
+          thread_id: String(data.thread_id ?? ''),
+          conversation_id: (data.conversation_id as string | null) ?? null,
+        })
+      }
+      // 自定义/未知事件的通用旁路（streamAssistantGenerate 收编后走这里）
+      extraHandler?.(eventType, data)
       if (eventType === 'error') {
         // 服务端明确报错：抛出，让调用方弹 toast
         const code = (data.code as string) || 'llm_error'

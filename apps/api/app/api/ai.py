@@ -284,6 +284,15 @@ async def chat(
                 error="no_llm_config",
             )
             return
+        # 批次 D：流首锚点事件——断线自动接续需要 assistant/turn 双 id，而它们
+        # 此前只随 done 事件回传（断线时已不可达）。加性协议：旧消费方对未知
+        # 事件类型一律忽略（前端 _consumeSSE 的默认行为）。
+        # thread_id 约定 = 本 turn user 消息 id（与 resume 端点锚点一致）。
+        yield _sse_event("start", {
+            "message_id": str(user_msg.id),
+            "thread_id": str(user_msg.id),
+            "conversation_id": str(conv.id),
+        })
         try:
             interrupted = False
             async for kind, data in _yield_with_heartbeat_tuple(

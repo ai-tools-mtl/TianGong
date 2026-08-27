@@ -34,7 +34,7 @@
 | ~~A~~ ✅ | ~~Prefix cache 友好化（静态系统提示词）~~ 已完成 `018f6d5`（2026-08-27，含 A-3/A-4/灵魂测试；实施偏差两处：已写章节+术语表按 EV 分析留在了静态前缀而非计划原文的易变块——会话内通常字节不变且体积大，进前缀按命中价计费更省；README 进度行随批提交） | 1.5 天 | 成本优化 | DeerFlow DynamicContext |
 | ~~B~~ ✅ | ~~llm-usage.md 自动生成目录 + CI 门禁~~ 已完成（gen_llm_usage.py，含 B+ SystemSetting 键目录；AGENTS.md 顺带修正 embedding 全局 key 漂移描述）| 0.5 天 | 工程卫生 | dsh 生成目录门禁 |
 | ~~C~~ ✅ | ~~HITL 决策审计持久化（log-only）~~ 已完成（hitl_audit_service 双事件 + chat/resume 接线 + 前端 hitl_resolved 徽标；端点级集成由批次 0 dogfood 走查清单覆盖，服务层 8 测试钉死双阶段/幂等/悬挂/不进上下文四契约）| 0.5 天 | 安全审计 | dsh approval 双事件 |
-| D | SSE 断线自动接续（复用 resume 语义） | 1 天 | 可靠性 | DeerFlow StreamBridge/join |
+| ~~D~~ ✅ | ~~SSE 断线自动接续~~ 已完成（错误三分类+单次自动 resume+二次降级手动；实施偏差两处：① chat 流首新增 start 锚点事件——原计划「后端零协议变更」做不到，正常流断线时前端手里没有任何消息 id，与其跨两个未知 id 做服务端查询猜测锚点，不如加一个旧消费方自动忽略的首事件；② E2E 发现 Playwright route.fulfill **缓冲整个响应体**、error 的流会让整条请求一起失败，改用本地真实 HTTP 源 + `socket.destroy()` 才能逐字节复现网断） | 1 天 | 可靠性 | DeerFlow StreamBridge/join |
 | E | doctor 环境体检 + 子进程 env 脱敏守卫 | 1 天 | 运维 | DeerFlow make doctor / env_policy |
 | F | eval 基线真跑首建 + 结构校验加固 | 0.5 天+人工 | 质量纵深 | dsh 测试政策 |
 | G | Agent Notes 决策记录机制 | 0.5 天 | 流程纪律 | dsh Agent Notes |
