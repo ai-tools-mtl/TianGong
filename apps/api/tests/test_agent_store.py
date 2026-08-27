@@ -173,7 +173,7 @@ def test_list_top_hot_memories_orders_by_hot_and_excludes(db_session):
 
 def test_hot_memories_injected_even_when_search_empty(db_session, monkeypatch):
     """检索无命中时，热门记忆仍常驻注入（两路互补的常驻路）。"""
-    from app.ai.context_assembler import build_system_prompt
+    from app.ai.context_assembler import build_turn_reminder
     from app.models import Project, Section
     from app.services import memory_service
 
@@ -191,6 +191,24 @@ def test_hot_memories_injected_even_when_search_empty(db_session, monkeypatch):
 
     monkeypatch.setattr(memory_service, "search_memories",
                         lambda db, *, user_id, query, top_k=5: [])
-    prompt = build_system_prompt(db_session, section)
-    assert "关于这位用户的长期记忆" in prompt
-    assert "术语偏好用中文" in prompt
+    # 批次 A：记忆属易变层，断言目标从静态 prompt 迁到逐轮快照
+    reminder = build_turn_reminder(db_session, section)
+    assert "关于这位用户的长期记忆" in reminder
+    assert "术语偏好用中文" in reminder
+
+
+def test_list_top_hot_memories_tie_breaks_by_id(db_session, monkeypatch):
+    """同分热门记忆按 id 定序（批次 A prefix cache：防 DB 返回顺序抖动打碎快照稳定性）。"""
+    from app.services import memory_service
+
+    user = _make_user(db_session)
+    a = _seed_memory(db_session, user, "同分甲", hit_count=0)
+    b = _seed_memory(db_session, user, "同分乙", hit_count=0)
+
+    # 热度分全部钉为 0——排序完全依赖二级键（id 定序），结果必须确定且跨查询一致
+    monkeypatch.setattr(memory_service, "_compute_hot_score", lambda m, now: 0)
+    first = [m.content for m in memory_service.list_top_hot_memories(db_session, user_id=user.id)]
+    second = [m.content for m in memory_service.list_top_hot_memories(db_session, user_id=user.id)]
+    expected = [m.content for m in sorted((a, b), key=lambda m: str(m.id))]
+    assert first == expected
+    assert second == expected

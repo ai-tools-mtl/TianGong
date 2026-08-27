@@ -192,8 +192,9 @@ def list_top_hot_memories(
     exclude = set(exclude_ids or [])
     ranked = sorted(
         (m for m in mems if m.id not in exclude),
-        key=lambda m: _compute_hot_score(m, now),
-        reverse=True,
+        # 二级键 id 定序（批次 A prefix cache）：同分记忆若依赖 DB 返回顺序，
+        # 每次查询顺序抖动会改变注入排列，打碎易变块快照的逐轮稳定性。
+        key=lambda m: (-_compute_hot_score(m, now), str(m.id)),
     )
     return ranked[:limit]
 

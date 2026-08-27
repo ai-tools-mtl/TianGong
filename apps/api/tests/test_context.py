@@ -262,57 +262,60 @@ def test_build_system_prompt_includes_guide_questions(db_session):
         assert q in prompt
 
 
-def test_build_system_prompt_includes_written_sections(db_session):
-    """[前文注入] 含已写章节标题 + 内容。"""
-    from app.ai.context_assembler import build_system_prompt
+def test_build_turn_reminder_includes_written_sections(db_session):
+    """[前文注入·批次 A 迁移] 已写章节进易变快照，不进静态 prompt。"""
+    from app.ai.context_assembler import build_system_prompt, build_turn_reminder
     p = _make_project(db_session)
     _make_db_section(db_session, p.id, key="name", title="发明名称", order=1, content=_tiptap("凸轮门锁"))
     s = _make_db_section(db_session, p.id, key="field", title="技术领域", order=2, content=None)
     prompt = build_system_prompt(db_session, s)
-    assert "发明名称" in prompt
-    assert "凸轮门锁" in prompt
+    reminder = build_turn_reminder(db_session, s)
+    # 快照承载前文（逐轮可变层）
+    assert "发明名称" in reminder
+    assert "凸轮门锁" in reminder
+    # 静态 prompt 不再含前文（prefix cache 决策 D1 的拆分守护）
+    assert "凸轮门锁" not in prompt
 
 
-def test_build_system_prompt_excludes_current_section_from_written(db_session):
-    """已写章节段不含当前章节自身。"""
-    from app.ai.context_assembler import build_system_prompt
+def test_build_turn_reminder_excludes_current_section_from_written(db_session):
+    """快照的已写章节段不含当前章节自身。"""
+    from app.ai.context_assembler import build_turn_reminder
     p = _make_project(db_session)
     # 当前章节 field 自己有 content，但不应出现在「已完成章节」段
     s = _make_db_section(db_session, p.id, key="field", title="技术领域", order=2, content=_tiptap("我自己"))
-    prompt = build_system_prompt(db_session, s)
-    assert "我自己" not in prompt
+    reminder = build_turn_reminder(db_session, s)
+    assert "我自己" not in reminder
 
 
 # ===== S3-1：前文一致性约束指令（spec 2026-07-29-prompt-content-design §4 S3-1）=====
 
-def test_build_system_prompt_written_sections_has_consistency_constraints(db_session):
-    """[S3-1] 有已写章节时注入一致性约束指令（术语/呼应/不矛盾）。
+def test_build_turn_reminder_written_sections_has_consistency_constraints(db_session):
+    """[S3-1] 有已写章节时快照注入一致性约束指令（术语/呼应/不矛盾）。
 
-    注意：现有前文段标题已含「一致性」「术语」（「请保持术语、技术方案一致性」），
-    故断言用约束指令的独有特征词（「呼应」「不矛盾」），确保测的是新增指令而非旧文案。
+    断言用约束指令的独有特征词（「呼应」「不矛盾」），确保测的是新增指令而非旧文案。
     """
-    from app.ai.context_assembler import build_system_prompt
+    from app.ai.context_assembler import build_turn_reminder
     p = _make_project(db_session)
     _make_db_section(db_session, p.id, key="problem", title="技术问题", order=4, content=_tiptap("门锁自动上锁问题"))
     s = _make_db_section(db_session, p.id, key="solution", title="技术方案", order=5, content=None)
     db_session.commit()
-    prompt = build_system_prompt(db_session, s)
-    # 一致性约束指令的独有特征词（旧文案没有）
-    assert "呼应" in prompt      # 必须呼应前文
-    assert "不矛盾" in prompt or "矛盾" in prompt  # 不与前文矛盾
+    reminder = build_turn_reminder(db_session, s)
+    assert "呼应" in reminder      # 必须呼应前文
+    assert "不矛盾" in reminder or "矛盾" in reminder  # 不与前文矛盾
 
 
-def test_build_system_prompt_no_written_sections_omits_constraints(db_session):
-    """[S3-1] 无已写章节时不注入一致性约束（不留空指令）。"""
-    from app.ai.context_assembler import build_system_prompt
+def test_build_turn_reminder_no_written_sections_returns_empty(db_session):
+    """[S3-1] 无前文/术语表等易变内容时快照返回空串（调用方跳过包裹标签）。"""
+    from app.ai.context_assembler import wrap_user_message, build_turn_reminder
     p = _make_project(db_session)
-    # 只有当前章节，无其他非空章节
+    # 只有当前章节，无其他非空章节、无检索结果、无意图指令
     s = _make_db_section(db_session, p.id, key="name", title="发明名称", order=1, content=None)
     db_session.commit()
-    prompt = build_system_prompt(db_session, s)
-    assert "已完成章节" not in prompt  # 无前文段
-    # 一致性约束紧跟前文段，前文缺失时约束也不该出现
-    assert "一致性要求" not in prompt
+    reminder = build_turn_reminder(db_session, s)
+    assert "已完成章节" not in reminder
+    assert "一致性要求" not in reminder
+    # 空快照时包裹函数原样返回，不留空壳 system-reminder 标签
+    assert wrap_user_message("原始输入", reminder) == "原始输入"
 
 
 def test_build_system_prompt_includes_system_prompt_role(db_session):
@@ -392,56 +395,53 @@ def test_build_system_prompt_status_differentiates_behavior(db_session):
     assert "定稿" in prompt_confirmed and "定稿" not in prompt_empty
 
 
-# ===== S2-2：意图识别注入（spec 2026-07-29-prompt-content-design §4 S2-2）=====
+# ===== S2-2：意图识别注入（批次 A 迁移：意图指令随当轮快照，不进静态 prompt）=====
 
-def test_build_system_prompt_intent_draft_instructs_to_write(db_session):
-    """[S2-2] intent=draft 时注入「代写」行为指令。"""
-    from app.ai.context_assembler import build_system_prompt
+def test_build_turn_reminder_intent_draft_instructs_to_write(db_session):
+    """[S2-2] intent=draft 时快照注入「代写」行为指令。"""
+    from app.ai.context_assembler import build_system_prompt, build_turn_reminder
     p = _make_project(db_session)
     s = _make_db_section(db_session, p.id, key="solution", title="技术方案", order=5, content=None)
     db_session.commit()
-    prompt = build_system_prompt(db_session, s, intent="draft")
-    assert "代写" in prompt  # 代写意图的行为指令
+    reminder = build_turn_reminder(db_session, s, intent="draft")
+    assert "代写" in reminder
+    # 静态 prompt 不含意图段（逐轮变化层，决策 D1）
+    assert "直接产出结构化内容" not in build_system_prompt(db_session, s)
 
 
-def test_build_system_prompt_intent_info_instructs_to_answer(db_session):
-    """[S2-2] intent=info 时注入「答疑」行为指令，避免借机代写。"""
-    from app.ai.context_assembler import build_system_prompt
+def test_build_turn_reminder_intent_info_instructs_to_answer(db_session):
+    """[S2-2] intent=info 时快照注入「答疑」行为指令，避免借机代写。"""
+    from app.ai.context_assembler import build_turn_reminder
     p = _make_project(db_session)
     s = _make_db_section(db_session, p.id, key="solution", title="技术方案", order=5, content=None)
     db_session.commit()
-    prompt = build_system_prompt(db_session, s, intent="info")
-    assert "答疑" in prompt or "问问题" in prompt  # 答疑意图的行为指令
+    reminder = build_turn_reminder(db_session, s, intent="info")
+    assert "答疑" in reminder or "问问题" in reminder
 
 
-def test_build_system_prompt_intent_none_has_no_intent_section(db_session):
-    """[S2-2] intent=none（默认/未识别）时不注入意图指令段。
-
-    断言用 INTENT_HINTS 的独有特征词（「直接产出结构化内容」「不要借机代写」），
-    避免与 S2-1 drafting 状态提示里的「用户意图」「答疑」措辞冲突。
-    """
-    from app.ai.context_assembler import build_system_prompt
+def test_build_turn_reminder_intent_none_has_no_intent_section(db_session):
+    """[S2-2] intent=none（默认/未识别）时快照不含意图指令段。"""
+    from app.ai.context_assembler import build_turn_reminder
     p = _make_project(db_session)
     s = _make_db_section(db_session, p.id, key="solution", title="技术方案", order=5, content=None)
     db_session.commit()
-    prompt_default = build_system_prompt(db_session, s)  # 不传 intent
-    prompt_none = build_system_prompt(db_session, s, intent="none")
-    # 默认与显式 none 行为一致：无意图指令段（用意图指令的独有特征词判断）
-    assert "直接产出结构化内容" not in prompt_default  # draft 指令特征
-    assert "不要借机代写" not in prompt_default          # info 指令特征
-    assert "直接产出结构化内容" not in prompt_none
-    assert "不要借机代写" not in prompt_none
+    reminder_default = build_turn_reminder(db_session, s)
+    reminder_none = build_turn_reminder(db_session, s, intent="none")
+    assert "直接产出结构化内容" not in reminder_default  # draft 指令特征
+    assert "不要借机代写" not in reminder_default          # info 指令特征
+    assert "直接产出结构化内容" not in reminder_none
+    assert "不要借机代写" not in reminder_none
 
 
-def test_build_system_prompt_intent_differentiates(db_session):
-    """[S2-2] draft 与 info 的意图指令必须不同（验证意图真的影响 prompt）。"""
-    from app.ai.context_assembler import build_system_prompt
+def test_build_turn_reminder_intent_differentiates(db_session):
+    """[S2-2] draft 与 info 的意图指令必须不同（验证意图真的影响快照）。"""
+    from app.ai.context_assembler import build_turn_reminder
     p = _make_project(db_session)
     s = _make_db_section(db_session, p.id, key="solution", title="技术方案", order=5, content=None)
     db_session.commit()
-    prompt_draft = build_system_prompt(db_session, s, intent="draft")
-    prompt_info = build_system_prompt(db_session, s, intent="info")
-    assert prompt_draft != prompt_info
+    reminder_draft = build_turn_reminder(db_session, s, intent="draft")
+    reminder_info = build_turn_reminder(db_session, s, intent="info")
+    assert reminder_draft != reminder_info
 
 
 # ===== S4-1：few-shot 范例注入（spec 2026-07-29-prompt-content-design §4 S4-1）=====

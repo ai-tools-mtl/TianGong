@@ -7,8 +7,19 @@ import asyncio
 from langchain_core.messages import HumanMessage
 from loguru import logger
 
-from app.ai.context_assembler import assemble_messages, get_project_summaries
-from app.ai.llm_client import astream_llm, extract_reasoning, stream_llm
+from app.ai.context_assembler import (
+    assemble_messages,
+    build_system_prompt,
+    build_turn_reminder,
+    get_project_summaries,
+    wrap_user_message,
+)
+from app.ai.llm_client import (
+    astream_llm,
+    extract_cached_tokens as _extract_cached_tokens,
+    extract_reasoning,
+    stream_llm,
+)
 from app.ai.section_prompts import get_section_prompt
 from app.ai.tool_timeout import AGENT_LOOP_TOTAL_TIMEOUT
 from app.models import Message, Section
@@ -138,7 +149,7 @@ def build_revise_instruction(db, section: Section, directives: list[str]) -> str
         f"禁止重排结构、调整编号、改写无关句子。\n"
         f"- 逐字保留：未涉及段落连同其格式（标题层级、列表标记、空行、表格结构）"
         f"原样输出，不做任何风格化改写。\n"
-        f"- 术语：若系统提示中给出了本项目术语表，以其为准——正文中不符合术语表的"
+        f"- 术语：若上文中给出了本项目术语表，以其为准——正文中不符合术语表的"
         f"用法一并修正为标准术语（即使修订指令未提及）；未给术语表时，沿用全文"
         f"已确立的用法，不引入新的同义表述。\n"
         f"- 若某条指令与章节现状冲突（如建议修改的内容不存在），在相应位置合理落实，"
@@ -184,8 +195,9 @@ def _extract_hitl_payload(data) -> dict | None:
 async def _astream_agent_events(
     agent, input_value, *, thread_id: str | None,
     usage_sink: dict | None = None, timeout_notice: str,
+    token_budget: int | None = None,
 ) -> AsyncIterator[tuple[str, dict | str]]:
-    """共享 agent loop 事件循环（chat/generate/resume 三路复用）。
+    """共享 agent loop 事件循环（chat/generate/resume/revise 四路复用）。
 
     yield (kind, payload)：
       - ("token", str) / ("thinking", str) / ("tool_call", dict) / ("tool_result", dict)
@@ -193,6 +205,11 @@ async def _astream_agent_events(
 
     input_value：常规跑传 {"messages": [...]}；续跑传 None（checkpoint 续跑）或
     Command(resume=...)（HITL 决策恢复）。
+
+    token_budget（A-4）：单 turn 累计 token 上限（prompt+completion 逐步累加，
+    记入 usage_sink["turn_total"]）。超限时 yield 一条收尾提示、置
+    usage_sink["_budget_capped"]=True 并停止消费后续事件——温和熔断而非抛错。
+    None / <=0 表示关闭。
     """
     try:
         async with asyncio.timeout(AGENT_LOOP_TOTAL_TIMEOUT):
@@ -219,6 +236,27 @@ async def _astream_agent_events(
                         usage_sink["completion"] = (
                             usage_sink.get("completion", 0) + (_usage.get("output_tokens") or 0)
                         )
+                        # A-3：前缀缓存命中数（last-wins，与 prompt 同语义）
+                        cached = _extract_cached_tokens(_usage)
+                        if cached is not None:
+                            usage_sink["cached"] = cached
+                        # A-4：单 turn 累计（真实计费口径——每步都为全上下文付费）
+                        step_total = (_usage.get("input_tokens") or 0) + (_usage.get("output_tokens") or 0)
+                        usage_sink["turn_total"] = usage_sink.get("turn_total", 0) + step_total
+                        if (
+                            token_budget and token_budget > 0
+                            and usage_sink["turn_total"] > token_budget
+                            and not usage_sink.get("_budget_capped")
+                        ):
+                            usage_sink["_budget_capped"] = True
+                            logger.warning(
+                                "_astream_agent_events: 触达单 turn token 预算 %s（累计 %s），温和收束",
+                                token_budget, usage_sink["turn_total"],
+                            )
+                            yield ("token",
+                                   "\n\n[系统提示：本轮生成已达到 token 预算上限，已提前收束。"
+                                   "如需继续请重试或联系管理员调整预算。]")
+                            break
                 elif evt == "on_tool_start":
                     yield ("tool_call", {
                         "name": event.get("name", ""),
@@ -239,6 +277,52 @@ async def _astream_agent_events(
     except TimeoutError:
         logger.warning("_astream_agent_events: agent loop 总超时（%ss），强制结束", AGENT_LOOP_TOTAL_TIMEOUT)
         yield ("token", timeout_notice)
+
+
+def _prepare_turn_layers(db, section: Section, *, user_id,
+                         user_input: str | None, intent: str | None) -> tuple[str, str]:
+    """装配 agent 路线的两段上下文（批次 A 决策 D1）。
+
+    返回 (system_prompt, reminder)：
+    - system_prompt：静态骨架（build_system_prompt），传给 build_agent 的
+      system_prompt_override——跨轮字节稳定，供应商前缀缓存的锚。
+    - reminder：逐轮易变快照（build_turn_reminder），含知识库预检索结果。
+      由调用方 wrap 进当轮消息尾部；resume 场景经 checkpoint 已包裹的
+      历史消息自然还原首跑上下文，无需重建检索。
+
+    检索/装配失败静默降级不阻断（与其他层一致）。
+    """
+    from app.ai.context_assembler import _retrieve_knowledge_for_section
+
+    knowledge_context = _retrieve_knowledge_for_section(
+        db, user_id, section, user_input=user_input,
+    )
+    system_prompt = build_system_prompt(db, section)
+    try:
+        reminder = build_turn_reminder(
+            db, section, knowledge_context=knowledge_context,
+            user_input=user_input, intent=intent,
+        )
+    except Exception:  # noqa: BLE001 — 快照装配失败降级空串，绝阻断主对话
+        logger.exception("build_turn_reminder 失败，降级注入空易变块")
+        db.rollback()
+        reminder = ""
+    return system_prompt, reminder
+
+
+def _apply_reminder(messages: list[dict], reminder: str) -> None:
+    """把当轮易变快照包进 messages 末条（决策 D1）。
+
+    末条恒为当前轮的 user 输入/generate 指令（compress_history 契约保证）。
+    防御：末条形状不符时跳过注入并告警，绝不炸主对话。
+    """
+    if not messages or not reminder:
+        return
+    last = messages[-1]
+    if isinstance(last, dict) and last.get("role") == "user":
+        last["content"] = wrap_user_message(last.get("content") or "", reminder)
+    else:
+        logger.warning("_apply_reminder: 末条非 user dict（%s），跳过快照注入", type(last).__name__)
 
 
 async def astream_chat(
@@ -269,13 +353,19 @@ async def astream_chat(
     from app.ai.checkpoint import get_checkpointer
     from app.ai.intent import classify_intent
 
-    # [L1] 传 section + user_input，让 build_agent 装配动态 system prompt（spec §3.3.2）
-    # user_input 用于记忆检索（用户当前输入是最强语义信号，如「检查写作风格」→命中偏好记忆）
-    # [S2-2] 规则层意图识别：draft/edit/info/guide → 注入对应行为指令（LLM 兜底默认关）
+    # [L1] 传 section + user_input，让 build_agent 装配静态 system prompt（spec §3.3.2）
+    # [批次 A 决策 D1] 两段式装配：_prepare_turn_layers 返回（静态骨架, 易变快照）；
+    # 骨架经 override 传给 build_agent；快照附着当轮消息尾部。
+    # [S2-2] 规则层意图识别：draft/edit/info/guide → 意图指令随快照注入（LLM 兜底默认关）
     intent = classify_intent(user_input)
     logger.info("astream_chat: 开始构建 agent（intent=%s model=%s）", intent, llm_config.model)
-    agent = await build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section),
+    owner_id = _section_owner(db, section)
+    system_prompt, reminder = _prepare_turn_layers(
+        db, section, user_id=owner_id, user_input=user_input, intent=intent,
+    )
+    agent = await build_agent(db, llm_config=llm_config, user_id=owner_id,
                         section=section, user_input=user_input, intent=intent,
+                        system_prompt_override=system_prompt,
                         checkpointer=get_checkpointer())
     logger.info("astream_chat: agent 构建完成，开始 agent loop")
 
@@ -300,10 +390,15 @@ async def astream_chat(
     messages = compressed
     if not snapshot.triggered:
         messages.append({"role": "user", "content": user_input})
+    # 决策 D1：易变快照附着当轮消息尾部。落库剥离自动成立——DB 存原始输入，
+    # 注入只发生在发送侧；历史回放永远是无快照的原文。
+    _apply_reminder(messages, reminder)
 
+    from app.services.agent_budget_service import get_turn_token_budget
     async for item in _astream_agent_events(
         agent, {"messages": messages}, thread_id=thread_id, usage_sink=usage_sink,
         timeout_notice="\n\n[系统提示：回复生成超时，已中止。请重试或简化问题。]",
+        token_budget=get_turn_token_budget(db),
     ):
         yield item
 
@@ -345,8 +440,24 @@ async def astream_generate(
     # 传 checkpointer 时 generate 在 PG 环境（checkpointer 初始化成功）下每次调用都抛
     # ValueError（test_langgraph_probe.py）。generate 无 message、无 resume 能力，
     # checkpoint 零收益纯隐患，去除。
-    agent = await build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section),
+    # [批次 A 决策 D1] 两段式装配（同 astream_chat）：generate 为单发无跨轮前缀收益，
+    # 但统一同一装配路径、不做分支——静态骨架走 override，快照附指令尾部。
+    gen_query = next(
+        (m.content for m in reversed(history) if m.role == "user"), None
+    )
+    # [S2-2] generate 场景无新输入，意图恒为「代写草稿」——直接传 draft（比让规则层猜更准）
+    # [T2 探针坐实 2026-08-17] checkpointer 显式 None：generate 无 thread_id（config=None），
+    # langgraph 入口级要求「有 checkpointer 必须有 configurable」（pregel/main.py:2589）——
+    # 传 checkpointer 时 generate 在 PG 环境（checkpointer 初始化成功）下每次调用都抛
+    # ValueError（test_langgraph_probe.py）。generate 无 message、无 resume 能力，
+    # checkpoint 零收益纯隐患，去除。
+    owner_id = _section_owner(db, section)
+    system_prompt, reminder = _prepare_turn_layers(
+        db, section, user_id=owner_id, user_input=gen_query, intent="draft",
+    )
+    agent = await build_agent(db, llm_config=llm_config, user_id=owner_id,
                         section=section, user_input=gen_query, intent="draft",
+                        system_prompt_override=system_prompt,
                         checkpointer=None)
     # [S4-2] 用 build_generate_instruction 构造含 CoT 分步思考的指令
     instruction = build_generate_instruction(section)
@@ -370,10 +481,13 @@ async def astream_generate(
     messages = compressed
     if not snapshot.triggered:
         messages.append({"role": "user", "content": instruction})
+    _apply_reminder(messages, reminder)
 
+    from app.services.agent_budget_service import get_turn_token_budget
     async for item in _astream_agent_events(
         agent, {"messages": messages}, thread_id=thread_id, usage_sink=usage_sink,
         timeout_notice="\n\n[系统提示：草稿生成超时，已中止。请重试。]",
+        token_budget=get_turn_token_budget(db),
     ):
         yield item
 
@@ -476,15 +590,27 @@ async def astream_revise(
     """
     from app.ai.agent import build_agent
 
-    agent = await build_agent(db, llm_config=llm_config, user_id=_section_owner(db, section),
+    # [批次 A 决策 D1] 与 chat/generate 同一两段式装配：静态骨架走 override，
+    # 术语表/已写章节/记忆等易变层随修订指令尾部注入（revise 不带聊天历史，
+    # 这些层正是它保持术语一致所需的全部上下文）。
+    owner_id = _section_owner(db, section)
+    system_prompt, reminder = _prepare_turn_layers(
+        db, section, user_id=owner_id, user_input=None, intent="edit",
+    )
+    agent = await build_agent(db, llm_config=llm_config, user_id=owner_id,
                         section=section, user_input=None, intent="edit",
+                        system_prompt_override=system_prompt,
                         checkpointer=None)
     instruction = build_revise_instruction(db, section, directives)
+    revise_messages = [{"role": "user", "content": instruction}]
+    _apply_reminder(revise_messages, reminder)
 
+    from app.services.agent_budget_service import get_turn_token_budget
     async for item in _astream_agent_events(
-        agent, {"messages": [{"role": "user", "content": instruction}]}, thread_id=None,
+        agent, {"messages": revise_messages}, thread_id=None,
         usage_sink=usage_sink,
         timeout_notice="\n\n[系统提示：修订生成超时，已中止。可重新发起修订。]",
+        token_budget=get_turn_token_budget(db),
     ):
         yield item
 

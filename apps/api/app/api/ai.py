@@ -157,8 +157,9 @@ def _log_llm_call(
 ) -> None:
     """写一条 LLM 调用元数据日志（设计 8.3 红线：只存元数据，不存内容）。
 
-    tokens（断链 C3）：可选 dict {"prompt": int, "completion": int}，
+    tokens（断链 C3）：可选 dict {"prompt": int, "completion": int, "cached": int}，
     由各端点从流的 usage_metadata（astream_llm 的 usage_sink）捕获；
+    cached（A-3）为供应商前缀缓存命中数，provider 不回传时缺省落 None。
     无值时落 None（如未开 stream_usage 或 provider 未回传 usage 的情形）。
     context_meta（spec §5.1）：可选 dict，上下文压缩 Snapshot 序列化。
     """
@@ -172,6 +173,7 @@ def _log_llm_call(
             provider=provider,
             token_prompt=tokens.get("prompt") if tokens else None,
             token_completion=tokens.get("completion") if tokens else None,
+            token_prompt_cached=tokens.get("cached") if tokens else None,
             duration_ms=duration_ms,
             status=status,
             error=(str(error)[:500] if error else None),
@@ -329,8 +331,12 @@ async def chat(
             if interrupted:
                 # interrupt 分支已落库并发完事件，流到此为止（无 done）
                 return
+            # A-4：预算熔断发生的 turn 在消息 meta 留痕（审计与前端提示依据）
+            final_meta = stream_meta.build() or {}
+            if usage.get("_budget_capped"):
+                final_meta["budget_capped"] = True
             ai_msg = Message(section_id=section.id, conversation_id=conv.id, role="assistant",
-                             content=full_response, meta=stream_meta.build())
+                             content=full_response, meta=final_meta or None)
             db.add(ai_msg)
             db.commit()
 

@@ -363,6 +363,8 @@ export interface LLMStatsByModel {
   avg_duration_ms: number | null
   prompt_tokens: number
   completion_tokens: number
+  /** A-3：prompt 中命中供应商前缀缓存的 token 数（provider 不回传时计 0） */
+  cached_tokens: number
 }
 
 export interface LLMStatsByUser {
@@ -381,6 +383,8 @@ export interface LLMStatsByDay {
   failed: number
   prompt_tokens: number
   completion_tokens: number
+  /** A-3：前缀缓存命中 token 数（prefix cache 改造观测指标） */
+  cached_tokens: number
 }
 
 export interface LLMStats {
@@ -391,6 +395,7 @@ export interface LLMStats {
   avg_duration_ms: number | null
   total_prompt_tokens: number
   total_completion_tokens: number
+  total_cached_tokens: number
   by_model: LLMStatsByModel[]
   by_user: LLMStatsByUser[]
   by_day: LLMStatsByDay[]

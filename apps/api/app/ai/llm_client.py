@@ -206,6 +206,31 @@ def _capture_usage(chunk: Any, usage_sink: dict | None) -> None:
     if usage and usage_sink is not None:
         usage_sink["prompt"] = usage.get("input_tokens")
         usage_sink["completion"] = usage.get("output_tokens")
+        # A-3：供应商前缀缓存命中 token 数（provider 不回传时不写键，非异常）
+        cached = extract_cached_tokens(usage)
+        if cached is not None:
+            usage_sink["cached"] = cached
+
+
+def extract_cached_tokens(usage: Any) -> int | None:
+    """从 usage_metadata 提取「prompt 中命中供应商前缀缓存」的 token 数（A-3）。
+
+    兼容两种回传形态（无值返回 None——多数 provider 不回传属正常）：
+    - LangChain 归一化：input_token_details.cache_read
+      （OpenAI 系 prompt_tokens_details.cached_tokens 映射于此）
+    - DeepSeek 原生顶层键：prompt_cache_hit_tokens
+    """
+    if not isinstance(usage, dict):
+        return None
+    details = usage.get("input_token_details")
+    if isinstance(details, dict):
+        cached = details.get("cache_read")
+        if isinstance(cached, (int, float)) and cached > 0:
+            return int(cached)
+    cached = usage.get("cache_read", usage.get("prompt_cache_hit_tokens"))
+    if isinstance(cached, (int, float)) and cached > 0:
+        return int(cached)
+    return None
 
 
 async def _astream_first_chunk_with_retry(llm, messages) -> tuple[Any, Any]:

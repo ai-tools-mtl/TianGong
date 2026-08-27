@@ -360,24 +360,20 @@ def _retrieve_ima_for_section(db, query: str) -> list[dict]:
     ]
 
 
-def build_system_prompt(
-    db, section: Section, user_input: str | None = None, intent: str | None = None,
-    knowledge_context: list[dict] | None = None,
-) -> str:
-    """装配动态 system prompt（agent loop 路线用，spec §3.1.1）。
+def build_system_prompt(db, section: Section) -> str:
+    """装配【静态】system prompt（agent loop 路线用，spec §3.1.1）。
 
-    拼接顺序：项目元信息 [L4] → 已写章节 [前文直注入] → 当前章节策略 → 角色定义。
+    【批次 A prefix cache 改造（决策 D1）】只保留跨轮字节稳定的层：
+    项目元信息 [L4] → 用户画像 → 当前章节策略 → 状态提示 → 角色定义。
 
-    项目元信息在顶部（全局不变量先建立上下文），角色定义在底部（行为规范在看到具体任务后理解更准确）。
-    此顺序与原 assemble_messages 的拼接顺序保持心智模型统一。
+    逐轮易变的层（已写章节全文、术语表、知识库检索结果、长期记忆、意图指令）
+    全部迁移到 build_turn_reminder——随当轮用户消息尾部注入、落库剥离，
+    使 [system + history] 前缀在连续轮次间逐字节不变，命中供应商前缀缓存
+    （DeepSeek 命中价约为未命中的 1/10）。
 
-    user_input（可选）：用户当前输入。用于记忆检索 query——用户刚说的话往往是最强的
-    检索信号（如「检查我的写作风格」直接关联「偏好简洁风格」记忆）。MVP 策略：用户输入
-    为主，章节信号（标题+目标）为辅，拼接检索。None 时（如非 chat 场景）回退到纯章节信号。
-
-    intent（可选，S2-2）：用户意图（draft/edit/info/guide/none），由 classify_intent 识别。
-    非 none 时注入对应行为指令，让模型据意图切换行为（代写/改写/答疑/引导）。
-    None 或 "none" 时不注入意图段（走默认行为）。
+    前文层从 system 迁出的取舍：已写章节/术语表在**同一章节的会话内**通常
+    字节不变且体积可观——留在静态前缀可整段按命中价重复计费；被编辑时只
+    付出一次冷启动 miss（预期行为）。若放易变块则每轮全价计费，得不偿失。
     """
     project = db.get(Project, section.project_id)
     sp = get_section_prompt(section.key)
@@ -392,87 +388,10 @@ def build_system_prompt(
         if meta_text:
             parts.append(f"项目背景信息：\n{meta_text}")
 
-    # [前文直注入] 已写章节层（中部，跨章节上下文）
-    written = get_written_sections_text(db, section.project_id, exclude_key=section.key)
-    if written:
-        parts.append("# 已完成章节内容（请保持术语、技术方案一致性）")
-        parts.append(written)
-        # [S3-1] 一致性约束指令：从「只注入」升级为「注入+约束」。
-        # 此前只把前文塞进去，模型未必主动保持一致——显式约束三件事：
-        # 沿用术语（避免同义换词）、呼应前文（技术方案要对准技术问题）、不矛盾。
-        parts.append(
-            "一致性要求：① 沿用上文已确立的术语，不要换同义词；"
-            "② 本章节若涉及「技术问题」「技术方案」等前文章节，必须显式呼应其表述；"
-            "③ 不要与上文的技术方案、技术效果矛盾。"
-        )
-
-    # 知识库预注入层：系统自动检索与当前章节最相关的历史案例，让 agent 从一开始就
-    # 带着参考上下文工作。放在已写章节之后（同属结构性上下文），用户记忆之前。
-    # 【T2 术语表层插在它之前】（spec §3.3.3）：术语约束紧贴正文上下文，优先级高于外部参考。
-
-    # 【T2】项目术语表层（强约束，D13：术语表 > 沿用现状 > 最小改动——与
-    # revise instruction 的术语优先级条款一致，不产生矛盾指令）。
-    # 每次装配现查（动态生效，无会话固化）；仅 enabled 条目；上限 100 条。
-    try:
-        parts.extend(_project_terms_lines(db, section.project_id))
-    except Exception:  # noqa: BLE001 — 读取失败静默降级（防事务毒化，与其他层一致）
-        db.rollback()
-
-    if knowledge_context:
-        parts.append(
-            "# 知识库参考（你历史案例中与本章节最相关的内容，请参考其术语与风格）"
-        )
-        for k in knowledge_context:
-            source = k.get("project_title") or "历史案例"
-            key = f"·{k['section_key']}" if k.get("section_key") else ""
-            score = k.get("score", 0)
-            content = k.get("content", "")
-            parts.append(f"- 《{source}》{key}（相关度 {score}）：{content}")
-        parts.append(
-            "使用规则：参考上述案例的术语体系和写作风格，自然地呼应其表述方式，"
-            "不要逐字抄内容。若与当前项目无关则忽略。"
-        )
-
-    # 【新增】用户长期记忆层（检索注入，纯检索式策略）
-    # 检索 query 选择（实测：混拼会稀释语义信号，必须二选一）：
-    # - 有 user_input（chat 场景）：只用用户输入。它是最强语义信号，
-    #   如「检查我的写作风格」→命中「偏好简洁风格」记忆。
-    # - 无 user_input（generate 等场景）：回退到章节标题+目标。
-    # project 已在上方 fetch（L164），直接复用其 user_id，避免重复查询。
-    project_user_id = project.user_id  # 预取值：_search_user_memories 内部失败会 rollback，
-    # 导致 project 对象被 expire；后续访问 project.user_id 会触发惰性加载，
-    # 若事务已被毒化则抛 InFailedSqlTransaction。用局部变量绑定，避开惰性加载。
+    # 用户画像层（静态稳定层）。预取 user_id 局部变量：下游读取失败会 rollback
+    # 使 project 被 expire，局部变量避开惰性加载炸装配。
+    project_user_id = project.user_id
     if project_user_id is not None:
-        # user_input 非空且非纯空格时用它检索；否则回退章节信号
-        # （纯空格 embed 会产出垃圾向量，污染检索结果）
-        memory_query = (user_input.strip() if user_input and user_input.strip()
-                        else f"{section.title} {sp.goal}")
-        memories = _search_user_memories(db, project_user_id, memory_query)
-        # [红利③配套] 热门记忆常驻补位：检索只保证「与当前输入相关」的记忆可见，
-        # 高频稳定偏好（写作风格/术语习惯）即使与本轮 query 无关也应每轮在场。
-        # exclude 检索已命中的 id，两路合并进同一个记忆块（不重复注入）。
-        # getattr 防御：检索结果可能来自测试 fake（无 id 属性），别让去重逻辑炸装配。
-        retrieved_ids = {getattr(m, "id", None) for m in memories}
-        hot = _hot_user_memories(
-            db, project_user_id, exclude_ids=retrieved_ids)
-        merged = list(memories) + [m for m in hot if getattr(m, "id", None) not in retrieved_ids]
-        if merged:
-            memory_lines = "\n".join(f"- {m.content}" for m in merged)
-            parts.append("# 关于这位用户的长期记忆（请遵循其偏好与约定）")
-            parts.append(memory_lines)
-            # [S3-2] 记忆使用规则：从「裸堆」升级为「注入+使用规则」。
-            # 此前检索回来的记忆直接堆进去，没告诉模型何时用、怎么用——
-            # 易导致机械复读无关记忆。显式三条规则：自然融入 / 不复读 / 无关忽略。
-            parts.append(
-                "记忆使用规则：这些是用户跨项目的稳定偏好/事实。【自然融入】表达，"
-                "不要机械复读；与当前章节任务无关的记忆【忽略】；"
-                "只在影响表达风格或领域判断时启用。"
-            )
-
-        # 用户画像层：优先读结构化 WritingProfile（/settings/profile，强注入），
-        # 无则 fallback 到 user_memory(source=profile) 自由记忆（软检索）。
-        # 结构化画像含 5 个固定维度（职业/领域/水平/写作风格/术语偏好），全量注入，
-        # 每次 LLM 生成必带（不走语义检索，保证稳定生效）。
         wp = _get_writing_profile(db, project_user_id)
         if wp is not None:
             lines = []
@@ -499,7 +418,7 @@ def build_system_prompt(
                 parts.append(profile_text)
                 parts.append(f"表达密度：{density_hint}")
 
-    # 章节策略层（底部偏上，当前章节聚焦）
+    # 章节策略层（当前章节聚焦）
     parts.append("# 当前正在撰写章节")
     parts.append(f"章节标题：【{section.title}】")
     parts.append(f"本章目标：{sp.goal}")
@@ -525,16 +444,116 @@ def build_system_prompt(
     if status_hint:
         parts.append(status_hint)
 
-    # [S2-2] 意图行为提示：让模型据用户意图（代写/改写/答疑/引导）切换行为。
-    # intent=None 或 "none" 时跳过（走默认行为，不强分类，D1 决策）。
-    intent_hint = INTENT_HINTS.get(intent) if intent else None
-    if intent_hint:
-        parts.append(intent_hint)
-
     # 角色定义层（最底部，兜底规范）
     parts.append(SYSTEM_PROMPT)
 
     return "\n\n".join(parts)
+
+
+def build_turn_reminder(
+    db, section: Section, *,
+    knowledge_context: list[dict] | None = None,
+    user_input: str | None = None,
+    intent: str | None = None,
+) -> str:
+    """装配【逐轮易变】上下文快照（批次 A 决策 D1）。
+
+    返回值随当轮用户消息尾部注入（wrap_user_message），**不落库、不进历史回放**
+    ——每轮快照独立存在，历史轮次的旧快照不参与计费也不干扰新判断。
+
+    收录的易变层（从原 build_system_prompt 整体迁出，内容不变只换位置）：
+    - 已写章节全文 + 一致性约束
+    - 【T2】项目术语表（D13：术语表 > 沿用现状 > 最小改动）
+    - 知识库检索结果（按 query 逐轮变化）
+    - 用户长期记忆（检索命中 + 热门补位，hit_count 变化与 query 相关性均逐轮漂移）
+    - [S2-2] 意图行为指令（由当轮输入分类决定）
+
+    无任何可注入内容时返回空串（调用方跳过包裹，不留空标签）。
+    """
+    sp = get_section_prompt(section.key)
+    blocks: list[str] = []
+
+    # [前文直注入] 已写章节层（跨章节上下文）
+    written = get_written_sections_text(db, section.project_id, exclude_key=section.key)
+    if written:
+        blocks.append("# 已完成章节内容（请保持术语、技术方案一致性）")
+        blocks.append(written)
+        # [S3-1] 一致性约束指令：沿用术语 / 呼应前文 / 不矛盾。
+        blocks.append(
+            "一致性要求：① 沿用上文已确立的术语，不要换同义词；"
+            "② 本章节若涉及「技术问题」「技术方案」等前文章节，必须显式呼应其表述；"
+            "③ 不要与上文的技术方案、技术效果矛盾。"
+        )
+
+    # 【T2】项目术语表层。每次装配现查（动态生效）；失败静默降级（防事务毒化）。
+    try:
+        term_lines = _project_terms_lines(db, section.project_id)
+        if term_lines:
+            blocks.extend(term_lines)
+    except Exception:  # noqa: BLE001
+        db.rollback()
+
+    # 知识库预注入层
+    if knowledge_context:
+        kb = [
+            "# 知识库参考（你历史案例中与本章节最相关的内容，请参考其术语与风格）",
+        ]
+        for k in knowledge_context:
+            source = k.get("project_title") or "历史案例"
+            key = f"·{k['section_key']}" if k.get("section_key") else ""
+            score = k.get("score", 0)
+            content = k.get("content", "")
+            kb.append(f"- 《{source}》{key}（相关度 {score}）：{content}")
+        kb.append(
+            "使用规则：参考上述案例的术语体系和写作风格，自然地呼应其表述方式，"
+            "不要逐字抄内容。若与当前项目无关则忽略。"
+        )
+        blocks.extend(kb)
+
+    # 用户长期记忆层（检索命中 + 热门补位合并块）
+    project = db.get(Project, section.project_id)
+    project_user_id = project.user_id if project else None
+    if project_user_id is not None:
+        # 检索 query 选择：有用户输入用输入（最强语义信号），否则回退章节信号
+        memory_query = (user_input.strip() if user_input and user_input.strip()
+                        else f"{section.title} {sp.goal}")
+        memories = _search_user_memories(db, project_user_id, memory_query)
+        retrieved_ids = {getattr(m, "id", None) for m in memories}
+        hot = _hot_user_memories(db, project_user_id, exclude_ids=retrieved_ids)
+        merged = list(memories) + [m for m in hot if getattr(m, "id", None) not in retrieved_ids]
+        if merged:
+            mem_block = ["# 关于这位用户的长期记忆（请遵循其偏好与约定）"]
+            mem_block.extend(f"- {m.content}" for m in merged)
+            # [S3-2] 记忆使用规则
+            mem_block.append(
+                "记忆使用规则：这些是用户跨项目的稳定偏好/事实。【自然融入】表达，"
+                "不要机械复读；与当前章节任务无关的记忆【忽略】；"
+                "只在影响表达风格或领域判断时启用。"
+            )
+            blocks.extend(mem_block)
+
+    # [S2-2] 意图行为提示：由当轮输入分类决定，天然逐轮变化。
+    intent_hint = INTENT_HINTS.get(intent) if intent else None
+    if intent_hint:
+        blocks.append(intent_hint)
+
+    return "\n\n".join(blocks)
+
+
+def wrap_user_message(content: str, reminder: str) -> str:
+    """把当轮易变快照包进 system-reminder 标签，附着在用户消息尾部。
+
+    reminder 为空时原样返回（不留空壳标签）。标签内的说明句明确告知模型
+    这是系统注入的非用户内容，避免模型把它当成用户的提问复读给用户。
+    """
+    if not reminder:
+        return content
+    return (
+        f"{content}\n\n<system-reminder>\n"
+        "以下是系统随本轮消息注入的参考上下文（非用户发言，请勿向用户复述）：\n"
+        f"{reminder}\n"
+        "</system-reminder>"
+    )
 
 
 # ── T2 项目术语表层（spec §3.3.3）────────────────────────────────────────────

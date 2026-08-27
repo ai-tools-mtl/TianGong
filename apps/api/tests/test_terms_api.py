@@ -290,13 +290,13 @@ class TestCheck:
 
 class TestTermsInjection:
     def _build_ctx(self, db_session, project, terms):
-        """建 terms 后调 build_system_prompt，返回 prompt 字符串。"""
-        from app.ai.context_assembler import build_system_prompt
+        """建 terms 后调 build_turn_reminder，返回易变快照字符串（批次 A：术语表迁入快照层）。"""
+        from app.ai.context_assembler import build_turn_reminder
         from app.models import ProjectTerm
         for spec in terms:
             db_session.add(ProjectTerm(project_id=project.id, **spec))
         db_session.commit()
-        return build_system_prompt(db_session, _mk_section(
+        return build_turn_reminder(db_session, _mk_section(
             db_session, project, "solution", "技术方案", "正文"))
 
     def test_enabled_terms_injected_with_format(self, db_session, terms_user, project):

@@ -79,6 +79,15 @@ def _setup_orchestrator_mocks(monkeypatch, fake_agent, *, scene="chat"):
     from app.ai import context_compactor as cc_mod
     monkeypatch.setattr(agent_mod, "build_agent", _fake_build_agent)
     monkeypatch.setattr(cc_mod, "compress_history", _noop_compress)
+    # 批次 A：易变层装配（检索/静态 prompt 需要真 DB 对象）替换为假件；
+    # 单 turn token 预算查询关闭——本套件只验证 usage_sink 记账行为。
+    monkeypatch.setattr(
+        orch, "_prepare_turn_layers",
+        lambda db, section, *, user_id=None, user_input=None, intent=None: ("static-prompt", ""),
+    )
+    monkeypatch.setattr(
+        "app.services.agent_budget_service.get_turn_token_budget", lambda db: 0
+    )
 
 
 def test_astream_chat_captures_usage_single_step(monkeypatch, db_session):

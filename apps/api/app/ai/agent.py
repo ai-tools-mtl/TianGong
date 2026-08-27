@@ -128,23 +128,16 @@ async def build_agent(
     llm = get_llm(llm_config, streaming=True, stream_usage=True)
     logger.info("build_agent: LLM 实例已构造，开始装配 system prompt + tools")
 
-    # [L1][L4][前文直注入] section 非 None 时装配动态 system prompt（spec §3.2）
-    # user_input 透传给记忆检索（用户当前输入是最强检索信号，spec §5.3 升级）
-    # intent（S2-2）透传给意图行为指令注入（draft/edit/info/guide）
-    # init 场景：传 system_prompt_override（INIT_CHAT_SYSTEM_PROMPT）跳过 section 装配——
-    # init 无 section、用专用 prompt，但仍复用 skill/tools/check_tool_support 装配。
+    # [L1][L4] section 非 None 时装配【静态】system prompt（批次 A 决策 D1）：
+    # 只含跨轮稳定层；逐轮易变层由 orchestrator 的 build_turn_reminder 构建、
+    # 随当轮用户消息尾部注入。知识库检索也随之迁出本函数——检索结果属于
+    # 易变层，resume 场景经 checkpoint 中已包裹的历史消息自然还原首跑上下文。
+    # init 场景：传 system_prompt_override（INIT_CHAT_SYSTEM_PROMPT）跳过 section 装配。
     if system_prompt_override is not None:
         system_prompt = system_prompt_override
     elif section is not None:
-        from app.ai.context_assembler import _retrieve_knowledge_for_section, build_system_prompt
-        # 预检索知识库：据章节上下文自动检索历史案例，失败静默降级
-        knowledge_context = _retrieve_knowledge_for_section(
-            db, user_id, section, user_input=user_input,
-        )
-        system_prompt = build_system_prompt(
-            db, section, user_input=user_input, intent=intent,
-            knowledge_context=knowledge_context,
-        )
+        from app.ai.context_assembler import build_system_prompt
+        system_prompt = build_system_prompt(db, section)
     else:
         system_prompt = SYSTEM_PROMPT  # 向后兼容兜底
 

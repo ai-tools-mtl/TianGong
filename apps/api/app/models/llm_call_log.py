@@ -25,6 +25,10 @@ class LLMCallLog(Base, IdMixin):
     request_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     token_prompt: Mapped[int | None] = mapped_column(Integer, nullable=True)
     token_completion: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 批次 A（A-3）：prompt 中命中供应商前缀缓存的 token 数（DeepSeek cache hit /
+    # OpenAI cached_tokens 形态）。provider 不回传时为 None——prefix cache 改造的
+    # 验收与成本观测指标来源。
+    token_prompt_cached: Mapped[int | None] = mapped_column(Integer, nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(20))  # success/failed
     error: Mapped[str | None] = mapped_column(Text, nullable=True)  # 不含内容

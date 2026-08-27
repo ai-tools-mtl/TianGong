@@ -118,6 +118,7 @@ export default function ConsoleStatsPage() {
                 <Legend />
                 <Line type="monotone" dataKey="prompt_tokens" name="输入 tokens" stroke="#2563eb" dot={false} strokeWidth={2} />
                 <Line type="monotone" dataKey="completion_tokens" name="输出 tokens" stroke="#16a34a" dot={false} strokeWidth={2} />
+                <Line type="monotone" dataKey="cached_tokens" name="缓存命中 tokens" stroke="#9333ea" dot={false} strokeWidth={2} />
                 <Line type="monotone" dataKey="failed" name="失败次数" stroke="#dc2626" dot={false} strokeWidth={2} />
               </LineChart>
             </ResponsiveContainer>

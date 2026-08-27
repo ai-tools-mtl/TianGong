@@ -33,6 +33,22 @@ def _fake_llm_returning(summary_text: str):
     return fake_llm
 
 
+def _stub_turn_layers(monkeypatch):
+    """批次 A：绕过真实易变层装配（检索/静态 prompt 查库）与预算查询。
+
+    本文件用例把 db stub 成 None，只关心 compress_history 管线——
+    新引入的 _prepare_turn_layers 与 get_turn_token_budget 均替换为无 DB 依赖假件。
+    """
+    monkeypatch.setattr(
+        "app.ai.orchestrator._prepare_turn_layers",
+        lambda db, section, *, user_id=None, user_input=None, intent=None: ("static-prompt", ""),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        "app.services.agent_budget_service.get_turn_token_budget", lambda db: 0
+    )
+
+
 @pytest.mark.asyncio
 async def test_astream_chat_compresses_long_history(monkeypatch):
     """35 条历史触发压缩 → mock agent 收到的 messages 含摘要标记。
@@ -66,6 +82,7 @@ async def test_astream_chat_compresses_long_history(monkeypatch):
     monkeypatch.setattr("app.ai.agent.build_agent", fake_build_agent)
     monkeypatch.setattr("app.ai.intent.classify_intent", lambda x: "info")
     monkeypatch.setattr("app.ai.orchestrator._section_owner", lambda db, s: None)
+    _stub_turn_layers(monkeypatch)
 
     tokens = []
     async for kind, payload in astream_chat(None, section, history, "当前问题", llm_config=cfg):
@@ -100,6 +117,7 @@ async def test_astream_chat_short_history_not_compressed(monkeypatch):
     monkeypatch.setattr("app.ai.agent.build_agent", fake_build_agent)
     monkeypatch.setattr("app.ai.intent.classify_intent", lambda x: "info")
     monkeypatch.setattr("app.ai.orchestrator._section_owner", lambda db, s: None)
+    _stub_turn_layers(monkeypatch)
 
     async for _ in astream_chat(None, section, history, "当前问题", llm_config=cfg):
         pass
@@ -182,6 +200,7 @@ async def test_astream_chat_writes_meta_sink(monkeypatch):
     monkeypatch.setattr("app.ai.agent.build_agent", fake_build_agent)
     monkeypatch.setattr("app.ai.intent.classify_intent", lambda x: "info")
     monkeypatch.setattr("app.ai.orchestrator._section_owner", lambda db, s: None)
+    _stub_turn_layers(monkeypatch)
     fake_llm = MagicMock()
     fake_llm.ainvoke = AsyncMock(return_value=MagicMock(content="摘要内容"))
     monkeypatch.setattr("app.ai.context_compactor.get_llm", lambda *a, **k: fake_llm)
