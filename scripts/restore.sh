@@ -49,7 +49,9 @@ docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d postgres \
 docker exec "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d postgres \
   -c "DROP DATABASE IF EXISTS $POSTGRES_DB;" \
   -c "CREATE DATABASE $POSTGRES_DB;" >/dev/null
-gunzip -c "$BACKUP_DIR/db.sql.gz" | docker exec -i "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=0 >/dev/null
+# ON_ERROR_STOP=1：SQL 出错即非零退出，配合 set -e 在清空 minio 卷（第 3 步）之前
+# 中断——部分导入绝不能被当成恢复成功继续走完（psql 默认吞错仍返回 0）
+gunzip -c "$BACKUP_DIR/db.sql.gz" | docker exec -i "$POSTGRES_CONTAINER" psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 >/dev/null
 
 echo "==> [3/4] 恢复 miniodata 卷"
 docker compose stop minio
