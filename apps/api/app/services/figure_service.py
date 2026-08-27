@@ -13,7 +13,7 @@ import json
 import time
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import ConflictError, NotFoundError, ServiceUnavailableError, ValidationError
@@ -163,11 +163,20 @@ def generate_figure(
 
 
 def _next_figure_number(db: Session, project_id) -> int:
-    """分配项目内下一个图号（max+1）。并发撞唯一约束时 IntegrityError 上抛（用户重试即可）。"""
-    current_max = db.scalar(
-        select(func.max(Figure.number)).where(Figure.project_id == project_id)
-    )
-    return (current_max or 0) + 1
+    """分配项目内下一个图号（max+1）。
+
+    先以 FOR UPDATE 锁定项目全部现有图行，与删除重排事务串行化：删除侧的
+    DELETE/重排 UPDATE 行锁未释放时此处阻塞，拿到锁后在 READ COMMITTED 下
+    读到重排后的最新状态——避免「按旧快照算 max+1 撞上并发重排留空洞」。
+    SQLite 无 FOR UPDATE（方言层静默忽略），测试环境天然串行不受影响；
+    残余极端交错撞唯一约束时 IntegrityError 上抛（用户重试即可）。
+    """
+    numbers = db.scalars(
+        select(Figure.number)
+        .where(Figure.project_id == project_id)
+        .with_for_update()
+    ).all()
+    return (max(numbers) if numbers else 0) + 1
 
 
 def _renumber_figures(db: Session, project_id) -> None:
@@ -176,10 +185,15 @@ def _renumber_figures(db: Session, project_id) -> None:
     压缩方向保序——只把被删图之后的图号前移，之前的图号不动，正文「图K」引用的
     变化面最小。两阶段落位（先挪唯一负数槽，再压回 1..n）：uq(project_id, number)
     下逐行直改会有瞬态撞唯一约束的风险（UPDATE 执行顺序不保证），负数槽与正数
-    目标全程不相交，任何语句顺序都安全。调用方在同一事务内 commit。
+    目标全程不相交，任何语句顺序都安全。SELECT 带 FOR UPDATE 与生成侧的图号分配
+    串行化（两侧同序加锁，后到者读到先到者提交后的最新编号，见 _next_figure_number）。
+    调用方在同一事务内 commit。
     """
     figs = list(db.scalars(
-        select(Figure).where(Figure.project_id == project_id).order_by(Figure.number)
+        select(Figure)
+        .where(Figure.project_id == project_id)
+        .order_by(Figure.number)
+        .with_for_update()
     ))
     if not figs:
         return
