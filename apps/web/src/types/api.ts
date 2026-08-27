@@ -705,6 +705,12 @@ export interface MessageMeta {
   interrupted?: boolean
   /** interrupted 时待确认的工具动作（interrupt 事件同构）。 */
   pending_interrupt?: { name: string; args: Record<string, unknown>; description?: string }[]
+  /** 批次 C：该 turn 的 HITL 决策结果（approve/reject），随 resume 落定后由后端镜像。 */
+  hitl_resolved?: {
+    decision: 'approve' | 'reject'
+    note?: string | null
+    decided_at?: string
+  }
 }
 
 // ── Agent Skill（spec 合规，两档可见性）──

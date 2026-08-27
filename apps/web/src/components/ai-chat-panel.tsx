@@ -46,6 +46,12 @@ interface ChatMessage {
   interrupted?: boolean
   /** interrupted 时待确认的工具动作。 */
   pendingActions?: { name: string; args: Record<string, unknown>; description?: string }[]
+  /** 批次 C：该 turn 的 HITL 决策结果（历史回灌显示徽标）。 */
+  hitlResolved?: {
+    decision: 'approve' | 'reject'
+    note?: string | null
+    decided_at?: string
+  }
 }
 
 /**
@@ -182,6 +188,8 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
             incomplete: m.meta?.incomplete,
             interrupted: m.meta?.interrupted,
             pendingActions: m.meta?.pending_interrupt,
+            // 批次 C：HITL 决策结果（历史回灌显示已批准/已拒绝徽标）
+            hitlResolved: m.meta?.hitl_resolved,
           }
         }),
       )
@@ -1009,7 +1017,23 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
                             )}
                           </div>
                         ))}
-                        {phase !== 'chatting' && (
+                        {m.hitlResolved ? (
+                          /* 批次 C：决策已落定（历史回灌），徽标替代操作按钮 */
+                          <div
+                            className={`mt-1.5 text-[11px] font-medium ${
+                              m.hitlResolved.decision === 'approve'
+                                ? 'text-emerald-600 dark:text-emerald-400'
+                                : 'text-red-600 dark:text-red-400'
+                            }`}
+                          >
+                            {m.hitlResolved.decision === 'approve' ? '✓ 已批准' : '✕ 已拒绝'}
+                            {m.hitlResolved.note ? (
+                              <span className="ml-1 font-normal text-muted-foreground">
+                                （{m.hitlResolved.note}）
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : phase !== 'chatting' ? (
                           <div className="mt-2 flex gap-2">
                             <Button size="xs" onClick={() => handleResume(m, 'approve')}>
                               同意执行
@@ -1018,7 +1042,21 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
                               拒绝
                             </Button>
                           </div>
-                        )}
+                        ) : null}
+                      </div>
+                    )}
+                    {/* 批次 C：HITL 决策回执——turn 正常续跑完成后 interrupted 已清除，
+                        此处独立显示审计结果（历史回灌与当轮一致）。 */}
+                    {m.hitlResolved && !(m.interrupted && m.pendingActions && m.pendingActions.length > 0) && (
+                      <div className="mt-1 text-[11px] text-muted-foreground">
+                        工具确认：
+                        <span className={m.hitlResolved.decision === 'approve'
+                          ? 'font-medium text-emerald-600 dark:text-emerald-400'
+                          : 'font-medium text-red-600 dark:text-red-400'}
+                        >
+                          {m.hitlResolved.decision === 'approve' ? '已批准' : '已拒绝'}
+                        </span>
+                        {m.hitlResolved.note ? `（${m.hitlResolved.note}）` : null}
                       </div>
                     )}
                   </div>

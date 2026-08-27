@@ -6,6 +6,7 @@ import logging
 import time
 import traceback
 from collections.abc import AsyncIterator
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Body, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -322,6 +323,15 @@ async def chat(
                     )
                     db.add(partial_msg)
                     db.commit()
+                    # 批次 C 审计（asked 半事件）：interrupt 即留痕，fail-open 不阻断
+                    try:
+                        from app.services import hitl_audit_service
+                        hitl_audit_service.record_ask(
+                            db, turn_message_id=user_msg.id,
+                            section_id=section.id, actions=actions)
+                    except Exception:
+                        db.rollback()
+                        logger.warning("HITL ask 审计写入失败（不影响主流程）", exc_info=True)
                     interrupted = True
                     yield _sse_event("interrupt", {
                         "message_id": str(partial_msg.id),
@@ -485,6 +495,27 @@ async def resume_chat(
     base_content: str = ai_msg.content or ""
     conv_id_str = str(ai_msg.conversation_id)
 
+    # 批次 C 审计（decided 半事件）：决策随本次 resume 落地——
+    # 翻新 turn 下全部 pending 行（fail-open）+ 在消息 meta 镜像结果供 UI 徽标。
+    # 悬挂不审判：payload.decision 为 None 的崩溃续跑不产生决策行。
+    hitl_resolved: dict | None = None
+    if payload.decision is not None:
+        try:
+            from app.services import hitl_audit_service
+            hitl_audit_service.record_decision(
+                db, turn_message_id=user_msg.id, decision=payload.decision,
+                note=payload.message, decided_by=current_user.id)
+        except Exception:
+            db.rollback()
+            logger.warning("HITL decide 审计写入失败（不影响主流程）", exc_info=True)
+        hitl_resolved = {
+            "decision": payload.decision,
+            "note": payload.message or None,
+            "decided_at": datetime.now(timezone.utc).isoformat(),
+        }
+        ai_msg.meta = {**(ai_msg.meta or {}), "hitl_resolved": hitl_resolved}
+        db.commit()
+
     async def generate():
         db.rollback()
         streamed = ""
@@ -533,6 +564,15 @@ async def resume_chat(
                         db.commit()
                     except Exception:
                         db.rollback()
+                    # 批次 C 审计：链式 interrupt 同样留 ask 痕（fail-open）
+                    try:
+                        from app.services import hitl_audit_service
+                        hitl_audit_service.record_ask(
+                            db, turn_message_id=user_msg.id,
+                            section_id=section.id, actions=actions)
+                    except Exception:
+                        db.rollback()
+                        logger.warning("HITL ask 审计写入失败（不影响主流程）", exc_info=True)
                     yield _sse_event("interrupt", {
                         "message_id": str(ai_msg.id),
                         "thread_id": str(user_msg.id),
@@ -543,7 +583,11 @@ async def resume_chat(
             # 「DB 半截 + 续跑流」直拼会有重复前缀），失败退回拼接值；同时清除断点标记
             final_text = await collect_final_answer(agent, str(user_msg.id))
             ai_msg.content = final_text if final_text is not None else (base_content + streamed)
-            ai_msg.meta = stream_meta.build()
+            # 决策审计镜像随最终 meta 保留（批次 C）——本/meta 被整体重建，须显式带回
+            ai_msg.meta = {
+                **(stream_meta.build() or {}),
+                **({"hitl_resolved": hitl_resolved} if hitl_resolved else {}),
+            }
             db.commit()
 
             # 首轮就被中断的草稿会话：补做标题总结（与 chat 端点对齐）
@@ -569,7 +613,11 @@ async def resume_chat(
             try:
                 db.rollback()
                 ai_msg.content = base_content + streamed
-                ai_msg.meta = {**(stream_meta.build() or {}), "incomplete": True}
+                ai_msg.meta = {
+                    **(stream_meta.build() or {}),
+                    **({"hitl_resolved": hitl_resolved} if hitl_resolved else {}),
+                    "incomplete": True,
+                }
                 db.commit()
             except Exception:
                 db.rollback()
@@ -583,7 +631,11 @@ async def resume_chat(
             try:
                 db.rollback()
                 ai_msg.content = base_content + streamed
-                ai_msg.meta = {**(stream_meta.build() or {}), "incomplete": True}
+                ai_msg.meta = {
+                    **(stream_meta.build() or {}),
+                    **({"hitl_resolved": hitl_resolved} if hitl_resolved else {}),
+                    "incomplete": True,
+                }
                 db.commit()
             except Exception:
                 db.rollback()

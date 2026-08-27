@@ -33,7 +33,7 @@
 | 0（沿承） | T2 修订管线 dogfood 人工走查 | 0.5 天 | 人工 | 08-25 计划遗留 |
 | ~~A~~ ✅ | ~~Prefix cache 友好化（静态系统提示词）~~ 已完成 `018f6d5`（2026-08-27，含 A-3/A-4/灵魂测试；实施偏差两处：已写章节+术语表按 EV 分析留在了静态前缀而非计划原文的易变块——会话内通常字节不变且体积大，进前缀按命中价计费更省；README 进度行随批提交） | 1.5 天 | 成本优化 | DeerFlow DynamicContext |
 | ~~B~~ ✅ | ~~llm-usage.md 自动生成目录 + CI 门禁~~ 已完成（gen_llm_usage.py，含 B+ SystemSetting 键目录；AGENTS.md 顺带修正 embedding 全局 key 漂移描述）| 0.5 天 | 工程卫生 | dsh 生成目录门禁 |
-| C | HITL 决策审计持久化（log-only） | 0.5 天 | 安全审计 | dsh approval 双事件 |
+| ~~C~~ ✅ | ~~HITL 决策审计持久化（log-only）~~ 已完成（hitl_audit_service 双事件 + chat/resume 接线 + 前端 hitl_resolved 徽标；端点级集成由批次 0 dogfood 走查清单覆盖，服务层 8 测试钉死双阶段/幂等/悬挂/不进上下文四契约）| 0.5 天 | 安全审计 | dsh approval 双事件 |
 | D | SSE 断线自动接续（复用 resume 语义） | 1 天 | 可靠性 | DeerFlow StreamBridge/join |
 | E | doctor 环境体检 + 子进程 env 脱敏守卫 | 1 天 | 运维 | DeerFlow make doctor / env_policy |
 | F | eval 基线真跑首建 + 结构校验加固 | 0.5 天+人工 | 质量纵深 | dsh 测试政策 |
