@@ -25,7 +25,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { useLLMStats } from '@/lib/queries'
+import { useFeedbackStats, useLLMStats } from '@/lib/queries'
 import type { LLMStatsByModel, LLMStatsByUser } from '@/types/api'
 
 /**
@@ -41,6 +41,7 @@ import type { LLMStatsByModel, LLMStatsByUser } from '@/types/api'
 export default function ConsoleStatsPage() {
   const [days, setDays] = useState(7)
   const { data: stats, isLoading } = useLLMStats(days)
+  const { data: fb } = useFeedbackStats(30)
 
   return (
     <PageShell>
@@ -97,6 +98,47 @@ export default function ConsoleStatsPage() {
                 value={formatTokens(stats.total_completion_tokens)}
               />
             </div>
+          </div>
+        )}
+
+        {/* AI 输出反馈聚合（批次 H）：内测迭代信号——好坏比 / 标签分布 / 坏评章节 top */}
+        {fb && fb.total > 0 && (
+          <div
+            className="rounded-2xl border border-black/[0.07] bg-card p-4 dark:border-white/10"
+            style={{ boxShadow: 'var(--shadow-card)' }}
+          >
+            <p className="mb-2 text-[13px] font-semibold">
+              AI 输出反馈（近 {fb.days} 天）
+            </p>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px]">
+              <span>👍 {fb.good}</span>
+              <span>👎 {fb.bad}</span>
+              {fb.good_ratio !== null && (
+                <span className="text-muted-foreground">
+                  好评率 {(fb.good_ratio * 100).toFixed(0)}%
+                </span>
+              )}
+            </div>
+            {Object.keys(fb.by_tag).length > 0 && (
+              <div className="mt-2 flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
+                <span>坏评标签：</span>
+                {Object.entries(fb.by_tag as Record<string, number>).map(([tag, n]: [string, number]) => (
+                  <span key={tag} className="rounded-full border border-border px-2 py-0.5">
+                    {tag} ×{n}
+                  </span>
+                ))}
+              </div>
+            )}
+            {Object.keys(fb.bad_by_section).length > 0 && (
+              <div className="mt-1 flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
+                <span>坏评章节 top：</span>
+                {Object.entries(fb.bad_by_section as Record<string, number>).map(([key, n]: [string, number]) => (
+                  <span key={key} className="rounded-full border border-border px-2 py-0.5 font-mono">
+                    {key} ×{n}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
         )}
 

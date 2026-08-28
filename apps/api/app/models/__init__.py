@@ -12,6 +12,7 @@ from app.models.llm_call_log import LLMCallLog
 from app.models.mcp_server import McpServer
 from app.models.hitl_decision import HitlDecision
 from app.models.message import Message
+from app.models.message_feedback import MessageFeedback
 from app.models.parse_job import ParseJob
 from app.models.project import Project
 from app.models.project_member import ProjectMember
@@ -38,7 +39,7 @@ __all__ = [
     "Base", "JSONType",
     "User", "Attachment", "Figure", "Project", "ProjectMember", "ProjectTag", "Tag",
     "SystemSetting", "Template", "ParseJob", "Section", "SectionVersion",
-    "ShareLink", "Message", "HitlDecision", "Conversation", "ConversationStatus",
+    "ShareLink", "Message", "HitlDecision", "MessageFeedback", "Conversation", "ConversationStatus",
     "KIND_INIT", "KIND_PROJECT",
     "KnowledgeChunk", "KnowledgeFile", "KnowledgeReview",
     "ReviewRubric", "ReviewRecord", "ReviewLock", "UserLLMConfig",

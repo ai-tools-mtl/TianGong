@@ -1105,6 +1105,8 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
                         <span className="size-1.5 animate-bounce rounded-full bg-muted-foreground/50 [animation-delay:300ms]" />
                       </span>
                     ) : null}
+                    {/* 批次 H：AI 输出反馈（👍/👎）。仅持久化消息；流式期间隐藏 */}
+                    <MessageFeedbackBar sectionId={sectionId} messageId={m.id} disabled={phase === 'chatting'} />
                     {/* HITL 工具确认卡片：agent 停在断点等同意/拒绝（如 generate_figure） */}
                     {m.interrupted && m.pendingActions && m.pendingActions.length > 0 && (
                       <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-2.5 py-2">
@@ -1217,3 +1219,116 @@ export const AIChatPanel = forwardRef<AIChatPanelRef, AIChatPanelProps>(
   )
   },
 )
+
+// ── 批次 H：AI 输出反馈条 ────────────────────────────────────────────────────
+
+const FEEDBACK_TAGS = ['错字', '事实', '格式', '没帮助'] as const
+
+/**
+ * assistant 消息尾部的 👍/👎 反馈条（批次 H）。
+ * 👍 直提交；👎 展开标签快选 + 可选备注。提交后锁定为已反馈徽标（同人同消息
+ * 服务端 upsert 覆盖，重复点击无害）。信号不是控制器：不触发任何自动流程。
+ */
+function MessageFeedbackBar({ sectionId, messageId, disabled }: {
+  sectionId: string
+  messageId?: string | null
+  disabled?: boolean
+}) {
+  const [given, setGiven] = useState<'good' | 'bad' | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [tags, setTags] = useState<string[]>([])
+  const [note, setNote] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+
+  if (!messageId || disabled) return null
+
+  const submit = async (rating: 'good' | 'bad', withDetail: boolean) => {
+    setSubmitting(true)
+    try {
+      await api.submitMessageFeedback(sectionId, messageId, {
+        rating,
+        ...(withDetail ? { tags, note: note || undefined } : {}),
+      })
+      setGiven(rating)
+      setEditing(false)
+      toast.success('反馈已记录，谢谢')
+    } catch (err) {
+      const e = err as { message?: string }
+      toast.error(e?.message || '反馈提交失败')
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  if (given) {
+    return (
+      <div className="mt-1 text-[11px] text-muted-foreground/70">
+        {given === 'good' ? '👍 已反馈：有帮助' : '👎 已反馈'}{editing ? '' : ''}
+      </div>
+    )
+  }
+
+  return (
+    <div className="mt-1.5">
+      {!editing ? (
+        <div className="flex items-center gap-1 text-muted-foreground/60">
+          <span className="text-[11px]">这条回复：</span>
+          <button
+            type="button"
+            className="rounded px-1 py-0.5 text-[11px] hover:bg-muted hover:text-foreground"
+            disabled={submitting}
+            onClick={() => submit('good', false)}
+          >
+            👍 有帮助
+          </button>
+          <button
+            type="button"
+            className="rounded px-1 py-0.5 text-[11px] hover:bg-muted hover:text-foreground"
+            disabled={submitting}
+            onClick={() => setEditing(true)}
+          >
+            👎 需改进
+          </button>
+        </div>
+      ) : (
+        <div className="mt-1 rounded-lg border border-border/60 bg-muted/30 px-2 py-2">
+          <div className="flex flex-wrap gap-1">
+            {FEEDBACK_TAGS.map((t) => {
+              const on = tags.includes(t)
+              return (
+                <button
+                  key={t}
+                  type="button"
+                  className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                    on
+                      ? 'border-primary bg-primary/10 text-primary'
+                      : 'border-border text-muted-foreground hover:bg-muted'
+                  }`}
+                  onClick={() => setTags((cur) =>
+                    cur.includes(t) ? cur.filter((x) => x !== t) : [...cur, t])}
+                >
+                  {t}
+                </button>
+              )
+            })}
+          </div>
+          <input
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="补充说明（可选）"
+            maxLength={500}
+            className="mt-1.5 w-full rounded border bg-background px-2 py-1 text-[11px] outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          />
+          <div className="mt-1.5 flex gap-2">
+            <Button size="xs" disabled={submitting} onClick={() => submit('bad', true)}>
+              提交反馈
+            </Button>
+            <Button size="xs" variant="outline" disabled={submitting} onClick={() => setEditing(false)}>
+              取消
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}

@@ -7,6 +7,13 @@ class ChatRequest(BaseModel):
     conversation_id: str | None = None
 
 
+class FeedbackRequest(BaseModel):
+    """AI 输出反馈（批次 H）。tags ∈ 服务端白名单（错字/事实/格式/没帮助），≤4 个。"""
+    rating: str  # good / bad（服务端校验）
+    tags: list[str] | None = None
+    note: str | None = Field(default=None, max_length=500)
+
+
 class GenerateRequest(BaseModel):
     chat_source: str | None = None
 

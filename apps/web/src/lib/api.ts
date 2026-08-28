@@ -568,6 +568,17 @@ export const api = {
       `/sections/${sectionId}/messages${conversationId ? `?conversation_id=${conversationId}` : ''}`,
     ),
 
+  // AI 输出反馈（批次 H）：assistant 消息 👍/👎，同人同消息覆盖
+  submitMessageFeedback: (
+    sectionId: string,
+    messageId: string,
+    body: import('@/types/api').FeedbackSubmit,
+  ) =>
+    request<{ ok: boolean; rating: string }>(
+      `/sections/${sectionId}/messages/${messageId}/feedback`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+
   // ── AI 会话 ──
   listConversations: (sectionId: string) =>
     request<import('@/types/api').Conversation[]>(`/sections/${sectionId}/conversations`),
@@ -866,6 +877,9 @@ export const api = {
 
   listLLMStats: (days = 7) =>
     request<import('@/types/api').LLMStats>(`/admin/stats/llm?days=${days}`),
+  /** AI 输出反馈聚合（批次 H）。 */
+  listFeedbackStats: (days = 30) =>
+    request<import('@/types/api').AdminFeedbackStats>(`/admin/stats/feedback?days=${days}`),
   /** GET /admin/users/{id} 单用户详情（含 grant_detail）。 */
   getUserDetail: (userId: string) =>
     request<import('@/types/api').UserDetail>(`/admin/users/${userId}`),

@@ -7,7 +7,7 @@ import {
 } from '@tanstack/react-query'
 
 import { api } from '@/lib/api'
-import type {
+import type { AdminFeedbackStats,
   KnowledgeFile,
   KnowledgeReview,
   Memory,
@@ -70,6 +70,7 @@ export const queryKeys = {
     mcpServers: ['admin', 'mcp-servers'] as const,
     mcpEnabled: ['admin', 'mcp-enabled'] as const,
     llmStats: (days: number) => ['admin', 'llm-stats', days] as const,
+    feedbackStats: (days: number) => ['admin', 'feedback-stats', days] as const,
     // LLM 余额告警（探测结果 + 阈值）
     llmBalance: ['admin', 'llm-balance'] as const,
     auditLogs: (page: number, size: number) =>
@@ -832,6 +833,14 @@ export function useLLMStats(days: number) {
   return useQuery<LLMStats>({
     queryKey: queryKeys.admin.llmStats(days),
     queryFn: () => api.listLLMStats(days),
+  })
+}
+
+/** AI 输出反馈聚合（批次 H）。 */
+export function useFeedbackStats(days: number) {
+  return useQuery<AdminFeedbackStats>({
+    queryKey: queryKeys.admin.feedbackStats(days),
+    queryFn: () => api.listFeedbackStats(days),
   })
 }
 

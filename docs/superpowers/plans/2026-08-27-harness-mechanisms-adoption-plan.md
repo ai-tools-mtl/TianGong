@@ -38,7 +38,7 @@
 | ~~E~~ ✅ | ~~doctor 环境体检 + 子进程 env 脱敏守卫~~ 已完成（六项检查四级标注；dev 全绿 + NLI 停机演练确认 fail-open 不影响退出码；GOTCHAS E15 预立 sanitize_env 规矩）| 1 天 | 运维 | DeerFlow make doctor / env_policy |
 | ~~F~~ 🟡 | ~~eval 基线真跑首建 + 结构校验加固~~ **代码侧已完成**（_validate_dimension_payload 严格校验替代静默认认分 + 基线 fail-fast + real_llm 标记层默认排除自跳过）；**剩余动作是用户授权项**：`python -m app.eval.review_baseline` 真跑首建（花 token）+ 人工确认分数后提交基线文件 | 0.5 天+人工 | 质量纵深 | dsh 测试政策 |
 | ~~G~~ ✅ | ~~Agent Notes 决策记录机制~~ 已完成（三态目录+四段骨架 lint 进 CI；首篇示范=D1 取舍；AGENTS.md 补引导与分工约定）| 0.5 天 | 流程纪律 | dsh Agent Notes |
-| H | AI 输出反馈采集（👍/👎+归因标签） | 0.5-1 天 | 产品纵深 | DeerFlow feedback 表 |
+| ~~H~~ ✅ | ~~AI 输出反馈采集（👍/👎+归因标签）~~ 已完成（message_feedbacks upsert 表+端点鉴权 404 口径+FeedbackBar 组件+admin stats 反馈卡+反馈 E2E；迁移 e5f6a7b8c9d1 已上 dev PG）| 0.5-1 天 | 产品纵深 | DeerFlow feedback 表 |
 
 ---
 

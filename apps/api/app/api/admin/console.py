@@ -18,7 +18,12 @@ from app.core.database import get_db
 from app.core.security import decrypt_value
 from app.deps import require_admin
 from app.models import AuditLog, SystemSetting, User
-from app.services import admin_service, llm_config_service, stats_service
+from app.services import (  # noqa: F401  (feedback_service: 批次 H 反馈聚合)
+    admin_service,
+    feedback_service,
+    llm_config_service,
+    stats_service,
+)
 
 router = APIRouter(tags=["admin"])
 
@@ -60,6 +65,20 @@ class ListModelsRequest(BaseModel):
     base_url: str
     api_key: str
     provider_template_id: str | None = None
+
+
+# ── AI 输出反馈聚合（批次 H：好坏比/标签分布/坏评按章节 top）──
+
+@router.get("/admin/stats/feedback")
+def get_feedback_stats_endpoint(
+    days: int = 30,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    """AI 输出反馈聚合（内测迭代信号；不做逐条审核台）。"""
+    if days < 1 or days > 365:
+        days = 30
+    return feedback_service.get_feedback_summary(db, days=days)
 
 
 # ── LLM 调用统计（设计 8.2④，仅元数据聚合）──

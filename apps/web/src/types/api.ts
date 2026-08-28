@@ -713,6 +713,26 @@ export interface MessageMeta {
   }
 }
 
+// ── AI 输出反馈（批次 H）──
+
+export type FeedbackRating = 'good' | 'bad'
+
+export interface FeedbackSubmit {
+  rating: FeedbackRating
+  tags?: string[]
+  note?: string
+}
+
+export interface AdminFeedbackStats {
+  days: number
+  good: number
+  bad: number
+  total: number
+  good_ratio: number | null
+  by_tag: Record<string, number>
+  bad_by_section: Record<string, number>
+}
+
 // ── Agent Skill（spec 合规，两档可见性）──
 export type SkillScope = 'global' | 'personal'
 export type SkillStatus = 'draft' | 'active'

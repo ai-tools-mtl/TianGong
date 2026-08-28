@@ -36,12 +36,14 @@ from app.schemas.ai import (
     ChatRequest,
     ConversationCreate,
     ConversationUpdate,
+    FeedbackRequest,
     GenerateRequest,
     ResumeRequest,
     ReviseRequest,
     RewriteRequest,
 )
 from app.services import conversation_service, llm_config_service, section_service
+from app.services import feedback_service
 
 router = APIRouter(tags=["ai"])
 
@@ -671,6 +673,37 @@ async def resume_chat(
             )
 
     return StreamingResponse(generate(), media_type="text/event-stream")
+
+
+@router.post("/sections/{section_id}/messages/{message_id}/feedback")
+async def submit_message_feedback(
+    section_id: str,
+    message_id: str,
+    payload: FeedbackRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """AI 输出反馈（批次 H）：assistant 消息 👍/👎 + 归因标签 + 可选备注。
+
+    同人同消息 upsert 覆盖；反馈是信号不是控制器（不自动触发审查/调优）。
+    """
+    import uuid as _uuid
+
+    try:
+        mid = _uuid.UUID(str(message_id))
+    except (ValueError, AttributeError, TypeError):
+        raise ValidationError("message_id 格式无效")
+    section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
+    msg = db.get(Message, mid)
+    if msg is None or msg.section_id != section.id or msg.role != "assistant":
+        raise NotFoundError("消息不存在")
+    try:
+        feedback_service.submit_feedback(
+            db, message_id=mid, user_id=current_user.id,
+            rating=payload.rating, tags=payload.tags, note=payload.note)
+    except feedback_service.FeedbackValidationError as e:
+        raise ValidationError(str(e))
+    return {"ok": True, "rating": payload.rating}
 
 
 @router.post("/sections/{section_id}/generate")
