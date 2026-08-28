@@ -264,8 +264,9 @@ services:
       - firecrawl-postgres
       - firecrawl-rabbitmq
     healthcheck:
-      # firecrawl 镜像基于 node,含 wget;根路径 / 即健康探针(返回 200/HTML)。
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3002/ >/dev/null 2>&1 || exit 1"]
+      # firecrawl 镜像基于 node,不含 wget 但自带 /usr/bin/curl(实测);根路径 / 即健康探针。
+      # 此前用 wget 导致探针永远 exit 1(命令不存在),容器被误标 unhealthy。
+      test: ["CMD-SHELL", "curl -sf http://localhost:3002/ >/dev/null 2>&1 || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10
