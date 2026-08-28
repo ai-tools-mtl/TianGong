@@ -30,6 +30,8 @@ export default function ReviewPage() {
   const qc = useQueryClient()
   const [reviewing, setReviewing] = useState(false)
   const [exporting, setExporting] = useState(false)
+  // 审查失败横幅（toast 转瞬即逝，余额不足等可恢复错误需要持久提示 + 重试入口）
+  const [reviewError, setReviewError] = useState<string | null>(null)
   const [issueView, setIssueView] = useState<'dimension' | 'section'>('dimension')
   // T2「按维度」修订入口的各维度目标章节（key），默认第一个未确认章节（D12）
   const [dimTargets, setDimTargets] = useState<Record<string, string>>({})
@@ -105,7 +107,10 @@ export default function ReviewPage() {
 
   const runReview = useMutation({
     mutationFn: () => api.runReview(params.id),
-    onMutate: () => setReviewing(true),
+    onMutate: () => {
+      setReviewing(true)
+      setReviewError(null)
+    },
     onSuccess: () => {
       toast.success('审查完成')
       qc.invalidateQueries({ queryKey: ['reviews', params.id] })
@@ -113,7 +118,11 @@ export default function ReviewPage() {
       qc.invalidateQueries({ queryKey: ['review-status', params.id] })
     },
     // 后端 message 已是友好文案（如「LLM 账户余额不足…」「审查正在进行中…」），别用写死文案把它吞了
-    onError: (e) => toast.error((e as { message?: string })?.message || '审查失败'),
+    onError: (e) => {
+      const message = (e as { message?: string })?.message || '审查失败'
+      setReviewError(message)
+      toast.error(message)
+    },
     onSettled: () => setReviewing(false),
   })
 
@@ -217,6 +226,20 @@ export default function ReviewPage() {
         <div className="mt-4 flex items-center gap-2 rounded-lg border border-blue-300/60 bg-blue-50 px-4 py-2.5 text-[13px] text-blue-900 dark:border-blue-700/50 dark:bg-blue-950/30 dark:text-blue-200">
           <Play className="size-4 shrink-0 animate-pulse" />
           审查正在后台进行中，完成后此处将展示最新报告
+        </div>
+      )}
+
+      {/* 审查失败横幅：持久展示原因（toast 会消失），重试即再点「执行审查」 */}
+      {reviewError && !inProgress && (
+        <div className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-2.5 text-[13px]">
+          <div className="flex min-w-0 items-center gap-2">
+            <TriangleAlert className="size-4 shrink-0 text-destructive" />
+            <p className="min-w-0 flex-1 text-destructive">{reviewError}</p>
+          </div>
+          <Button variant="outline" size="sm" className="h-7 shrink-0 gap-1 px-2 text-xs" onClick={() => runReview.mutate()}>
+            <Play className="size-3" />
+            重试审查
+          </Button>
         </div>
       )}
 
