@@ -82,6 +82,7 @@ def _token(text):
             "data": {"chunk": SimpleNamespace(content=text, usage_metadata=None)}}
 
 
+
 def _patch_agent(monkeypatch, agent):
     async def _fake_build(db, section, *, llm_config, user_input=None):
         return agent
@@ -164,6 +165,50 @@ def test_resume_approve_decision_sends_command(client, registered_user, db_sessi
     assert res.status_code == 200
     assert isinstance(agent.captured_input, Command)
     assert agent.captured_input.resume == {"decisions": [{"type": "approve"}]}
+
+
+def test_resume_by_thread_anchor_id(client, registered_user, db_session, monkeypatch):
+    """message_id 传 user 消息 id（start 锚点语义，断线自动接续路径）→
+    反查该会话最新 assistant 消息续跑成功（修复：此前必 404）。"""
+    section, conv, user_msg, ai_msg = _make_fixture(
+        db_session, registered_user, meta={"incomplete": True})
+    _login(client, registered_user)
+    agent = _patch_agent(monkeypatch, _make_agent(
+        events=[_token("自动接续段落")],
+        values={"messages": [AIMessage("生成到一半的"), AIMessage("自动接续段落")]},
+    ))
+
+    res = client.post(
+        f"/api/v1/sections/{section.id}/messages/{user_msg.id}/resume",
+        json={"thread_id": str(user_msg.id)})
+    assert res.status_code == 200
+    assert "自动接续段落" in res.text
+    assert "event: done" in res.text
+
+    db_session.expire_all()
+    updated = db_session.get(Message, ai_msg.id)
+    assert "自动接续段落" in updated.content
+
+
+def test_resume_by_thread_anchor_without_assistant_404(client, registered_user, db_session):
+    """user 消息 id 路径但会话内无任何 assistant 消息 → 404。"""
+    section, conv, user_msg, ai_msg = _make_fixture(
+        db_session, registered_user, meta={"incomplete": True})
+    _login(client, registered_user)
+    # 换一个只有 user 消息的会话模拟「断连兜底尚未落库/无内容可落」
+    from app.models import Conversation as _Conv
+    bare_conv = _Conv(section_id=section.id, title="只有 user 的会话", status="active")
+    db_session.add(bare_conv)
+    db_session.flush()
+    bare_user_msg = Message(section_id=section.id, conversation_id=bare_conv.id,
+                            role="user", content="刚发出就断")
+    db_session.add(bare_user_msg)
+    db_session.commit()
+
+    res = client.post(
+        f"/api/v1/sections/{section.id}/messages/{bare_user_msg.id}/resume",
+        json={"thread_id": str(bare_user_msg.id)})
+    assert res.status_code == 404
 
 
 def test_resume_rejects_completed_message(client, registered_user, db_session):

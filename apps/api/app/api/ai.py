@@ -458,6 +458,10 @@ async def resume_chat(
 
     thread_id 必须是原 turn 的 user 消息 id（chat 端点的 checkpoint thread 约定），
     且与 message_id 同属一个会话——防止拿 A 会话的 thread 续跑 B 会话的消息。
+
+    message_id 兼容两种形态：assistant 消息 id（历史消息/HITL 卡片，既有语义），
+    或本 turn 的 user 消息 id（chat 端点 start 锚点事件回传值，断线自动接续路径
+    ——流首 assistant 尚未落库，反查该会话最新 assistant 作续跑目标）。
     """
     import uuid as _uuid
 
@@ -470,6 +474,21 @@ async def resume_chat(
     section = section_service.get_section(db, user_id=current_user.id, section_id=section_id)
 
     ai_msg = db.get(Message, _to_uuid(message_id, "message_id"))
+    if (ai_msg is not None and ai_msg.section_id == section.id and ai_msg.role == "user"):
+        # message_id 传的是本 turn 的 user 消息 id（chat 端点 start 锚点事件回传的
+        # message_id 即此——流首时刻 assistant 消息尚未落库，前端断线自动接续
+        # 只持有这个 id）。反查该会话最新一条 assistant 消息作为续跑目标；
+        # 可续性仍由下方既有 incomplete/interrupted 校验兜底（正常完成 → 409）。
+        ai_msg = db.scalar(
+            select(Message)
+            .where(
+                Message.conversation_id == ai_msg.conversation_id,
+                Message.section_id == section.id,
+                Message.role == "assistant",
+            )
+            .order_by(Message.created_at.desc(), Message.id.desc())
+            .limit(1)
+        )
     if (ai_msg is None or ai_msg.section_id != section.id or ai_msg.role != "assistant"):
         raise NotFoundError("消息不存在")
     prev_meta: dict = dict(ai_msg.meta or {})
