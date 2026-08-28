@@ -1283,7 +1283,12 @@ async function _consumeSSE<TDone = { message_id: string; conversation_id?: strin
     try {
       readResult = await reader.read()
     } catch (e) {
-      // 批次 D：流中途网络断开（非业务错、非主动 abort）→ 可被调用方自动接续
+      // 批次 D 修复：用户主动停止（AbortController.abort）会让 read() 以
+      // AbortError 拒绝——必须原样上抛保住「主动停」分类，否则会被误判为
+      // 网络断开触发自动接续（误导性恢复提示 + phase 抖动）。
+      // 判 name 而非 instanceof DOMException：个别环境以普通 Error 承载。
+      if (e && typeof e === 'object' && (e as { name?: string }).name === 'AbortError') throw e
+      // 其余（网络断开等）→ 可被调用方自动接续
       throw new StreamDisconnectedError(e)
     }
     const { done, value } = readResult
