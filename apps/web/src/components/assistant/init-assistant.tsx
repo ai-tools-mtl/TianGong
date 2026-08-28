@@ -1,6 +1,6 @@
 'use client'
 
-import { Loader2, RotateCcw, Sparkles } from 'lucide-react'
+import { Loader2, RotateCcw, Sparkles, TriangleAlert } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
@@ -122,6 +122,9 @@ export function InitAssistant() {
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
   const [generating, setGenerating] = useState(false)
+  // 本轮发送失败（如 LLM 余额不足）：持久错误卡片（toast 转瞬即逝不够），
+  // 保留原文供一键重试，避免用户对着 0/5 的预览不知所措
+  const [sendError, setSendError] = useState<{ message: string; retry: string } | null>(null)
   const [createdProjectId, setCreatedProjectId] = useState<string | null>(null)
   const [chapters, setChapters] = useState<ChapterProgress[]>([])
   // 右侧文档预览大纲：done 回调从后端 outline 更新；切会话从 draft_outline 恢复。
@@ -173,6 +176,7 @@ export function InitAssistant() {
       setCreatedProjectId(current.project_id)
       setGenerating(false)
       setChapters([])
+      setSendError(null)
       // 恢复该会话已有的草稿大纲 + 覆盖率（后端每轮提取后写 draft_outline，并据此算 coverage）
       setOutline((current as { draft_outline?: Record<string, { title: string; content: string }> | null }).draft_outline ?? null)
       setCoverage((current as { coverage?: Coverage | null }).coverage ?? null)
@@ -183,6 +187,7 @@ export function InitAssistant() {
       setOutline(null)
       setCoverage(null)
       setChapters([])
+      setSendError(null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current?.id])
@@ -206,10 +211,24 @@ export function InitAssistant() {
     })
   }
 
-  async function handleSend() {
-    if (!input.trim() || !currentId || sending || generating) return
+  function handleSend() {
     const msg = input.trim()
+    if (!msg) return
     setInput('')
+    void sendMessage(msg)
+  }
+
+  /** 重试上一条失败消息：原样重发（sendError 清理由 sendMessage 内统一处理）。 */
+  function handleRetrySend() {
+    const msg = sendError?.retry
+    if (!msg) return
+    setSendError(null)
+    void sendMessage(msg)
+  }
+
+  async function sendMessage(msg: string) {
+    if (!currentId || sending || generating) return
+    setSendError(null)
     setMessages((prev) => [...prev, { role: 'user', content: msg }, { role: 'assistant', content: '' }])
     setSending(true)
     const ac = new AbortController()
@@ -279,7 +298,21 @@ export function InitAssistant() {
       )
     } catch (e) {
       if ((e as Error)?.name !== 'AbortError') {
-        toast.error('回复失败：' + ((e as { message?: string })?.message ?? String(e)))
+        const message = (e as { message?: string })?.message ?? String(e)
+        // 失败清理：移除本轮乐观上屏的 user+assistant 对（assistant 无任何产出时），
+        // 消灭「幽灵空气泡」；原文与原因进错误卡片，重试=原样重发。
+        setMessages((prev) => {
+          const last = prev[prev.length - 1]
+          const secondLast = prev[prev.length - 2]
+          const emptyAssistant =
+            last && last.role === 'assistant' && !last.content && !last.thinking && !last.toolEvents?.length
+          if (emptyAssistant && secondLast && secondLast.role === 'user' && secondLast.content === msg) {
+            return prev.slice(0, -2)
+          }
+          return prev
+        })
+        setSendError({ message, retry: msg })
+        toast.error('回复失败：' + message)
       }
     } finally {
       setSending(false)
@@ -407,6 +440,28 @@ export function InitAssistant() {
                 </div>
               )
             })}
+
+            {/* 发送失败错误卡片：toast 转瞬即逝，这里持久展示原因 + 原文 + 一键重试 */}
+            {sendError && (
+              <div className="rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3">
+                <div className="flex items-start gap-2">
+                  <TriangleAlert className="mt-0.5 size-4 shrink-0 text-destructive" />
+                  <div className="min-w-0 flex-1 text-[13px]">
+                    <p className="font-medium text-destructive">回复发送失败，本轮内容未被保存</p>
+                    <p className="mt-0.5 break-words text-muted-foreground">{sendError.message}</p>
+                    <p className="mt-1 break-all text-[12px] text-muted-foreground/80">消息：{sendError.retry}</p>
+                  </div>
+                  <div className="flex shrink-0 gap-1.5">
+                    <Button variant="outline" size="sm" className="h-7 gap-1 px-2 text-xs" onClick={handleRetrySend}>
+                      <RotateCcw className="size-3" /> 重试
+                    </Button>
+                    <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => setSendError(null)}>
+                      移除
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* 创建扳机：agent 标记 ready 时 */}
             {showReadyButton && (
