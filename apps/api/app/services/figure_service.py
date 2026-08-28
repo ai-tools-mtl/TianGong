@@ -174,6 +174,7 @@ def _next_figure_number(db: Session, project_id) -> int:
     numbers = db.scalars(
         select(Figure.number)
         .where(Figure.project_id == project_id)
+        .order_by(Figure.number)  # 与 _renumber_figures 同序加锁，杜绝两路径交错互等的死锁窗口
         .with_for_update()
     ).all()
     return (max(numbers) if numbers else 0) + 1
