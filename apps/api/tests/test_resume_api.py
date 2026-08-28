@@ -82,6 +82,13 @@ def _token(text):
             "data": {"chunk": SimpleNamespace(content=text, usage_metadata=None)}}
 
 
+def _usage_token(text, *, input_tokens, output_tokens):
+    return {"event": "on_chat_model_stream",
+            "data": {"chunk": SimpleNamespace(content=text, usage_metadata={
+                "input_tokens": input_tokens, "output_tokens": output_tokens,
+            })}}
+
+
 
 def _patch_agent(monkeypatch, agent):
     async def _fake_build(db, section, *, llm_config, user_input=None):
@@ -188,6 +195,39 @@ def test_resume_by_thread_anchor_id(client, registered_user, db_session, monkeyp
     db_session.expire_all()
     updated = db_session.get(Message, ai_msg.id)
     assert "自动接续段落" in updated.content
+
+
+def test_resume_budget_capped(client, registered_user, db_session, monkeypatch):
+    """续跑路径预算熔断（A-4 补接线回归）：单步累计超预算 → 温和收束 +
+    停止消费后续事件 + meta.budget_capped 落库。"""
+    from app.models import SystemSetting
+
+    section, conv, user_msg, ai_msg = _make_fixture(
+        db_session, registered_user, meta={"incomplete": True})
+    # 预算压到 1 token：首个带 usage 的事件（101）即触发熔断
+    db_session.add(SystemSetting(key="agent_turn_token_budget", value={"budget": 1}))
+    db_session.commit()
+    _login(client, registered_user)
+    _patch_agent(monkeypatch, _make_agent(
+        events=[
+            _usage_token("熔断前的内容", input_tokens=100, output_tokens=1),
+            _token("熔断后不应出现"),
+        ],
+        values={"messages": [AIMessage("熔断前的内容")]},
+    ))
+
+    res = client.post(
+        f"/api/v1/sections/{section.id}/messages/{ai_msg.id}/resume",
+        json={"thread_id": str(user_msg.id)})
+    assert res.status_code == 200
+    body = res.text
+    assert "token 预算上限" in body        # 收束提示已流式下发
+    assert "熔断前的内容" in body
+    assert "熔断后不应出现" not in body     # 熔断后停止消费后续事件
+
+    db_session.expire_all()
+    updated = db_session.get(Message, ai_msg.id)
+    assert (updated.meta or {}).get("budget_capped") is True
 
 
 def test_resume_by_thread_anchor_without_assistant_404(client, registered_user, db_session):

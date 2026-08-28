@@ -613,11 +613,15 @@ async def resume_chat(
             # 「DB 半截 + 续跑流」直拼会有重复前缀），失败退回拼接值；同时清除断点标记
             final_text = await collect_final_answer(agent, str(user_msg.id))
             ai_msg.content = final_text if final_text is not None else (base_content + streamed)
-            # 决策审计镜像随最终 meta 保留（批次 C）——本/meta 被整体重建，须显式带回
-            ai_msg.meta = {
+            # 决策审计镜像随最终 meta 保留（批次 C）——本/meta 被整体重建，须显式带回；
+            # A-4 预算熔断留痕与 chat 端点同口径（续跑路径此前漏接熔断与标记）
+            final_meta = {
                 **(stream_meta.build() or {}),
                 **({"hitl_resolved": hitl_resolved} if hitl_resolved else {}),
             }
+            if usage.get("_budget_capped"):
+                final_meta["budget_capped"] = True
+            ai_msg.meta = final_meta
             db.commit()
 
             # 首轮就被中断的草稿会话：补做标题总结（与 chat 端点对齐）

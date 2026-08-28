@@ -542,9 +542,19 @@ async def astream_resume(
         if decision_message:
             d["message"] = decision_message
         input_value = Command(resume={"decisions": [d]})
+    from app.services.agent_budget_service import get_turn_token_budget
+    # 与 chat/generate/revise 同口径（A-4）：续跑恰是「被中断节点整段重放」
+    # 最易失控烧 token 的路径，预算熔断不能在此缺位（此前漏接）。
+    # fail-open：预算是防护机制，读取失败（fake db / 脏事务）不阻断续跑主流程。
+    try:
+        token_budget = get_turn_token_budget(db)
+    except Exception:  # noqa: BLE001
+        logger.warning("读取 turn token 预算失败，本次续跑不启用熔断", exc_info=True)
+        token_budget = None
     async for item in _astream_agent_events(
         agent, input_value, thread_id=thread_id, usage_sink=usage_sink,
-        timeout_notice="\n\n[系统提示：续跑超时，已中止。可再次点击「继续」。]",
+        timeout_notice="\n\n[系统提示：续跑超时，已中止。可再次点击「继续」。",
+        token_budget=token_budget,
     ):
         yield item
 
