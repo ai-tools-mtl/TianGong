@@ -1,6 +1,7 @@
 'use client'
 
 import { Loader2 } from 'lucide-react'
+import { useRouter } from 'next/navigation'
 import { useState } from 'react'
 import { toast } from 'sonner'
 
@@ -22,6 +23,7 @@ import type { TemplateSummary } from '@/types/api'
 
 export function CreateProjectDialog() {
   const create = useCreateProject()
+  const router = useRouter()
   const { data: templates } = useTemplates()
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState('')
@@ -36,13 +38,13 @@ export function CreateProjectDialog() {
         template_id: templateId || undefined,
       },
       {
-        onSuccess: () => {
+        // 创建成功直接进入新项目（用户下一步就是写内容），顺带规避 dialog 关闭状态异常
+        onSuccess: (project) => {
           toast.success('项目已创建')
-          setTitle('')
-          setTemplateId('')
           setOpen(false)
+          router.push(`/projects/${project.id}`)
         },
-        onError: () => toast.error('创建失败'),
+        onError: (e) => toast.error((e as { message?: string })?.message || '创建失败'),
       },
     )
   }
