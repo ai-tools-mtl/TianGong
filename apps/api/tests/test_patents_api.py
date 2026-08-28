@@ -24,7 +24,7 @@ def _create_project(db_session, registered_user):
 
 
 def test_search_returns_mock(client, registered_user, db_session):
-    """无 key 时检索返回 Mock 桩数据。"""
+    """无 key 时检索返回 Mock 桩数据，source 标记 mock（前端提示示例数据）。"""
     _login(client, registered_user)
     pid = _create_project(db_session, registered_user)
 
@@ -33,6 +33,7 @@ def test_search_returns_mock(client, registered_user, db_session):
     data = r.json()
     assert data["query"] == "图像识别"
     assert data["saved_to"] == pid
+    assert data["source"] == "mock"
     assert len(data["results"]) == 3
     # 验证字段结构
     p0 = data["results"][0]
@@ -42,7 +43,7 @@ def test_search_returns_mock(client, registered_user, db_session):
 
 
 def test_search_persists_to_prior_art(client, registered_user, db_session):
-    """检索结果持久化到 project.prior_art_refs。"""
+    """检索结果（含 source 降级标记）持久化到 project.prior_art_refs。"""
     _login(client, registered_user)
     pid = _create_project(db_session, registered_user)
 
@@ -54,6 +55,7 @@ def test_search_persists_to_prior_art(client, registered_user, db_session):
     data = r.json()
     assert data is not None
     assert data["query"] == "电池"
+    assert data["source"] == "mock"
     assert len(data["results"]) > 0
 
 

@@ -936,6 +936,8 @@ export interface PatentResult {
 export interface PatentSearchResponse {
   query: string
   results: PatentResult[]
+  /** 检索源：mock = 无 key 或真实源失败降级的示例数据（前端需提示不可作依据） */
+  source?: 'live' | 'mock'
   saved_to: string
 }
 
@@ -956,6 +958,8 @@ export interface NoveltyAssessment {
 export interface PriorArtRefs {
   query: string
   results: PatentResult[]
+  /** 检索源降级标记（存量数据无此字段，视为 live） */
+  source?: 'live' | 'mock'
   assessment?: NoveltyAssessment
 }
 

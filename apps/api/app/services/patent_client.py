@@ -51,27 +51,28 @@ _MOCK_PATENTS = [
 ]
 
 
-def search_patents(query: str, *, top_k: int = 10) -> list[dict]:
-    """检索专利。无 key 时返回 Mock 桩数据，有 key 时调智慧芽真实 API。
+def search_patents(query: str, *, top_k: int = 10) -> tuple[list[dict], str]:
+    """检索专利。返回 (results, source)，source 为 "live"（真实检索）或 "mock"（降级桩）。
 
-    返回统一形状：[{title, applicant, patent_number, abstract, url, publication_date, legal_status, relevance}]
+    无 key 或有 key 但检索失败都回落 Mock 桩；source 随结果透传给前端，
+    用于提示「示例数据，不可作为现有技术依据」——否则假专利号会被当真结果引用。
     """
     if not query.strip():
-        return []
+        return [], "live"
 
     settings = get_settings()
 
     # 无 key：走 Mock 桩（产品演示用）
     if not settings.patentsnap_api_key:
         logger.info("专利检索使用 Mock 桩数据（未配置 PATENTSNAP_API_KEY）")
-        return _MOCK_PATENTS[:top_k]
+        return _MOCK_PATENTS[:top_k], "mock"
 
-    # 有 key：调智慧芽真实 API
+    # 有 key：调智慧芽真实 API，失败降级 Mock 桩并标记 source=mock
     try:
-        return _search_patentsnap(query, settings, top_k=top_k)
+        return _search_patentsnap(query, settings, top_k=top_k), "live"
     except Exception as e:
         logger.warning("智慧芽专利检索失败，降级返回 Mock 桩: %s", e)
-        return _MOCK_PATENTS[:top_k]
+        return _MOCK_PATENTS[:top_k], "mock"
 
 
 def _search_patentsnap(query: str, settings, *, top_k: int) -> list[dict]:

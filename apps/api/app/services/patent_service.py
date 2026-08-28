@@ -18,7 +18,8 @@ def search_prior_art(
 ) -> dict:
     """检索现有技术专利并持久化到 project.prior_art_refs。
 
-    返回 {query, results, saved_to: project_id}。
+    返回 {query, results, source, saved_to: project_id}；source 为
+    "live"/"mock"（检索源降级标记，前端据此提示示例数据）。
     """
     try:
         pid = uuid_mod.UUID(project_id)
@@ -32,16 +33,17 @@ def search_prior_art(
     if not query.strip():
         raise ValidationError("检索关键词不能为空")
 
-    results = search_patents(query)
+    results, source = search_patents(query)
 
-    # 持久化检索结果快照到 prior_art_refs
+    # 持久化检索结果快照到 prior_art_refs（source 供前端展示降级提示）
     project.prior_art_refs = {
         "query": query,
         "results": results,
+        "source": source,
     }
     db.commit()
 
-    return {"query": query, "results": results, "saved_to": str(pid)}
+    return {"query": query, "results": results, "source": source, "saved_to": str(pid)}
 
 
 def get_prior_art(db: Session, *, user_id, project_id: str) -> dict | None:

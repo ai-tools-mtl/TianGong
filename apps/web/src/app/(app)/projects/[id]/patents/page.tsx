@@ -1,6 +1,6 @@
 'use client'
 
-import { ArrowLeft, ExternalLink, Scale, Search, Wand2 } from 'lucide-react'
+import { ArrowLeft, ExternalLink, Scale, Search, TriangleAlert, Wand2 } from 'lucide-react'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { useRef, useState } from 'react'
@@ -42,12 +42,20 @@ export default function PatentsPage() {
       return
     }
     searchMut.mutate(query, {
-      onSuccess: (data) => toast.success(`检索到 ${data.results.length} 条专利`),
+      onSuccess: (data) => {
+        if (data.source === 'mock') {
+          toast.warning('检索源暂不可用，结果为示例数据')
+        } else {
+          toast.success(`检索到 ${data.results.length} 条专利`)
+        }
+      },
       onError: () => toast.error('检索失败'),
     })
   }
 
   const results: PatentResult[] = searchMut.data?.results ?? priorArt?.results ?? []
+  // 检索源降级（无 key / 真实源调用失败）：示例数据横幅提示，防假专利号被当真引用
+  const degradedSource = (searchMut.data?.source ?? priorArt?.source) === 'mock'
   const lastQuery = searchMut.data?.query ?? priorArt?.query
   const savedAssessment = priorArt?.assessment?.content ?? ''
   const suggestions = priorArt?.assessment?.suggestions
@@ -239,6 +247,12 @@ export default function PatentsPage() {
       {/* 结果列表 */}
       {results.length > 0 ? (
         <div className="space-y-3">
+          {degradedSource && (
+            <div className="flex items-center gap-2 rounded-lg border border-amber-300/60 bg-amber-50 px-4 py-2.5 text-[13px] text-amber-900 dark:border-amber-700/50 dark:bg-amber-950/30 dark:text-amber-200">
+              <TriangleAlert className="size-4 shrink-0" />
+              检索源暂不可用，以下为内置示例数据，仅供界面预览，请勿作为现有技术依据或引用
+            </div>
+          )}
           {lastQuery && (
             <p className="text-[13px] text-muted-foreground">
               关键词「{lastQuery}」· {results.length} 条结果
