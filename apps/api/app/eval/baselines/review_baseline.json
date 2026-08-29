@@ -1,0 +1,23 @@
+{
+  "meta": {
+    "created_at": "2026-08-29T08:11:09.894732+00:00",
+    "model": "deepseek-v4-pro",
+    "provider_source": "global",
+    "runs_per_dimension": 2,
+    "tolerance": 15
+  },
+  "samples": {
+    "disclosure_good": {
+      "completeness": 76,
+      "solution_clarity": 75,
+      "novelty": 95,
+      "writing_quality": 87
+    },
+    "disclosure_mediocre": {
+      "completeness": 60,
+      "solution_clarity": 55,
+      "novelty": 76,
+      "writing_quality": 60
+    }
+  }
+}
