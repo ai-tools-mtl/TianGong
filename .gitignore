@@ -62,5 +62,6 @@ backups/
 test-results/
 playwright-report/
 
-# 面试准备手册（本地私有，勿提交）
+# 面试准备材料（本地私有，勿提交）
 /面试准备-天工项目.md
+/线上面试-问答思路卡.md
