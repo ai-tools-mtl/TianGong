@@ -1,8 +1,9 @@
 import { cn } from '@/lib/utils'
 
 /**
- * 天工 logo：墨色方印 + "工" 字镂空。
- * 内联 SVG，无外部资源。墨黑方印呼应产品"工具重力"定位。
+ * 天工 logo：印章式「天工」合文字形（米白纸面 / 墨字）。
+ * 内联 SVG，无外部资源。fill-current 跟随文字色，
+ * 深色底（登录品牌栏）由调用方用 text-* 覆写即可反白。
  */
 export function Logo({ className }: { className?: string }) {
   return (
@@ -10,27 +11,15 @@ export function Logo({ className }: { className?: string }) {
       <svg
         width="26"
         height="26"
-        viewBox="0 0 26 26"
+        viewBox="364 364 524 524"
         fill="none"
         aria-hidden="true"
-        className="shrink-0"
+        className="shrink-0 fill-current"
       >
-        {/* 方印底：墨黑 */}
-        <rect
-          x="1.5"
-          y="1.5"
-          width="23"
-          height="23"
-          rx="6"
-          className="fill-primary"
-        />
-        {/* "工" 字笔画，亮色镂空 */}
-        <path
-          d="M7 8.5h12M13 8.5v9M9.5 17.5h7"
-          stroke="oklch(0.985 0 0)"
-          strokeWidth="2"
-          strokeLinecap="round"
-        />
+        <path d="M364 484H547V547L480 579V697H544V768L472 771V888H364Z" />
+        <path d="M705 484H888V888H779L780 771L708 769V699L772 697V579L705 547Z" />
+        <path d="M364 364H888V444H669V567H584V445H364Z" />
+        <path d="M516 602H736V662H668V805H744V888H508V806H584V663H517Z" />
       </svg>
       <span className="text-[15px] font-semibold tracking-tight">
         天工
